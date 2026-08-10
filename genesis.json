@@ -1,0 +1,61 @@
+{
+  "chain_id": "ultranet-sovereign-mainnet",
+  "protocol": {
+    "name": "UltraNet",
+    "version": "7.1",
+    "network": "mainnet",
+    "native_token": "ULTRA",
+    "genesis_block_height": 1,
+    "genesis_block_index": 0,
+    "genesis_hash": "0f9b87edcc4fad7c3e4b990f2e86d6f9543bbafb01619de5b95960282fa07327",
+    "genesis_hash_algorithm": "SHA3-256",
+    "genesis_hash_preimage": "ULTRA BLOCKCHAIN 4.0 - GENESIS - DETERMINISTIC"
+  },
+  "consensus": {
+    "protocol": "Bullshark / Mysticeti DAG",
+    "genesis_round": 0,
+    "initial_validator_count": 5,
+    "initial_validator_weight": 100,
+    "validator_set_source": "runtime-generated during bootstrap"
+  },
+  "security": {
+    "signature_scheme": "Dilithium-5",
+    "signature_size_bytes": 4627,
+    "sovereign_multisig": {
+      "threshold": 2,
+      "owner_count": 3,
+      "address": "3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c",
+      "private_keys_included": false
+    },
+    "zero_knowledge": {
+      "transaction_proofs": "Arkworks Groth16",
+      "move_execution_traces": "ZK-STARK"
+    }
+  },
+  "allocation": {
+    "sovereign_address": "3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c",
+    "amount_ultra": 1000000,
+    "asset": "ULTRA",
+    "initial_modules": [
+      "UltraCoin",
+      "UltraNFT"
+    ]
+  },
+  "economics": {
+    "base_block_reward_ultra": 50,
+    "halving_interval_blocks": 31557600,
+    "target_block_time_seconds": 10,
+    "initial_difficulty": 4,
+    "max_gas_per_block": 10000000
+  },
+  "execution": {
+    "smart_contract_vm": "Move",
+    "state_shards": 16,
+    "parallel_execution": "Block-STM",
+    "state_model": "Sharded Merkle Patricia Trie"
+  },
+  "network": {
+    "p2p_port": 9000,
+    "api_port": 8081
+  }
+}

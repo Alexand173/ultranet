@@ -1,0 +1,13 @@
+.git
+.gitignore
+target/
+website/node_modules/
+website/.next/
+test_db/
+ultranet_db/
+*.log
+*.sym
+*.docx
+sovereign_keys.json
+sovereign_keys*.json
+/tmp/

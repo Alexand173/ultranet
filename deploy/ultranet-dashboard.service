@@ -1,0 +1,29 @@
+[Unit]
+Description=UltraNet Next.js Dashboard
+# Original UltraNet service configuration © 2026 Vladan Jotov; ISC License.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ultranet
+Group=ultranet
+WorkingDirectory=/opt/ultranet/website
+EnvironmentFile=-/etc/ultranet/website.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run start -- --hostname 127.0.0.1 --port 3000
+Restart=always
+RestartSec=5s
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/ultranet/website/.next
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ultranet-dashboard
+
+[Install]
+WantedBy=multi-user.target

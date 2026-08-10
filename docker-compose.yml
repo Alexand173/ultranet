@@ -1,0 +1,42 @@
+services:
+  validator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ultranet-validator:v7.1-sovereign
+    container_name: ultranet-mainnet-node
+    restart: unless-stopped
+    environment:
+      ULTRANET_API_BIND: 0.0.0.0:8081
+      ULTRANET_CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      ULTRANET_DB_PATH: /app/ultranet_db
+      ULTRANET_ADMIN_TOKEN: ${ULTRANET_ADMIN_TOKEN:?Set ULTRANET_ADMIN_TOKEN before starting the node}
+    ports:
+      # P2P Mainnet Swarm (TCP & UDP)
+      - "9000:9000/tcp"
+      - "9000:9000/udp"
+      # Local dashboard/API access only; use deploy/docker-compose.production.yml for VPS.
+      - "127.0.0.1:8081:8081/tcp"
+    volumes:
+      # Persistent storage for sharded MPT and chain state
+      - ultranet_db:/app/ultranet_db
+    networks:
+      - ultranet-mesh
+    mem_limit: 32g # Calibrated for 16-way sharding
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200m"
+        max-file: "5"
+    labels:
+      com.ultranet.version: "7.1"
+      com.ultranet.network: "Mainnet"
+      com.ultranet.role: "Validator"
+
+networks:
+  ultranet-mesh:
+    driver: bridge
+
+volumes:
+  ultranet_db:
+    name: ultranet_mainnet_data

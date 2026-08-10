@@ -1,0 +1,42 @@
+services:
+  validator:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ultranet-validator:v7.1-sovereign
+    container_name: ultranet-mainnet-node
+    restart: unless-stopped
+    env_file:
+      - /etc/ultranet/ultranet.env
+    environment:
+      # The API is reachable only through the host's local reverse proxy.
+      ULTRANET_API_BIND: 0.0.0.0:8081
+      ULTRANET_DB_PATH: /app/ultranet_db
+    ports:
+      # P2P Mainnet Swarm (TCP & UDP)
+      - "9000:9000/tcp"
+      - "9000:9000/udp"
+      # Keep the API off the public interface. Proxy it through TLS on the host.
+      - "127.0.0.1:8081:8081/tcp"
+    volumes:
+      - ultranet_db:/app/ultranet_db
+    networks:
+      - ultranet-mesh
+    mem_limit: 32g
+    logging:
+      driver: json-file
+      options:
+        max-size: 200m
+        max-file: "5"
+    labels:
+      com.ultranet.version: "7.1"
+      com.ultranet.network: Mainnet
+      com.ultranet.role: Validator
+
+networks:
+  ultranet-mesh:
+    driver: bridge
+
+volumes:
+  ultranet_db:
+    name: ultranet_mainnet_data

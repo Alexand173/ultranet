@@ -1,0 +1,38 @@
+[Unit]
+Description=UltraNet v7.1 Sovereign Validator Node
+# Original UltraNet service configuration © 2026 Vladan Jotov; ISC License.
+After=network-online.target
+Wants=network-online.target
+Documentation=https://github.com/your-repo/UltraNet_Linux/blob/main/VALIDATOR_GUIDE.md
+
+[Service]
+Type=simple
+User=ultranet
+Group=ultranet
+WorkingDirectory=/opt/ultranet
+EnvironmentFile=-/etc/ultranet/ultranet.env
+ExecStart=/opt/ultranet/target/release/UltraNet
+
+# The database path is supplied by /etc/ultranet/ultranet.env.
+StateDirectory=ultranet
+LimitNOFILE=65535
+MemoryMax=31G
+CPUWeight=100
+
+Restart=always
+RestartSec=5s
+StartLimitIntervalSec=0
+
+# Reduce the blast radius of a compromised node process.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/ultranet
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ultranet
+
+[Install]
+WantedBy=multi-user.target

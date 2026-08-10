@@ -1,0 +1,11 @@
+# Original UltraNet reverse-proxy configuration © 2026 Vladan Jotov; ISC License.
+# Replace the example hostnames with real DNS names.
+# The API process listens on 127.0.0.1:8081 and the Next.js site on 127.0.0.1:3000.
+
+api.example.com {
+    reverse_proxy 127.0.0.1:8081
+}
+
+dashboard.example.com {
+    reverse_proxy 127.0.0.1:3000
+}

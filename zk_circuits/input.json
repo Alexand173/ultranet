@@ -1,0 +1,10 @@
+{
+    "amount": "100",
+    "recipient": "123",
+    "timestamp": "1700000000",
+    "merkle_root": "0",
+    "nullifier": "0",
+    "block_height": "1000",
+    "sender_balance": "1000",
+    "sender_public_key": "0"
+}

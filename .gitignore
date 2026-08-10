@@ -1,0 +1,55 @@
+# Private keys - NEVER commit
+sovereign_keys.json
+sovereign_keys*.json
+owner1_key.json
+owner1_key*.json
+wallet*.json
+
+# Compiled files
+target/
+*.rs.bk
+*.pdb
+*.log
+*.tmp
+*.swp
+*.bak
+*.db
+
+# Databases
+ultranet_db/
+ultranet_p2p_db/
+test_db/
+
+# Node modules and frontend builds
+website/node_modules/
+website/.next/
+website/out/
+website/dist/
+
+# Documents, scripts, and temporary files
+*.docx
+*.m
+*.html
+*.html:Zone.Identifier
+*:Zone.Identifier
+*.mat
+*.txt
+*.sh
+*.ptau
+*.zkey
+*.wtns
+*.r1cs
+*.sym
+*~
+.DS_Store
+logs/
+stats/
+dag/
+.kombai/
+BEKAP3/
+ultranet*.log
+debug.log_Gemini*
+node_modules/
+_Gemini*
+Cargo.toml:24:1
+src/main.rs:3134-3351

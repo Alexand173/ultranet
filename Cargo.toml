@@ -1,0 +1,119 @@
+[package]
+name = "UltraNet"
+version = "3.0.0"
+edition = "2021"
+authors = ["Vladan Jotov"]
+license = "ISC"
+
+[lib]
+name = "UltraNet"
+path = "src/lib.rs"
+
+[dependencies]
+# Osnovne
+sha3 = "0.10"
+rand = "0.8"
+rayon = "1.7"
+hex = "0.4"
+chrono = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+parking_lot = "0.12"
+zeroize = "1.7"
+subtle = "2.4"
+futures = "0.3"
+byteorder = "1.4.3"
+
+
+reqwest = { version = "0.11", features = ["json"] }
+
+# ✅ Kvantna otpornost (Dilithium) - STABILNA VERZIJA
+pqcrypto-dilithium = "0.5"
+pqcrypto-traits = "0.3"
+
+# BLS agregacija
+bls-signatures = "0.13"
+
+# ZK-SNARKs
+bellman = "0.14"
+bls12_381 = "0.8"
+pairing = "0.23"
+ff = "0.13"
+rand_core = "0.6"
+
+# REST API
+actix-web = "4.4"
+actix-files = "0.6"
+actix-cors = "0.6"
+serde_json = "1.0"
+tokio = { version = "1.34", features = ["full"] }
+
+libp2p = { version = "0.52", features = [
+    "tcp",
+    "dns",
+    "noise",
+    "yamux",
+    "kad",
+    "gossipsub",
+    "tokio",
+    "mdns",
+    "macros",
+    "request-response",
+    "identify"
+] }
+
+
+
+async-trait = "0.1"
+
+ark-serialize = "0.4"
+ark-ff = "0.4" 
+ark-relations = "0.4"
+ark-r1cs-std = "0.4"
+ark-snark = "0.4"
+ark-snarkjs = "0.2.0"
+ark-std = "0.4"
+ark-bls12-381 = "0.4"
+ark-groth16 = "0.4"
+ark-crypto-primitives = "0.4"
+ark-poly = "0.4"
+ark-ec = "0.4"
+
+# Asinhroni validatori
+
+tokio-stream = "0.1"
+dashmap = "5.5"
+
+sled = "0.34"
+
+rkyv = "0.7"
+
+
+     
+
+
+
+blake3 = "1.5"
+ed25519-dalek = { version = "2.1", features = ["serde"] }
+
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+
+rocksdb = "0.24"
+num_cpus = "1.16"
+prometheus = { version = "0.13", features = ["process"] }
+clap = { version = "4.4", features = ["derive"] }
+
+# ✅ PRAVI MOVE VM - APTOS VERZIJA!
+move-binary-format = { git = "https://github.com/aptos-labs/aptos-core", package = "move-binary-format" }
+move-core-types = { git = "https://github.com/aptos-labs/aptos-core", package = "move-core-types" }
+move-vm-runtime = { git = "https://github.com/aptos-labs/aptos-core", package = "move-vm-runtime" }
+move-stdlib = { git = "https://github.com/aptos-labs/aptos-core", package = "move-stdlib" }
+move-vm-types = { git = "https://github.com/aptos-labs/aptos-core", package = "move-vm-types" }
+move-table-extension = { git = "https://github.com/aptos-labs/aptos-core", package = "move-table-extension" }
+
+# ✅ FHE (Fully Homomorphic Encryption) - Zama TFHE-rs
+tfhe = { version = "0.7", features = ["integer", "x86_64-unix", "boolean"] }
