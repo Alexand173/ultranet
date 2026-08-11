@@ -41,6 +41,7 @@ pub struct AuthConfig {
     pub challenge_ttl_seconds: u64,
     pub session_ttl_seconds: u64,
     pub secure_cookie: bool,
+    pub cookie_domain: Option<String>,
 }
 
 impl AuthConfig {
@@ -81,12 +82,20 @@ impl AuthConfig {
                 return Err("ULTRANET_SESSION_COOKIE_SECURE must be valid UTF-8".into())
             }
         };
+        let cookie_domain = match env::var("ULTRANET_AUTH_COOKIE_DOMAIN") {
+            Ok(value) => Some(validate_cookie_domain(&value)?),
+            Err(env::VarError::NotPresent) => None,
+            Err(env::VarError::NotUnicode(_)) => {
+                return Err("ULTRANET_AUTH_COOKIE_DOMAIN must be valid UTF-8".into())
+            }
+        };
 
         Ok(Self {
             authorized_node_identifiers,
             challenge_ttl_seconds,
             session_ttl_seconds,
             secure_cookie,
+            cookie_domain,
         })
     }
 
@@ -96,8 +105,31 @@ impl AuthConfig {
             challenge_ttl_seconds: DEFAULT_CHALLENGE_TTL_SECONDS,
             session_ttl_seconds: DEFAULT_SESSION_TTL_SECONDS,
             secure_cookie: false,
+            cookie_domain: None,
         }
     }
+}
+
+fn validate_cookie_domain(raw: &str) -> Result<String, String> {
+    let domain = raw.trim().trim_start_matches('.').to_ascii_lowercase();
+    let valid = !domain.is_empty()
+        && domain.len() <= 253
+        && !domain.contains("..")
+        && domain
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '-'))
+        && !domain.starts_with('-')
+        && !domain.ends_with('-')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.');
+
+    if !valid {
+        return Err(
+            "ULTRANET_AUTH_COOKIE_DOMAIN must be a hostname without a scheme, path, whitespace, or empty labels"
+                .into(),
+        );
+    }
+    Ok(domain)
 }
 
 fn parse_bounded_seconds(
@@ -455,6 +487,18 @@ mod tests {
         );
         assert!(validate_node_identifier("a".repeat(63).as_str()).is_err());
         assert!(validate_node_identifier(&format!("{}z", "a".repeat(63))).is_err());
+    }
+
+    #[test]
+    fn cookie_domains_are_safe_hostnames() {
+        assert_eq!(
+            validate_cookie_domain(".UltraNetwork.cc").unwrap(),
+            "ultranetwork.cc"
+        );
+        assert!(validate_cookie_domain("https://ultranetwork.cc").is_err());
+        assert!(validate_cookie_domain("ultranetwork.cc/api").is_err());
+        assert!(validate_cookie_domain("ultranet..cc").is_err());
+        assert!(validate_cookie_domain("ultranet cc").is_err());
     }
 
     #[test]

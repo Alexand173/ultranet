@@ -9,6 +9,8 @@ export interface LiveNetworkStats {
   tps: number | null;
   provingTimeMs: number | null;
   activeAppchains: number | null;
+  mempoolSize: number | null;
+  totalTransactions: number | null;
   status: LiveMetricStatus;
   updatedAt: string | null;
 }
@@ -52,6 +54,8 @@ export function emptyNetworkStats(status: LiveMetricStatus = "loading"): LiveNet
     tps: null,
     provingTimeMs: null,
     activeAppchains: null,
+    mempoolSize: null,
+    totalTransactions: null,
     status,
     updatedAt: null,
   };
@@ -68,6 +72,8 @@ export function normalizeNetworkStats(payload: StatsPayload): LiveNetworkStats {
     tps: parseNumber(data.tps),
     provingTimeMs: parseNumber(data.last_proving_time_ms),
     activeAppchains: parseNumber(data.active_appchains),
+    mempoolSize: parseNumber(data.mempool_size),
+    totalTransactions: parseNumber(data.total_transactions),
     status: payload.success === false ? "unavailable" : "live",
     updatedAt: new Date().toISOString(),
   };

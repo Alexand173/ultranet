@@ -47,6 +47,8 @@ export default function ShardedStateTerminal({ className }: { className?: string
     tps: null,
     provingTimeMs: null,
     activeAppchains: null,
+    mempoolSize: null,
+    totalTransactions: null,
     status: "loading",
     updatedAt: null,
   });

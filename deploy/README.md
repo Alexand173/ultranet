@@ -40,7 +40,7 @@ The `/login` page uses a short-lived Dilithium challenge instead of accepting an
 4. The node verifies the signature, derived identifier, allowlist, expiry, and one-time challenge, then creates a Sled-backed session.
 5. The node sets a `Secure`, `HttpOnly`, `SameSite=Lax` session cookie plus a readable CSRF cookie. Unsafe session-authenticated requests must mirror the CSRF value in `X-UltraNet-CSRF`.
 
-Set `ULTRANET_SESSION_COOKIE_SECURE=true` for HTTPS production. Set it to `false` only for local HTTP development. Browser login is intentionally disabled when the allowlist is empty; bearer-token automation remains available. Never put `ULTRANET_ADMIN_TOKEN`, session tokens, or private keys in frontend source, local storage, URLs, or deployment artifacts.
+Set `ULTRANET_SESSION_COOKIE_SECURE=true` for HTTPS production. Set it to `false` only for local HTTP development. When the dashboard and API use sibling HTTPS subdomains, set `ULTRANET_AUTH_COOKIE_DOMAIN=ultranetwork.cc` so the HttpOnly session cookie and readable CSRF cookie are shared across those subdomains; leave it unset for single-origin/local deployments. Browser login is intentionally disabled when the allowlist is empty; bearer-token automation remains available. Never put `ULTRANET_ADMIN_TOKEN`, session tokens, or private keys in frontend source, local storage, URLs, or deployment artifacts.
 
 ### Offline CLI signing
 

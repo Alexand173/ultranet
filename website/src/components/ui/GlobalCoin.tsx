@@ -39,9 +39,14 @@ export default function GlobalCoin() {
     return () => window.removeEventListener("mousemove", handleMouseMove);
   }, [mouseX, mouseY]);
 
-  // The Command Center home page already features the coin centrally (CoinNexus),
-  // so the persistent corner coin is hidden there to avoid duplication.
-  if (pathname === "/" || pathname === "/docs/whitepaper" || pathname === "/login") return null;
+  // The Command Center home page and focused auth/operator surfaces already have
+  // their own visual hierarchy, so the persistent corner coin stays hidden there.
+  if (
+    pathname === "/" ||
+    pathname === "/docs/whitepaper" ||
+    pathname === "/login" ||
+    pathname.startsWith("/operator")
+  ) return null;
 
   return (
     <div className="fixed bottom-8 right-8 z-[100] pointer-events-none hidden lg:block">

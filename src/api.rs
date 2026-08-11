@@ -269,26 +269,32 @@ fn auth_error_response(error: AuthError) -> HttpResponse {
 }
 
 fn session_cookie(auth: &AuthService, token: &str) -> actix_web::cookie::Cookie<'static> {
-    actix_web::cookie::Cookie::build(SESSION_COOKIE_NAME, token.to_string())
+    let mut cookie = actix_web::cookie::Cookie::build(SESSION_COOKIE_NAME, token.to_string())
         .path("/")
         .http_only(true)
         .secure(auth.config.secure_cookie)
         .same_site(actix_web::cookie::SameSite::Lax)
         .max_age(actix_web::cookie::time::Duration::seconds(
             auth.config.session_ttl_seconds as i64,
-        ))
-        .finish()
+        ));
+    if let Some(domain) = auth.config.cookie_domain.as_deref() {
+        cookie = cookie.domain(domain.to_string());
+    }
+    cookie.finish()
 }
 
 fn csrf_cookie(auth: &AuthService, token: &str) -> actix_web::cookie::Cookie<'static> {
-    actix_web::cookie::Cookie::build(CSRF_COOKIE_NAME, token.to_string())
+    let mut cookie = actix_web::cookie::Cookie::build(CSRF_COOKIE_NAME, token.to_string())
         .path("/")
         .secure(auth.config.secure_cookie)
         .same_site(actix_web::cookie::SameSite::Lax)
         .max_age(actix_web::cookie::time::Duration::seconds(
             auth.config.session_ttl_seconds as i64,
-        ))
-        .finish()
+        ));
+    if let Some(domain) = auth.config.cookie_domain.as_deref() {
+        cookie = cookie.domain(domain.to_string());
+    }
+    cookie.finish()
 }
 
 fn clear_cookie(name: &str) -> actix_web::cookie::Cookie<'static> {
@@ -1687,8 +1693,8 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
 #[cfg(test)]
 mod configuration_tests {
     use super::{
-        configure_admin_routes, parse_cors_origins, require_admin_token, AdminAuthConfig,
-        AuthChallengeRequest, AuthLoginRequest,
+        configure_admin_routes, csrf_cookie, parse_cors_origins, require_admin_token,
+        session_cookie, AdminAuthConfig, AuthChallengeRequest, AuthLoginRequest,
     };
     use crate::{
         auth::{AuthConfig, AuthService, CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME},
@@ -1723,6 +1729,29 @@ mod configuration_tests {
     #[test]
     fn cors_parser_rejects_non_http_origins() {
         assert!(parse_cors_origins("dashboard.example.com").is_err());
+    }
+
+    #[test]
+    fn auth_cookies_use_configured_parent_domain() {
+        let path = format!("test_db_api_cookie_domain_{}", std::process::id());
+        let _ = fs::remove_dir_all(&path);
+        let storage = Arc::new(Storage::new(&path).expect("storage should open"));
+        let mut config = AuthConfig::for_tests("a".repeat(64));
+        config.secure_cookie = true;
+        config.cookie_domain = Some("ultranetwork.cc".into());
+        let auth = AuthService::new(storage.clone(), config);
+
+        let session = session_cookie(&auth, "session-token");
+        let csrf = csrf_cookie(&auth, "csrf-token");
+        assert_eq!(session.domain(), Some("ultranetwork.cc"));
+        assert_eq!(csrf.domain(), Some("ultranetwork.cc"));
+        assert_eq!(session.http_only(), Some(true));
+        assert_eq!(session.secure(), Some(true));
+        assert!(csrf.http_only().is_none());
+        assert_eq!(csrf.secure(), Some(true));
+
+        drop(storage);
+        let _ = fs::remove_dir_all(&path);
     }
 
     #[actix_web::test]
