@@ -100,12 +100,31 @@ pub struct PeerManager {
     pub banned: Vec<PeerId>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PeerAddressSource {
+    ConnectionEstablished,
+    MdnsDiscovered,
+    IdentifyAdvertised,
+}
+
+impl PeerAddressSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ConnectionEstablished => "connection_established",
+            Self::MdnsDiscovered => "mdns_discovered",
+            Self::IdentifyAdvertised => "identify_advertised",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PeerInfo {
     pub address: String,
+    pub address_source: PeerAddressSource,
     pub height: u64,
     pub version: u32,
     pub connected_at: u64,
+    pub established_connections: u32,
 }
 
 impl PeerManager {
@@ -117,22 +136,120 @@ impl PeerManager {
     }
 
     pub fn add_peer(&mut self, peer_id: PeerId, address: String) {
-        if !self.banned.contains(&peer_id) {
-            self.peers.entry(peer_id).or_insert(PeerInfo {
-                address,
+        self.register_address(peer_id, address, PeerAddressSource::MdnsDiscovered);
+    }
+
+    pub fn register_connection(&mut self, peer_id: PeerId, address: String) {
+        if self.banned.contains(&peer_id) {
+            println!(
+                "⚠️ PeerManager registration skipped: source=connection_established peer={peer_id} reason=banned tracked={}",
+                self.peers.len()
+            );
+            return;
+        }
+
+        let tracked_peers = self.peers.len();
+        if let Some(peer) = self.peers.get_mut(&peer_id) {
+            peer.established_connections = peer.established_connections.saturating_add(1);
+            if peer.address_source == PeerAddressSource::ConnectionEstablished {
+                peer.address = address.clone();
+            }
+            println!(
+                "🧭 PeerManager connection registered: source=connection_established peer={peer_id} address={address} established_connections={} address_source={} tracked={}",
+                peer.established_connections,
+                peer.address_source.as_str(),
+                tracked_peers
+            );
+            return;
+        }
+
+        self.insert_peer(
+            peer_id,
+            address,
+            PeerAddressSource::ConnectionEstablished,
+            1,
+        );
+    }
+
+    pub fn register_address(
+        &mut self,
+        peer_id: PeerId,
+        address: String,
+        source: PeerAddressSource,
+    ) {
+        if self.banned.contains(&peer_id) {
+            println!(
+                "⚠️ PeerManager registration skipped: source={} peer={peer_id} reason=banned tracked={}",
+                source.as_str(),
+                self.peers.len()
+            );
+            return;
+        }
+
+        let tracked_peers = self.peers.len();
+        if let Some(peer) = self.peers.get_mut(&peer_id) {
+            if source >= peer.address_source {
+                let previous_source = peer.address_source;
+                peer.address = address.clone();
+                peer.address_source = source;
+                println!(
+                    "🔄 PeerManager address promoted: peer={peer_id} from={} to={} address={address} established_connections={} tracked={}",
+                    previous_source.as_str(),
+                    source.as_str(),
+                    peer.established_connections,
+                    tracked_peers
+                );
+            } else {
+                println!(
+                    "ℹ️ PeerManager address ignored: source={} peer={peer_id} canonical_source={} canonical_address={} tracked={}",
+                    source.as_str(),
+                    peer.address_source.as_str(),
+                    peer.address,
+                    tracked_peers
+                );
+            }
+            return;
+        }
+
+        self.insert_peer(peer_id, address, source, 0);
+    }
+
+    fn insert_peer(
+        &mut self,
+        peer_id: PeerId,
+        address: String,
+        address_source: PeerAddressSource,
+        established_connections: u32,
+    ) {
+        self.peers.insert(
+            peer_id,
+            PeerInfo {
+                address: address.clone(),
+                address_source,
                 height: 0,
                 version: 0,
                 connected_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_secs(),
-            });
-        }
+                established_connections,
+            },
+        );
+        println!(
+            "🧭 PeerManager registered peer: source={} peer={peer_id} address={address} established_connections={established_connections} tracked={}",
+            address_source.as_str(),
+            self.peers.len()
+        );
     }
 
     pub fn update_height(&mut self, peer_id: &PeerId, height: u64) {
         if let Some(peer) = self.peers.get_mut(peer_id) {
             peer.height = height;
+            println!("📊 PeerManager status update: peer={peer_id} height={height} tracked=true");
+        } else {
+            println!(
+                "⚠️ PeerManager status for untracked peer: peer={peer_id} height={height} tracked=false"
+            );
         }
     }
 
@@ -142,8 +259,46 @@ impl PeerManager {
         peers.iter().take(count).map(|(id, _)| **id).collect()
     }
 
+    pub fn connection_closed(&mut self, peer_id: &PeerId, remaining_connections: u32) {
+        let Some(peer) = self.peers.get_mut(peer_id) else {
+            println!(
+                "🧹 PeerManager connection close for untracked peer: peer={peer_id} remaining_connections={remaining_connections} tracked={}",
+                self.peers.len()
+            );
+            return;
+        };
+
+        peer.established_connections = remaining_connections;
+        if remaining_connections > 0 {
+            println!(
+                "ℹ️ PeerManager retained peer after partial close: peer={peer_id} remaining_connections={remaining_connections} address_source={} tracked={}",
+                peer.address_source.as_str(),
+                self.peers.len()
+            );
+            return;
+        }
+
+        if peer.address_source == PeerAddressSource::ConnectionEstablished {
+            let removed = self.peers.remove(peer_id).is_some();
+            println!(
+                "🧹 PeerManager removed ephemeral connection record: peer={peer_id} removed={removed} tracked={}",
+                self.peers.len()
+            );
+        } else {
+            println!(
+                "ℹ️ PeerManager retained discovered peer after final close: peer={peer_id} address_source={} tracked={}",
+                peer.address_source.as_str(),
+                self.peers.len()
+            );
+        }
+    }
+
     pub fn remove_peer(&mut self, peer_id: &PeerId) {
-        self.peers.remove(peer_id);
+        let removed = self.peers.remove(peer_id).is_some();
+        println!(
+            "🧹 PeerManager removal: peer={peer_id} removed={removed} tracked={}",
+            self.peers.len()
+        );
     }
 
     pub fn ban_peer(&mut self, peer_id: PeerId) {
@@ -329,29 +484,62 @@ impl P2PNode {
                 }
             }
             SwarmEvent::Behaviour(UltraEvent::Mdns(mdns::Event::Discovered(list))) => {
+                println!("🔍 mDNS discovery event: candidates={}", list.len());
                 for (peer_id, addr) in list {
-                    println!("🔍 Discovered peer: {} at {}", peer_id, addr);
-                    self.peer_manager.lock().add_peer(peer_id, addr.to_string());
+                    println!("🔍 mDNS discovered peer: {} at {}", peer_id, addr);
+                    self.peer_manager.lock().register_address(
+                        peer_id,
+                        addr.to_string(),
+                        PeerAddressSource::MdnsDiscovered,
+                    );
                 }
             }
-            SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                println!("✅ Connected to: {}", peer_id);
+            SwarmEvent::ConnectionEstablished {
+                peer_id,
+                endpoint,
+                num_established,
+                ..
+            } => {
+                let remote_address = endpoint.get_remote_address().clone();
+                println!(
+                    "✅ libp2p connection established: peer={peer_id} remote_address={remote_address} endpoint={endpoint:?} simultaneous_connections={num_established}"
+                );
+                self.peer_manager
+                    .lock()
+                    .register_connection(peer_id, remote_address.to_string());
                 self.send_status().await;
             }
-            SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                println!("❌ Disconnected from: {}", peer_id);
-                self.peer_manager.lock().remove_peer(&peer_id);
+            SwarmEvent::ConnectionClosed {
+                peer_id,
+                num_established,
+                cause,
+                ..
+            } => {
+                println!(
+                    "❌ libp2p connection closed: peer={peer_id} remaining_connections={num_established} cause={cause:?}"
+                );
+                self.peer_manager
+                    .lock()
+                    .connection_closed(&peer_id, num_established);
             }
             SwarmEvent::Behaviour(UltraEvent::Identify(identify::Event::Received {
                 peer_id,
                 info,
             })) => {
                 println!(
-                    "🆔 Peer identified: {} (version: {})",
-                    peer_id, info.protocol_version
+                    "🆔 libp2p identify received: peer={peer_id} protocol={} listen_addresses={}",
+                    info.protocol_version,
+                    info.listen_addrs.len()
                 );
-                // Dodaj u Kademlia routing tabelu čim identifikujemo peer-a
+                // Identify advertises addresses suitable for future dials, so it
+                // promotes the connection-observed address to the canonical record.
                 for addr in info.listen_addrs {
+                    println!("🧭 Kademlia learned peer address: peer={peer_id} address={addr}");
+                    self.peer_manager.lock().register_address(
+                        peer_id,
+                        addr.to_string(),
+                        PeerAddressSource::IdentifyAdvertised,
+                    );
                     self.swarm
                         .behaviour_mut()
                         .kademlia
@@ -506,8 +694,11 @@ impl P2PNode {
                 }
                 _ = sync_timer.tick() => {
                     self.sync_chain().await;
-                    let count = self.peer_manager.lock().peers.len();
-                    println!("⏰ Heartbeat - Active peers: {}", count);
+                    let tracked_peers = self.peer_manager.lock().peers.len();
+                    let connected_peers = self.swarm.connected_peers().count();
+                    println!(
+                        "⏰ Heartbeat - PeerManager tracked peers: {tracked_peers}; libp2p connected peers: {connected_peers}"
+                    );
                 }
                 _ = discovery_timer.tick() => {
                     println!("🔍 P2P Discovery: Running iterative query...");
@@ -523,5 +714,72 @@ impl P2PNode {
     pub fn stop(&mut self) {
         self.running = false;
         println!("🛑 P2P Node stopping...");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_registration_waits_for_final_close() {
+        let peer_id = PeerId::random();
+        let mut manager = PeerManager::new();
+
+        manager.register_connection(peer_id, "/ip4/203.0.113.10/tcp/9000".into());
+        manager.register_connection(peer_id, "/ip4/203.0.113.10/tcp/9001".into());
+
+        let peer = manager.peers.get(&peer_id).expect("peer should be tracked");
+        assert_eq!(peer.established_connections, 2);
+        assert_eq!(
+            peer.address_source,
+            PeerAddressSource::ConnectionEstablished
+        );
+
+        manager.connection_closed(&peer_id, 1);
+        assert_eq!(
+            manager
+                .peers
+                .get(&peer_id)
+                .expect("peer should remain during a second connection")
+                .established_connections,
+            1
+        );
+
+        manager.connection_closed(&peer_id, 0);
+        assert!(!manager.peers.contains_key(&peer_id));
+    }
+
+    #[test]
+    fn identify_promotes_address_and_mdns_cannot_downgrade_it() {
+        let peer_id = PeerId::random();
+        let mut manager = PeerManager::new();
+
+        manager.register_connection(peer_id, "/ip4/203.0.113.10/tcp/9000".into());
+        manager.register_address(
+            peer_id,
+            "/ip4/198.51.100.20/tcp/9000/p2p/peer".into(),
+            PeerAddressSource::IdentifyAdvertised,
+        );
+        manager.register_address(
+            peer_id,
+            "/ip4/192.0.2.5/tcp/9000/p2p/peer".into(),
+            PeerAddressSource::MdnsDiscovered,
+        );
+
+        let peer = manager.peers.get(&peer_id).expect("peer should be tracked");
+        assert_eq!(peer.address, "/ip4/198.51.100.20/tcp/9000/p2p/peer");
+        assert_eq!(peer.address_source, PeerAddressSource::IdentifyAdvertised);
+        assert_eq!(peer.established_connections, 1);
+
+        manager.connection_closed(&peer_id, 0);
+        assert_eq!(
+            manager
+                .peers
+                .get(&peer_id)
+                .expect("identified peers remain as known records after disconnect")
+                .established_connections,
+            0
+        );
     }
 }
