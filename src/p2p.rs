@@ -335,6 +335,24 @@ pub struct P2PNode {
 pub const BOOTNODES: &[&str] =
     &["/ip4/167.233.161.115/tcp/9000/p2p/12D3KooWRFWD4VDW7g2t4VEmajjyfrGh5ZuQUoPVxFeq7ffRetgP"];
 
+fn describe_disconnect_cause<E: std::fmt::Debug>(
+    cause: Option<&libp2p::swarm::ConnectionError<E>>,
+) -> (&'static str, String) {
+    match cause {
+        None => (
+            "clean",
+            "active close completed without an error".to_string(),
+        ),
+        Some(libp2p::swarm::ConnectionError::IO(error)) => ("io", error.to_string()),
+        Some(libp2p::swarm::ConnectionError::KeepAliveTimeout) => (
+            "keep_alive_timeout",
+            "connection keep-alive timeout expired".to_string(),
+        ),
+        #[allow(deprecated)]
+        Some(libp2p::swarm::ConnectionError::Handler(error)) => ("handler", format!("{error:?}")),
+    }
+}
+
 impl P2PNode {
     pub async fn new(
         blockchain: Arc<TokioRwLock<UltraBlockchain>>,
@@ -511,12 +529,20 @@ impl P2PNode {
             }
             SwarmEvent::ConnectionClosed {
                 peer_id,
+                connection_id,
+                endpoint,
                 num_established,
                 cause,
-                ..
             } => {
+                let (reason_kind, reason_detail) = describe_disconnect_cause(cause.as_ref());
                 println!(
-                    "❌ libp2p connection closed: peer={peer_id} remaining_connections={num_established} cause={cause:?}"
+                    "❌ libp2p connection closed: peer={peer_id} connection_id={connection_id:?} endpoint_role={} remote_address={} remaining_connections={num_established} reason_kind={reason_kind} reason_detail={reason_detail:?} cause={cause:?}",
+                    if endpoint.is_dialer() {
+                        "dialer"
+                    } else {
+                        "listener"
+                    },
+                    endpoint.get_remote_address()
                 );
                 self.peer_manager
                     .lock()
