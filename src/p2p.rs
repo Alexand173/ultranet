@@ -12,9 +12,16 @@ use libp2p::{
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::{
+    collections::HashMap,
+    fs::{self, OpenOptions},
+    io::{Error as IoError, ErrorKind, Write},
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::RwLock as TokioRwLock;
 
 use crate::{Transaction, UltraBlock, UltraBlockchain};
@@ -325,6 +332,83 @@ impl Default for PeerManager {
 const PERSISTENT_DIAL_TICK: Duration = Duration::from_secs(1);
 const PERSISTENT_DIAL_INITIAL_BACKOFF: Duration = Duration::from_secs(5);
 const PERSISTENT_DIAL_MAX_BACKOFF: Duration = Duration::from_secs(300);
+const P2P_IDENTITY_FILE_NAME: &str = "p2p_identity.key";
+
+fn persistent_identity_path() -> PathBuf {
+    let db_path = std::env::var("ULTRANET_DB_PATH").unwrap_or_else(|_| "ultranet_db".to_string());
+    PathBuf::from(db_path).join(P2P_IDENTITY_FILE_NAME)
+}
+
+fn validate_private_identity_file(path: &Path) -> Result<(), IoError> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() {
+        return Err(IoError::new(
+            ErrorKind::InvalidData,
+            "persistent P2P identity must be a regular file",
+        ));
+    }
+
+    #[cfg(unix)]
+    if metadata.permissions().mode() & 0o077 != 0 {
+        return Err(IoError::new(
+            ErrorKind::PermissionDenied,
+            "persistent P2P identity must not be group/other-readable",
+        ));
+    }
+
+    Ok(())
+}
+
+fn load_or_create_persistent_identity(path: &Path) -> Result<identity::Keypair, IoError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => {
+            validate_private_identity_file(path)?;
+            let encoded = fs::read(path)?;
+            let keypair = identity::Keypair::from_protobuf_encoding(&encoded).map_err(|error| {
+                IoError::new(
+                    ErrorKind::InvalidData,
+                    format!("invalid persistent P2P identity: {error}"),
+                )
+            })?;
+            if keypair.key_type() != identity::KeyType::Ed25519 {
+                return Err(IoError::new(
+                    ErrorKind::InvalidData,
+                    "persistent P2P identity must be an Ed25519 key",
+                ));
+            }
+            Ok(keypair)
+        }
+        Err(error) if error.kind() != ErrorKind::NotFound => Err(error),
+        Err(_) => {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+
+            let keypair = identity::Keypair::generate_ed25519();
+            let encoded = keypair.to_protobuf_encoding().map_err(|error| {
+                IoError::new(
+                    ErrorKind::InvalidData,
+                    format!("cannot encode persistent P2P identity: {error}"),
+                )
+            })?;
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            let mut file = match options.open(path) {
+                Ok(file) => file,
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    return load_or_create_persistent_identity(path)
+                }
+                Err(error) => return Err(error),
+            };
+            file.write_all(&encoded)?;
+            file.sync_all()?;
+            validate_private_identity_file(path)?;
+            Ok(keypair)
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct PersistentPeerTarget {
@@ -520,10 +604,9 @@ pub struct P2PNode {
 
 /// Public UltraNet bootstrap nodes.
 ///
-/// This address is the live VPS node currently advertised on port 9000.
-/// The node identity is regenerated on every process start, so this address
-/// must be updated whenever the bootstrap node is restarted until identity
-/// persistence is implemented.
+/// This address is the live VPS node currently advertised on port 9000. The
+/// peer ID is stable once the node has created its persistent identity file;
+/// update this fallback if the bootstrap node intentionally rotates identity.
 pub const BOOTNODES: &[&str] =
     &["/ip4/167.233.161.115/tcp/9000/p2p/12D3KooWRFWD4VDW7g2t4VEmajjyfrGh5ZuQUoPVxFeq7ffRetgP"];
 
@@ -549,9 +632,19 @@ impl P2PNode {
     pub async fn new(
         blockchain: Arc<TokioRwLock<UltraBlockchain>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        // 1. Generiši identitet
-        let local_key = identity::Keypair::generate_ed25519();
+        // 1. Load or create the stable node identity in the configured state directory.
+        let identity_path = persistent_identity_path();
+        let local_key = load_or_create_persistent_identity(&identity_path).map_err(|error| {
+            format!(
+                "cannot load/create persistent P2P identity {}: {error}",
+                identity_path.display()
+            )
+        })?;
         let peer_id = local_key.public().to_peer_id();
+        println!(
+            "🔑 Persistent P2P identity loaded: path={} peer={peer_id}",
+            identity_path.display()
+        );
 
         // 2. Transport (TCP + Noise autentikacija + Yamux multipleksiranje)
         let transport = tcp::tokio::Transport::default()
@@ -1022,6 +1115,60 @@ impl P2PNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temporary_identity_path(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "ultranet-p2p-{label}-{}-{nonce}/p2p_identity.key",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn persistent_identity_round_trips_with_a_stable_peer_id() {
+        let path = temporary_identity_path("roundtrip");
+        let first = load_or_create_persistent_identity(&path).expect("identity should be created");
+        let first_peer_id = first.public().to_peer_id();
+
+        let second = load_or_create_persistent_identity(&path).expect("identity should load");
+        assert_eq!(second.public().to_peer_id(), first_peer_id);
+        assert_eq!(second.key_type(), identity::KeyType::Ed25519);
+
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn persistent_identity_rejects_corrupt_or_world_readable_files() {
+        let path = temporary_identity_path("validation");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"not-a-libp2p-key").unwrap();
+        #[cfg(unix)]
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(load_or_create_persistent_identity(&path).is_err());
+
+        let valid_path = temporary_identity_path("permissions");
+        let _ = load_or_create_persistent_identity(&valid_path).unwrap();
+        #[cfg(unix)]
+        {
+            fs::set_permissions(&valid_path, fs::Permissions::from_mode(0o640)).unwrap();
+            let error = load_or_create_persistent_identity(&valid_path)
+                .expect_err("group-readable identity must be rejected");
+            assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+        }
+
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+        let _ = fs::remove_dir_all(valid_path.parent().unwrap());
+    }
 
     #[test]
     fn connection_registration_waits_for_final_close() {

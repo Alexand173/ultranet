@@ -47,10 +47,10 @@ Set `ULTRANET_SESSION_COOKIE_SECURE=true` for HTTPS production. Set it to `false
 Set `ULTRANET_PERSISTENT_PEERS` when validators must maintain application-level connections instead of relying only on short-lived Kademlia discovery queries. Use a comma-separated list of complete libp2p multiaddresses, including the remote peer ID:
 
 ```dotenv
-ULTRANET_PERSISTENT_PEERS=/ip4/167.233.161.115/tcp/9000/p2p/12D3KooWRFWD4VDW7g2t4VEmajjyfrGh5ZuQUoPVxFeq7ffRetgP
+ULTRANET_PERSISTENT_PEERS=/ip4/203.0.113.10/tcp/9000/p2p/12D3KooW...
 ```
 
-Configure reciprocal addresses on both validators when using a two-node topology. The value is a public routing setting, not a secret, but it must contain the current peer ID because node identities are regenerated on process start until identity persistence is implemented. Each configured target is dialed at startup, kept alive with Ping, and retried with bounded backoff after the final connection closes. Kademlia discovery remains enabled for broader discovery and is not itself treated as a persistent validator relationship.
+Configure reciprocal addresses on both validators when using a two-node topology. The value is a public routing setting, not a secret, but it must contain the peer ID from the target node's startup log. The node stores its libp2p Ed25519 identity at `ULTRANET_DB_PATH/p2p_identity.key` with owner-only permissions, so the peer ID remains stable across service restarts. If that file is intentionally deleted or rotated, regenerate both reciprocal addresses before restarting the peers. Each configured target is dialed at startup, kept alive with Ping, and retried with bounded backoff after the final connection closes. Kademlia discovery remains enabled for broader discovery and is not itself treated as a persistent validator relationship.
 
 Inspect the policy with:
 
