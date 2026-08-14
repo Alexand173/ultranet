@@ -59,7 +59,8 @@ libp2p = { version = "0.52", features = [
     "mdns",
     "macros",
     "request-response",
-    "identify"
+    "identify",
+    "ping"
 ] }
 
 

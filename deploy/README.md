@@ -42,6 +42,22 @@ The `/login` page uses a short-lived Dilithium challenge instead of accepting an
 
 Set `ULTRANET_SESSION_COOKIE_SECURE=true` for HTTPS production. Set it to `false` only for local HTTP development. When the dashboard and API use sibling HTTPS subdomains, set `ULTRANET_AUTH_COOKIE_DOMAIN=ultranetwork.cc` so the HttpOnly session cookie and readable CSRF cookie are shared across those subdomains; leave it unset for single-origin/local deployments. Browser login is intentionally disabled when the allowlist is empty; bearer-token automation remains available. Never put `ULTRANET_ADMIN_TOKEN`, session tokens, or private keys in frontend source, local storage, URLs, or deployment artifacts.
 
+### Persistent validator dials
+
+Set `ULTRANET_PERSISTENT_PEERS` when validators must maintain application-level connections instead of relying only on short-lived Kademlia discovery queries. Use a comma-separated list of complete libp2p multiaddresses, including the remote peer ID:
+
+```dotenv
+ULTRANET_PERSISTENT_PEERS=/ip4/167.233.161.115/tcp/9000/p2p/12D3KooWRFWD4VDW7g2t4VEmajjyfrGh5ZuQUoPVxFeq7ffRetgP
+```
+
+Configure reciprocal addresses on both validators when using a two-node topology. The value is a public routing setting, not a secret, but it must contain the current peer ID because node identities are regenerated on process start until identity persistence is implemented. Each configured target is dialed at startup, kept alive with Ping, and retried with bounded backoff after the final connection closes. Kademlia discovery remains enabled for broader discovery and is not itself treated as a persistent validator relationship.
+
+Inspect the policy with:
+
+```bash
+journalctl -u ultranet.service -f | grep -Ei "Persistent|connection established|connection closed|Ping|PeerManager"
+```
+
 ### Offline CLI signing
 
 For operators who do not use UltraWallet, build `ultranet-auth` on the offline signing machine:

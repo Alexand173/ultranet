@@ -6,7 +6,7 @@ use futures::StreamExt;
 use libp2p::{
     core::upgrade::Version,
     gossipsub::{self, IdentTopic, MessageAuthenticity},
-    identify, identity, kad, mdns, noise,
+    identify, identity, kad, mdns, noise, ping,
     swarm::{Config as SwarmConfig, NetworkBehaviour, Swarm, SwarmEvent},
     tcp, yamux, Multiaddr, PeerId, Transport,
 };
@@ -14,7 +14,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock as TokioRwLock;
 
 use crate::{Transaction, UltraBlock, UltraBlockchain};
@@ -57,6 +57,7 @@ pub struct UltraBehaviour {
     pub mdns: mdns::tokio::Behaviour,
     pub identify: identify::Behaviour,
     pub kademlia: kad::Behaviour<kad::store::MemoryStore>,
+    pub ping: ping::Behaviour,
 }
 
 #[derive(Debug)]
@@ -65,6 +66,7 @@ pub enum UltraEvent {
     Mdns(mdns::Event),
     Identify(identify::Event),
     Kademlia(kad::Event),
+    Ping(ping::Event),
 }
 
 impl From<gossipsub::Event> for UltraEvent {
@@ -88,6 +90,12 @@ impl From<identify::Event> for UltraEvent {
 impl From<kad::Event> for UltraEvent {
     fn from(event: kad::Event) -> Self {
         UltraEvent::Kademlia(event)
+    }
+}
+
+impl From<ping::Event> for UltraEvent {
+    fn from(event: ping::Event) -> Self {
+        UltraEvent::Ping(event)
     }
 }
 
@@ -314,6 +322,189 @@ impl Default for PeerManager {
     }
 }
 
+const PERSISTENT_DIAL_TICK: Duration = Duration::from_secs(1);
+const PERSISTENT_DIAL_INITIAL_BACKOFF: Duration = Duration::from_secs(5);
+const PERSISTENT_DIAL_MAX_BACKOFF: Duration = Duration::from_secs(300);
+
+#[derive(Debug, Clone)]
+struct PersistentPeerTarget {
+    peer_id: PeerId,
+    address: Multiaddr,
+}
+
+fn parse_persistent_peer_targets(
+    raw: &str,
+    local_peer_id: &PeerId,
+) -> Result<Vec<PersistentPeerTarget>, String> {
+    let mut targets = Vec::new();
+
+    for raw_entry in raw.split(',') {
+        let entry = raw_entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+
+        let address = entry
+            .parse::<Multiaddr>()
+            .map_err(|error| format!("{entry}: invalid multiaddress: {error}"))?;
+        let peer_id = address
+            .iter()
+            .last()
+            .and_then(|protocol| match protocol {
+                libp2p::multiaddr::Protocol::P2p(peer_id) => Some(peer_id),
+                _ => None,
+            })
+            .ok_or_else(|| format!("{entry}: address must end with /p2p/<PeerId>"))?;
+
+        if peer_id == *local_peer_id {
+            return Err(format!(
+                "{entry}: persistent peer cannot be the local PeerId"
+            ));
+        }
+        if targets
+            .iter()
+            .any(|target: &PersistentPeerTarget| target.peer_id == peer_id)
+        {
+            return Err(format!("{entry}: duplicate persistent peer {peer_id}"));
+        }
+
+        targets.push(PersistentPeerTarget { peer_id, address });
+    }
+
+    Ok(targets)
+}
+
+fn configured_persistent_peer_targets(local_peer_id: &PeerId) -> Vec<PersistentPeerTarget> {
+    match std::env::var("ULTRANET_PERSISTENT_PEERS") {
+        Ok(raw) if !raw.trim().is_empty() => {
+            match parse_persistent_peer_targets(&raw, local_peer_id) {
+                Ok(targets) => {
+                    println!(
+                        "🔒 Persistent validator dials configured: targets={}",
+                        targets.len()
+                    );
+                    targets
+                }
+                Err(error) => {
+                    eprintln!(
+                        "⚠️ Invalid ULTRANET_PERSISTENT_PEERS; persistent dials disabled: {error}"
+                    );
+                    Vec::new()
+                }
+            }
+        }
+        Ok(_) | Err(std::env::VarError::NotPresent) => Vec::new(),
+        Err(error) => {
+            eprintln!(
+                "⚠️ Cannot read ULTRANET_PERSISTENT_PEERS; persistent dials disabled: {error}"
+            );
+            Vec::new()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PersistentDialStatus {
+    Waiting,
+    Dialing,
+    Connected,
+}
+
+#[derive(Debug, Clone)]
+struct PersistentDialState {
+    target: PersistentPeerTarget,
+    status: PersistentDialStatus,
+    attempts: u32,
+    next_attempt: Instant,
+}
+
+#[derive(Debug, Default)]
+struct PersistentDialManager {
+    peers: HashMap<PeerId, PersistentDialState>,
+}
+
+fn persistent_retry_delay(attempt: u32) -> Duration {
+    let exponent = attempt.saturating_sub(1).min(6);
+    let multiplier = 1u64 << exponent;
+    let seconds = PERSISTENT_DIAL_INITIAL_BACKOFF
+        .as_secs()
+        .saturating_mul(multiplier)
+        .min(PERSISTENT_DIAL_MAX_BACKOFF.as_secs());
+    Duration::from_secs(seconds)
+}
+
+impl PersistentDialManager {
+    fn new(targets: Vec<PersistentPeerTarget>) -> Self {
+        let next_attempt = Instant::now();
+        let peers = targets
+            .into_iter()
+            .map(|target| {
+                let peer_id = target.peer_id;
+                (
+                    peer_id,
+                    PersistentDialState {
+                        target,
+                        status: PersistentDialStatus::Waiting,
+                        attempts: 0,
+                        next_attempt,
+                    },
+                )
+            })
+            .collect();
+        Self { peers }
+    }
+
+    fn targets(&self) -> Vec<PersistentPeerTarget> {
+        self.peers
+            .values()
+            .map(|state| state.target.clone())
+            .collect()
+    }
+
+    fn is_configured(&self, peer_id: &PeerId) -> bool {
+        self.peers.contains_key(peer_id)
+    }
+
+    fn take_due_dials(&mut self, now: Instant) -> Vec<(PersistentPeerTarget, u32)> {
+        let mut due = Vec::new();
+        for state in self.peers.values_mut() {
+            if state.status == PersistentDialStatus::Waiting && now >= state.next_attempt {
+                state.status = PersistentDialStatus::Dialing;
+                due.push((state.target.clone(), state.attempts.saturating_add(1)));
+            }
+        }
+        due
+    }
+
+    fn mark_connected(&mut self, peer_id: &PeerId) {
+        if let Some(state) = self.peers.get_mut(peer_id) {
+            state.status = PersistentDialStatus::Connected;
+            state.attempts = 0;
+            state.next_attempt = Instant::now();
+        }
+    }
+
+    fn schedule_retry(&mut self, peer_id: &PeerId) -> Option<Duration> {
+        let state = self.peers.get_mut(peer_id)?;
+        state.status = PersistentDialStatus::Waiting;
+        state.attempts = state.attempts.saturating_add(1);
+        let delay = persistent_retry_delay(state.attempts);
+        state.next_attempt = Instant::now() + delay;
+        Some(delay)
+    }
+
+    fn counts(&self) -> (usize, usize, usize) {
+        self.peers.values().fold((0, 0, 0), |mut counts, state| {
+            match state.status {
+                PersistentDialStatus::Waiting => counts.0 += 1,
+                PersistentDialStatus::Dialing => counts.1 += 1,
+                PersistentDialStatus::Connected => counts.2 += 1,
+            }
+            counts
+        })
+    }
+}
+
 // ============================================================
 // 4. P2P NODE
 // ============================================================
@@ -323,6 +514,7 @@ pub struct P2PNode {
     pub peer_id: PeerId,
     pub blockchain: Arc<TokioRwLock<UltraBlockchain>>,
     pub peer_manager: Arc<Mutex<PeerManager>>,
+    persistent_dials: PersistentDialManager,
     pub running: bool,
 }
 
@@ -391,7 +583,14 @@ impl P2PNode {
             local_key.public(),
         ));
 
-        // 6. Kademlia DHT
+        // 6. Ping keep-alive
+        let ping = ping::Behaviour::new(
+            ping::Config::new()
+                .with_interval(Duration::from_secs(15))
+                .with_timeout(Duration::from_secs(10)),
+        );
+
+        // 7. Kademlia DHT
         let store = kad::store::MemoryStore::new(peer_id);
         let mut kad_config = kad::Config::default();
         kad_config.set_query_timeout(Duration::from_secs(5 * 60));
@@ -403,6 +602,7 @@ impl P2PNode {
             mdns,
             identify,
             kademlia,
+            ping,
         };
 
         // 7. Swarm
@@ -416,12 +616,15 @@ impl P2PNode {
         // 8. Subscribe na topic
         let topic = IdentTopic::new("ultra-net");
         swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
+        let persistent_dials =
+            PersistentDialManager::new(configured_persistent_peer_targets(&peer_id));
 
         Ok(Self {
             swarm,
             peer_id,
             blockchain,
             peer_manager: Arc::new(Mutex::new(PeerManager::new())),
+            persistent_dials,
             running: true,
         })
     }
@@ -482,6 +685,28 @@ impl P2PNode {
         Ok(())
     }
 
+    fn drive_persistent_dials(&mut self) {
+        let due_dials = self.persistent_dials.take_due_dials(Instant::now());
+
+        for (target, attempt) in due_dials {
+            match self.swarm.dial(target.address.clone()) {
+                Ok(()) => println!(
+                    "🔒 Persistent dial started: peer={} address={} attempt={attempt}",
+                    target.peer_id, target.address
+                ),
+                Err(error) => {
+                    let retry_delay = self.persistent_dials.schedule_retry(&target.peer_id);
+                    println!(
+                        "⚠️ Persistent dial rejected: peer={} address={} attempt={attempt} error={error:?} retry_in_seconds={}",
+                        target.peer_id,
+                        target.address,
+                        retry_delay.map_or(0, |delay| delay.as_secs())
+                    );
+                }
+            }
+        }
+    }
+
     // NAPOMENA: Ne koristimo eksplicitni tip `SwarmEvent<UltraEvent>` ovde -
     // u libp2p 0.52 `SwarmEvent` ima DVA generic parametra
     // (`TBehaviourOutEvent`, `THandlerErr`), a `THandlerErr` tip je dugačak i
@@ -499,6 +724,16 @@ impl P2PNode {
             })) => {
                 if let Ok(msg) = serde_json::from_slice::<NetworkMessage>(&message.data) {
                     self.handle_message(msg, message.source).await;
+                }
+            }
+            SwarmEvent::Behaviour(UltraEvent::Ping(event)) => {
+                if self.persistent_dials.is_configured(&event.peer) {
+                    if let Err(error) = event.result {
+                        eprintln!(
+                            "⚠️ Persistent peer ping failed: peer={} connection={:?} error={error}",
+                            event.peer, event.connection
+                        );
+                    }
                 }
             }
             SwarmEvent::Behaviour(UltraEvent::Mdns(mdns::Event::Discovered(list))) => {
@@ -522,6 +757,10 @@ impl P2PNode {
                 println!(
                     "✅ libp2p connection established: peer={peer_id} remote_address={remote_address} endpoint={endpoint:?} simultaneous_connections={num_established}"
                 );
+                if self.persistent_dials.is_configured(&peer_id) {
+                    self.persistent_dials.mark_connected(&peer_id);
+                    println!("🔒 Persistent peer connected: peer={peer_id}");
+                }
                 self.peer_manager
                     .lock()
                     .register_connection(peer_id, remote_address.to_string());
@@ -547,6 +786,27 @@ impl P2PNode {
                 self.peer_manager
                     .lock()
                     .connection_closed(&peer_id, num_established);
+                if num_established == 0 {
+                    if let Some(retry_delay) = self.persistent_dials.schedule_retry(&peer_id) {
+                        println!(
+                            "🔁 Persistent peer retry scheduled: peer={peer_id} delay_seconds={} reason_kind={reason_kind}",
+                            retry_delay.as_secs()
+                        );
+                    }
+                }
+            }
+            SwarmEvent::OutgoingConnectionError {
+                peer_id: Some(peer_id),
+                error,
+                ..
+            } => {
+                if self.persistent_dials.is_configured(&peer_id) {
+                    let retry_delay = self.persistent_dials.schedule_retry(&peer_id);
+                    println!(
+                        "⚠️ Persistent dial failed: peer={peer_id} error={error:?} retry_in_seconds={}",
+                        retry_delay.map_or(0, |delay| delay.as_secs())
+                    );
+                }
             }
             SwarmEvent::Behaviour(UltraEvent::Identify(identify::Event::Received {
                 peer_id,
@@ -708,22 +968,38 @@ impl P2PNode {
                 }
             }
         }
+        for target in self.persistent_dials.targets() {
+            self.swarm
+                .behaviour_mut()
+                .kademlia
+                .add_address(&target.peer_id, target.address.clone());
+            println!(
+                "🔒 Added persistent validator target: peer={} address={}",
+                target.peer_id, target.address
+            );
+        }
         let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
 
         let mut sync_timer = tokio::time::interval(Duration::from_secs(30));
         let mut discovery_timer = tokio::time::interval(Duration::from_secs(60));
+        let mut persistent_dial_timer = tokio::time::interval(PERSISTENT_DIAL_TICK);
 
         while self.running {
             tokio::select! {
                 event = self.swarm.select_next_some() => {
                     self.handle_event(event).await;
                 }
+                _ = persistent_dial_timer.tick() => {
+                    self.drive_persistent_dials();
+                }
                 _ = sync_timer.tick() => {
                     self.sync_chain().await;
                     let tracked_peers = self.peer_manager.lock().peers.len();
                     let connected_peers = self.swarm.connected_peers().count();
+                    let (persistent_waiting, persistent_dialing, persistent_connected) =
+                        self.persistent_dials.counts();
                     println!(
-                        "⏰ Heartbeat - PeerManager tracked peers: {tracked_peers}; libp2p connected peers: {connected_peers}"
+                        "⏰ Heartbeat - PeerManager tracked peers: {tracked_peers}; libp2p connected peers: {connected_peers}; persistent waiting={persistent_waiting} dialing={persistent_dialing} connected={persistent_connected}"
                     );
                 }
                 _ = discovery_timer.tick() => {
@@ -807,5 +1083,69 @@ mod tests {
                 .established_connections,
             0
         );
+    }
+
+    #[test]
+    fn persistent_peer_parser_requires_full_unique_non_local_addresses() {
+        let local_peer_id = PeerId::random();
+        let remote_peer_id = PeerId::random();
+        let address = format!("/ip4/203.0.113.10/tcp/9000/p2p/{remote_peer_id}");
+
+        let targets = parse_persistent_peer_targets(&format!(" , {address} "), &local_peer_id)
+            .expect("valid persistent peer should parse");
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].peer_id, remote_peer_id);
+        assert_eq!(targets[0].address.to_string(), address);
+
+        let duplicate_error =
+            parse_persistent_peer_targets(&format!("{address},{address}"), &local_peer_id)
+                .expect_err("duplicate peer IDs should be rejected");
+        assert!(duplicate_error.contains("duplicate persistent peer"));
+
+        let missing_peer_error =
+            parse_persistent_peer_targets("/ip4/203.0.113.10/tcp/9000", &local_peer_id)
+                .expect_err("persistent targets must include a peer ID");
+        assert!(missing_peer_error.contains("must end with /p2p/<PeerId>"));
+
+        let self_error = parse_persistent_peer_targets(
+            &format!("/ip4/203.0.113.10/tcp/9000/p2p/{local_peer_id}"),
+            &local_peer_id,
+        )
+        .expect_err("self-dials should be rejected");
+        assert!(self_error.contains("local PeerId"));
+    }
+
+    #[test]
+    fn persistent_dial_backoff_is_bounded_and_resets_after_connection() {
+        assert_eq!(persistent_retry_delay(1), Duration::from_secs(5));
+        assert_eq!(persistent_retry_delay(2), Duration::from_secs(10));
+        assert_eq!(persistent_retry_delay(7), Duration::from_secs(300));
+        assert_eq!(persistent_retry_delay(100), Duration::from_secs(300));
+
+        let peer_id = PeerId::random();
+        let target = PersistentPeerTarget {
+            peer_id,
+            address: format!("/ip4/203.0.113.10/tcp/9000/p2p/{peer_id}")
+                .parse()
+                .unwrap(),
+        };
+        let mut manager = PersistentDialManager::new(vec![target]);
+
+        assert_eq!(manager.take_due_dials(Instant::now()).len(), 1);
+        assert!(manager.take_due_dials(Instant::now()).is_empty());
+        assert_eq!(
+            manager.schedule_retry(&peer_id),
+            Some(Duration::from_secs(5))
+        );
+        assert_eq!(manager.counts(), (1, 0, 0));
+
+        manager.mark_connected(&peer_id);
+        assert_eq!(manager.counts(), (0, 0, 1));
+        assert_eq!(
+            manager.schedule_retry(&peer_id),
+            Some(Duration::from_secs(5))
+        );
+        assert_eq!(manager.counts(), (1, 0, 0));
+        assert!(manager.schedule_retry(&PeerId::random()).is_none());
     }
 }
