@@ -142,6 +142,29 @@ export default function SwarmOnboarding() {
             </p>
           </div>
 
+          <div className="max-w-md space-y-4 border-l border-cyan-glow/30 pl-4 font-mono text-[10px] leading-relaxed text-platinum/50">
+            <p className="uppercase tracking-[0.18em] text-cyan-glow/80">Public onboarding guide</p>
+            <dl className="space-y-3">
+              <div>
+                <dt className="uppercase tracking-[0.12em] text-platinum/75">NODE_ALIAS</dt>
+                <dd>A human-readable name for your validator, such as <span className="text-platinum/70">Genesis-Alpha-01</span>. It identifies your proposal for operators and governance; it is not a password.</dd>
+              </div>
+              <div>
+                <dt className="uppercase tracking-[0.12em] text-platinum/75">DILITHIUM_PUB_KEY.hex</dt>
+                <dd>The public half of your Dilithium-5 validator keypair. Generate the pair with approved UltraNet offline tooling or wallet tooling, then paste the complete public-key hex here. Never paste the private key, secret key, or seed phrase.</dd>
+              </div>
+            </dl>
+            <div>
+              <p className="mb-1 uppercase tracking-[0.12em] text-platinum/75">JOIN_FLOW</p>
+              <ol className="list-decimal space-y-1 pl-4 marker:text-cyan-glow/70">
+                <li>Choose an alias and prepare your public key.</li>
+                <li>Connect UltraWallet so the proposal is signed locally.</li>
+                <li>Submit the signed proposal to the governance queue.</li>
+                <li>After 2-of-3 sovereign approval, the node identity can be activated and broadcast.</li>
+              </ol>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-8 py-8 border-y border-platinum/10 font-mono">
             <div>
               <p className="text-xs text-platinum/40 uppercase">Active Nodes</p>
