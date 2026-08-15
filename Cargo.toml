@@ -117,4 +117,8 @@ move-vm-types = { git = "https://github.com/aptos-labs/aptos-core", package = "m
 move-table-extension = { git = "https://github.com/aptos-labs/aptos-core", package = "move-table-extension" }
 
 # ✅ FHE (Fully Homomorphic Encryption) - Zama TFHE-rs
+[target.'cfg(unix)'.dependencies]
 tfhe = { version = "0.7", features = ["integer", "x86_64-unix", "boolean"] }
+
+[target.'cfg(not(unix))'.dependencies]
+tfhe = { version = "0.7", features = ["integer", "x86_64", "boolean"] }
