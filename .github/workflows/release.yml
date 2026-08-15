@@ -97,6 +97,8 @@ jobs:
           install: >-
             mingw-w64-x86_64-toolchain
             mingw-w64-x86_64-clang
+            mingw-w64-x86_64-llvm
+            mingw-w64-x86_64-llvm-libs
             mingw-w64-x86_64-cmake
 
       - name: Install Rust
@@ -106,10 +108,14 @@ jobs:
 
       - name: Verify Windows toolchain
         shell: msys2 {0}
+        env:
+          LIBCLANG_PATH: C:/msys64/mingw64/bin
         run: |
+          test -f /mingw64/bin/libclang.dll
           cargo --version
           rustc --version
           clang --version
+          ls -l /mingw64/bin/libclang.dll
 
       - name: Build UltraNet
         shell: msys2 {0}
