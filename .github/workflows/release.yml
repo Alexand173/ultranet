@@ -115,7 +115,24 @@ jobs:
         shell: msys2 {0}
         env:
           LIBCLANG_PATH: C:/msys64/mingw64/bin
-        run: cargo build --target x86_64-pc-windows-gnu --release --locked --bin UltraNet
+        run: |
+          set -o pipefail
+          cargo build --target x86_64-pc-windows-gnu --release --locked --bin UltraNet 2>&1 | tee windows-build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            grep -E "error(\\[E[0-9]+\\])?:|fatal error:" windows-build.log | tail -20 | while IFS= read -r line; do
+              echo "::error title=Windows build::$line"
+            done
+            exit "$status"
+          fi
+
+      - name: Upload Windows build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: UltraNetNode-windows-build-log
+          path: windows-build.log
+          if-no-files-found: ignore
 
       - name: Package Windows archive
         shell: pwsh
