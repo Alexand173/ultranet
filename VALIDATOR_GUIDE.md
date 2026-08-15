@@ -19,6 +19,60 @@ The UltraNet kernel is optimized for parallel hardware. To maintain the **sub-mi
 - **OS**: Linux (Ubuntu 22.04 LTS / Debian 12 / RHEL 9).
 - **Kernel**: 5.15+ (Required for optimal `tokio` asynchronous I/O performance).
 
+### 2.3 Published v7.1.0 Node Packages
+
+For x86_64 hosts, the [published UltraNet v7.1.0 GitHub release](https://github.com/Alexand173/ultranet/releases/tag/v7.1.0) provides precompiled node binaries. Select the archive for your platform:
+
+| Platform | Download | Contains |
+| :--- | :--- | :--- |
+| Windows x64 | [`UltraNetNode-windows-x64.zip`](https://github.com/Alexand173/ultranet/releases/download/v7.1.0/UltraNetNode-windows-x64.zip) | `UltraNetNode.exe` |
+| Linux x64 | [`UltraNetNode-linux-x64.tar.gz`](https://github.com/Alexand173/ultranet/releases/download/v7.1.0/UltraNetNode-linux-x64.tar.gz) | `UltraNetNode` |
+| macOS x64 (Intel) | [`UltraNetNode-macos-x64.tar.gz`](https://github.com/Alexand173/ultranet/releases/download/v7.1.0/UltraNetNode-macos-x64.tar.gz) | `UltraNetNode` |
+
+Download the [release checksum manifest](https://github.com/Alexand173/ultranet/releases/download/v7.1.0/SHA256SUMS.txt) at the same time. Verify the archive before extracting or executing it:
+
+```bash
+# Linux: download one archive plus SHA256SUMS.txt
+sha256sum --ignore-missing --check SHA256SUMS.txt
+
+# macOS: compare this output with the matching manifest line
+shasum -a 256 UltraNetNode-macos-x64.tar.gz
+grep 'UltraNetNode-macos-x64.tar.gz$' SHA256SUMS.txt
+```
+
+On Windows PowerShell, compare the calculated hash with the manifest entry:
+
+```powershell
+$expected = (Get-Content .\SHA256SUMS.txt | Where-Object { $_ -match 'UltraNetNode-windows-x64\.zip$' }).Split()[0]
+$actual = (Get-FileHash .\UltraNetNode-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($actual -ne $expected) { throw "Checksum mismatch" }
+"Checksum OK"
+```
+
+After verification, extract the platform archive and start the node with the environment from [`deploy/ultranet.env.example`](./deploy/ultranet.env.example):
+
+```bash
+# Linux
+tar -xzf UltraNetNode-linux-x64.tar.gz
+chmod +x UltraNetNode
+./UltraNetNode
+```
+
+```bash
+# macOS (Intel)
+tar -xzf UltraNetNode-macos-x64.tar.gz
+chmod +x UltraNetNode
+./UltraNetNode
+```
+
+```powershell
+# Windows PowerShell
+Expand-Archive .\UltraNetNode-windows-x64.zip -DestinationPath .
+.\UltraNetNode.exe
+```
+
+The release packages do not include configuration files or private keys. If your host is not x86_64, or you require a source build, continue with the compilation path below.
+
 ## 3. Deployment Sequence
 
 ### 3.1 Environment Hardening
@@ -30,8 +84,8 @@ sudo apt update && sudo apt install -y build-essential clang cmake libssl-dev pk
 ### 3.2 Protocol Compilation
 We recommend compiling from source to enable hardware-specific optimizations:
 ```bash
-git clone https://github.com/your-repo/UltraNet_Linux.git
-cd UltraNet_Linux
+git clone https://github.com/Alexand173/ultranet.git
+cd ultranet
 # Enable 'lto' for maximum production performance and use the committed lockfile.
 cargo build --release --locked
 ```
