@@ -88,32 +88,33 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v5
 
-      - name: Install LLVM for bindgen
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          choco install llvm -y --no-progress
-          $llvmPath = "C:\Program Files\LLVM\bin"
-          "LIBCLANG_PATH=$llvmPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          $llvmPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Configure MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
+      - name: Install MinGW toolchain
+        uses: msys2/setup-msys2@v2
         with:
-          arch: x64
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-clang
+            mingw-w64-x86_64-cmake
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
 
       - name: Build UltraNet
-        run: cargo build --release --locked --bin UltraNet
+        shell: msys2 {0}
+        env:
+          LIBCLANG_PATH: C:/msys64/mingw64/bin
+        run: cargo build --target x86_64-pc-windows-gnu --release --locked --bin UltraNet
 
       - name: Package Windows archive
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target/release/UltraNet.exe dist/UltraNetNode.exe
+          Copy-Item target/x86_64-pc-windows-gnu/release/UltraNet.exe dist/UltraNetNode.exe
           Compress-Archive -Path dist/UltraNetNode.exe -DestinationPath dist/UltraNetNode-windows-x64.zip -Force
           Remove-Item dist/UltraNetNode.exe
 
