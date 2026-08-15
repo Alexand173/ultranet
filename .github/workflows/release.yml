@@ -92,6 +92,7 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
+          path-type: inherit
           update: true
           install: >-
             mingw-w64-x86_64-toolchain
@@ -102,6 +103,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-gnu
+
+      - name: Verify Windows toolchain
+        shell: msys2 {0}
+        run: |
+          cargo --version
+          rustc --version
+          clang --version
 
       - name: Build UltraNet
         shell: msys2 {0}
