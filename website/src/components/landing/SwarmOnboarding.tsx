@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Terminal, Key, ChevronRight } from "lucide-react";
+import { ArrowRight, Box, ChevronRight, Download, GitBranch, Key, Terminal } from "lucide-react";
 import { API_BASE_URL } from "@/lib/links";
 import {
   ULTRA_WALLET_SIGN_VALIDATOR_PROPOSAL,
@@ -140,6 +141,42 @@ export default function SwarmOnboarding() {
               UltraNet is bootstrapped by a global swarm of infrastructure providers.
               Validators help anchor state transitions; active rewards follow the node's protocol and governance configuration.
             </p>
+          </div>
+
+          <div className="max-w-md space-y-4 border border-cyan-glow/20 bg-ink-black/30 p-4 font-mono text-[10px] leading-relaxed text-platinum/55">
+            <div>
+              <p className="uppercase tracking-[0.18em] text-cyan-glow/80">Node startup // required first</p>
+              <p className="mt-2 text-platinum/70">Before submitting a swarm proposal, start one node using one of these three paths.</p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="border border-platinum/10 p-3">
+                <div className="flex items-center gap-2 text-cyan-glow">
+                  <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                  <p className="uppercase tracking-[0.12em]">Option 1 // files</p>
+                </div>
+                <p className="mt-2">Download the Windows, Linux, or macOS archive.</p>
+                <Link href="/download" className="mt-3 inline-flex items-center gap-1 text-cyan-glow hover:text-white focus:outline-none focus:ring-1 focus:ring-cyan-glow">
+                  DOWNLOAD_NODE <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                </Link>
+              </div>
+              <div className="border border-platinum/10 p-3">
+                <div className="flex items-center gap-2 text-cyan-glow">
+                  <Box className="h-3.5 w-3.5" aria-hidden="true" />
+                  <p className="uppercase tracking-[0.12em]">Option 2 // Docker</p>
+                </div>
+                <p className="mt-2">From the repository root, run the beginner setup:</p>
+                <code className="mt-2 block break-all text-platinum/80">docker-compose up -d</code>
+              </div>
+              <div className="border border-platinum/10 p-3">
+                <div className="flex items-center gap-2 text-cyan-glow">
+                  <GitBranch className="h-3.5 w-3.5" aria-hidden="true" />
+                  <p className="uppercase tracking-[0.12em]">Option 3 // source</p>
+                </div>
+                <p className="mt-2">Advanced path: install Rust, clone, then compile.</p>
+                <a href="https://rustup.rs/" target="_blank" rel="noreferrer" className="mt-2 inline-block text-cyan-glow hover:text-white focus:outline-none focus:ring-1 focus:ring-cyan-glow">Install Rust</a>
+                <code className="mt-2 block break-all text-platinum/80">git clone https://github.com/Alexand173/ultranet.git<br />cd ultranet<br />cargo build --release --locked --bin UltraNet</code>
+              </div>
+            </div>
           </div>
 
           <div className="max-w-md space-y-4 border-l border-cyan-glow/30 pl-4 font-mono text-[10px] leading-relaxed text-platinum/50">

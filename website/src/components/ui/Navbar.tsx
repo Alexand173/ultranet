@@ -12,6 +12,7 @@ const NAV_LINKS = [
   { name: "DOCS", href: "/docs" },
   { name: "EXPLORER", href: EXPLORER_URL },
   { name: "WHITEPAPER", href: "/docs/whitepaper" },
+  { name: "DOWNLOAD_NODE", href: "/download" },
   { name: "JOIN_SWARM", href: "/#swarm" },
 ];
 
@@ -35,7 +36,7 @@ export default function Navbar() {
         </Link>
 
         {/* Desktop Nav */}
-        <div className="hidden md:flex items-center gap-12">
+        <div className="hidden lg:flex items-center gap-12">
           {NAV_LINKS.map((link) => (
             <Link 
               key={link.name} 
@@ -53,7 +54,7 @@ export default function Navbar() {
         {/* Mobile Toggle */}
         <button
           type="button"
-          className="md:hidden text-platinum"
+          className="lg:hidden text-platinum"
           onClick={() => setIsOpen(!isOpen)}
           aria-label={isOpen ? "Close navigation menu" : "Open navigation menu"}
           aria-expanded={isOpen}
@@ -71,7 +72,7 @@ export default function Navbar() {
           aria-label="Mobile navigation"
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="md:hidden absolute top-20 left-0 right-0 bg-ink-black border-b border-platinum/10 p-8 flex flex-col gap-6"
+          className="lg:hidden absolute top-20 left-0 right-0 bg-ink-black border-b border-platinum/10 p-8 flex flex-col gap-6"
         >
           {NAV_LINKS.map((link) => (
             <Link 
