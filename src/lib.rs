@@ -37,6 +37,7 @@ pub mod auth;
 pub mod zk_circuit;
 pub use zk_circuit::*;
 pub mod p2p;
+pub mod runtime_config;
 pub mod zk_verifier;
 pub use p2p::P2PNode;
 pub mod storage;
@@ -120,7 +121,7 @@ pub mod quantum_crypto {
         }
 
         pub fn sign(&self, message: &[u8]) -> Vec<u8> {
-            let sk = SecretKey::from_bytes(&self.secret_key).expect("Greška u sk");
+            let sk = SecretKey::from_bytes(&self.secret_key).expect("Invalid secret key");
             let sig = detached_sign(message, &sk);
             sig.as_bytes().to_vec()
         }
@@ -152,7 +153,7 @@ pub mod quantum_crypto {
             let new_keypair = Self::generate();
             self.secret_key.zeroize();
             self.public_key.zeroize();
-            println!("🔄 Ključevi rotirani!");
+            println!("🔄 Keys rotated!");
             new_keypair
         }
 
@@ -1131,7 +1132,7 @@ impl UltraWallet {
     ) -> Result<Transaction, String> {
         if amount + fee > self.balance {
             return Err(format!(
-                "Nedovoljno sredstava! Stanje: {}, Potrebno: {}",
+                "Insufficient funds! Current: {}, required: {}",
                 self.balance,
                 amount + fee
             ));
@@ -1244,9 +1245,9 @@ impl UltraWallet {
         let old_address = self.address.clone();
         self.keypair = self.keypair.rotate();
         self.address = self.keypair.address();
-        println!("🔄 Ključevi rotirani!");
-        println!("   Stara fn creatadresa: {}", &old_address[..8]);
-        println!("   Nova adresa: {}", &self.address[..8]);
+        println!("🔄 Keys rotated!");
+        println!("   Previous address: {}", &old_address[..8]);
+        println!("   New address: {}", &self.address[..8]);
     }
 
     pub fn get_balance(&self) -> u64 {
@@ -1768,7 +1769,7 @@ impl UltraBlockchain {
         let gas = tx.calculate_gas();
         if gas > tx.gas_limit {
             return Err(format!(
-                "Gas limit prenizak! Potrebno: {}, Limit: {}",
+                "Gas limit is too low! Required: {}, limit: {}",
                 gas, tx.gas_limit
             ));
         }
@@ -1776,7 +1777,7 @@ impl UltraBlockchain {
         // 4. Provera veličine
         let tx_size = tx.get_size();
         if tx_size > self.max_block_size / 10 {
-            return Err(format!("Transakcija prevelika! Size: {}", tx_size));
+            return Err(format!("Transaction is too large! Size: {}", tx_size));
         }
 
         // 5. Dodaj u mempool
@@ -1875,7 +1876,7 @@ impl UltraBlockchain {
             && !is_payload_bound_validator_proposal
             && !is_payload_bound_validator_approval
         {
-            return Err(format!("Nepodržana verzija transakcije! {}", tx.version));
+            return Err(format!("Unsupported transaction version! {}", tx.version));
         }
 
         if tx.sender == Self::SOVEREIGN_ADDR {
@@ -1914,15 +1915,14 @@ impl UltraBlockchain {
             let expected_sender = QuantumKeyPair::address_from_public_key(&tx.sender_public_key);
             if expected_sender != tx.sender {
                 return Err(
-                    "Sender adresa se ne poklapa sa javnim ključem (identity spoofing)!"
-                        .to_string(),
+                    "Sender address does not match the public key (identity spoofing)!".to_string(),
                 );
             }
 
             // 2. Verifikacija Dilithium potpisa (Quantum-Secure)
             let msg = self.create_transaction_message(tx);
             if !QuantumKeyPair::verify(&tx.sender_public_key, &msg, &tx.signature) {
-                return Err("Nevalidan Dilithium potpis!".to_string());
+                return Err("Invalid Dilithium signature!".to_string());
             }
         }
 
@@ -1931,7 +1931,7 @@ impl UltraBlockchain {
             TransactionPayload::MoveCall { .. } | TransactionPayload::MoveDeploy { .. } => {
                 // MOVE VM tranzicije zahtevaju STARK dokaz izvršenja
                 if tx.zk_proof.is_empty() {
-                    return Err("Move tranzicija zahteva ZK-STARK dokaz!".to_string());
+                    return Err("Move transaction requires a ZK-STARK proof!".to_string());
                 }
             }
             TransactionPayload::StandardTransfer => {
@@ -1948,7 +1948,7 @@ impl UltraBlockchain {
                         .read()
                         .verify_proof(&zk_proof.proof, &[], &zk_proof.nullifier);
                 if zk_res.is_err() || !zk_res.unwrap() {
-                    return Err("Nevalidan ZK-SNARK dokaz!".to_string());
+                    return Err("Invalid ZK-SNARK proof!".to_string());
                 }
             }
             TransactionPayload::ValidatorJoinProposal { .. }
@@ -1974,7 +1974,7 @@ impl UltraBlockchain {
         let sender_balance = state.get(&tx.sender).unwrap_or(&0);
         if tx.amount + tx.fee > *sender_balance {
             return Err(format!(
-                "Nedovoljno sredstava! Stanje: {}, Potrebno: {}",
+                "Insufficient balance! Current: {}, required: {}",
                 sender_balance,
                 tx.amount + tx.fee
             ));
@@ -1983,38 +1983,38 @@ impl UltraBlockchain {
         // 4. Provera vremena
         let now = Utc::now().timestamp() as u64;
         if tx.timestamp > now + 60 {
-            return Err("Transakcija je u budućnosti!".to_string());
+            return Err("Transaction is in the future!".to_string());
         }
         if now - tx.timestamp > 3600 {
-            return Err("Transakcija je prestara!".to_string());
+            return Err("Transaction is too old!".to_string());
         }
 
         // 5. Provera fee-ja
         let min_fee = tx.amount / 100; // 1% minimum
         if tx.fee < min_fee {
-            return Err(format!("Fee premali! Minimum: {}", min_fee));
+            return Err(format!("Fee is too low! Minimum: {}", min_fee));
         }
 
         // 6. Provera recipient-a
         if tx.recipient.is_empty() || tx.recipient.len() > 100 {
-            return Err("Nevalidan recipient!".to_string());
+            return Err("Invalid recipient!".to_string());
         }
 
         // 7. Provera da li je sender != recipient
         if tx.sender == tx.recipient {
-            return Err("Sender i recipient su isti!".to_string());
+            return Err("Sender and recipient are identical!".to_string());
         }
 
         // 8. Provera maksimalnog iznosa
         if tx.amount > 1_000_000_000 {
-            return Err("Iznos prevelik!".to_string());
+            return Err("Amount is too large!".to_string());
         }
 
         // 9. Provera nonce-a
         let expected_nonce = self.get_nonce(&tx.sender);
         if tx.nonce != expected_nonce {
             return Err(format!(
-                "Nevalidan nonce! Očekivan: {}, Dobijen: {}",
+                "Invalid nonce! Expected: {}, received: {}",
                 expected_nonce, tx.nonce
             ));
         }
@@ -2024,7 +2024,7 @@ impl UltraBlockchain {
             && tx.version != Self::PAYLOAD_BOUND_TRANSACTION_VERSION
             && tx.version != Self::APPROVAL_BOUND_TRANSACTION_VERSION
         {
-            return Err(format!("Nepodržana verzija! {}", tx.version));
+            return Err(format!("Unsupported version! {}", tx.version));
         }
 
         Ok(())
@@ -2096,27 +2096,26 @@ impl UltraBlockchain {
     pub fn add_remote_block(&mut self, block: UltraBlock, zk_proof: Vec<u8>) -> Result<(), String> {
         // 1. Proveri da li blok već postoji
         if block.index < self.chain.len() as u64 {
-            return Err("Blok već postoji u lancu".to_string());
+            return Err("Block already exists in the chain".to_string());
         }
 
         // 2. Proveri da li je sledeći blok
         if block.index != self.chain.len() as u64 {
             return Err(format!(
-                "Očekivan blok index {}, dobijen {}",
+                "Expected block index {}, received {}",
                 self.chain.len(),
                 block.index
             ));
         }
 
-        let last_block = self.chain.last().ok_or("Lanac je prazan")?.clone();
+        let last_block = self.chain.last().ok_or("Chain is empty")?.clone();
 
         // 3. Osnovna validacija (hash, merkle, signatures, timestamp, epoch, state_root)
         // NAPOMENA: `validate_block` interno poziva `reexecute_block_for_validation`
         // i proverava MPT state root, tako da je re-egzekucija ovde automatska.
         if !self.validate_block(&block, &last_block) {
             return Err(
-                "Validacija bloka nije uspela (mismatch u hash-u, merkle-u ili state root-u)"
-                    .to_string(),
+                "Block validation failed (hash, Merkle, or state root mismatch)".to_string(),
             );
         }
 
@@ -2190,7 +2189,7 @@ impl UltraBlockchain {
         }
 
         if valid_txs.is_empty() {
-            return Err("Nema validnih transakcija za rudarenje".to_string());
+            return Err("No valid transactions available for mining".to_string());
         }
 
         // ✅ PODELI TRANSAKCIJE: ZK vs MOVE
@@ -2377,7 +2376,7 @@ impl UltraBlockchain {
 
         // 6. Validacija bloka
         if !self.validate_block(&new_block, &last_block) {
-            return Err("Blok odbijen!".to_string());
+            return Err("Block rejected!".to_string());
         }
 
         // 6. Ažuriranje stanja (TRAJNO)
@@ -2519,8 +2518,11 @@ impl UltraBlockchain {
             drop(bullshark);
         }
 
-        println!("✨ Blok {} uspešno dodat! (Bullshark DAG)", new_block.index);
-        println!("📊 Transakcija: {}", new_block.transactions.len());
+        println!(
+            "✨ Block {} added successfully! (Bullshark DAG)",
+            new_block.index
+        );
+        println!("📊 Transactions: {}", new_block.transactions.len());
         println!("💨 Gas used: {}", new_block.gas_used);
         println!("🎁 Block reward: {}", new_block.block_reward);
 
@@ -2647,7 +2649,7 @@ impl UltraBlockchain {
         let recomputed_hex = hex::encode(recomputed);
         println!("   recomputed.hash: {}", recomputed_hex);
         if block.hash != recomputed {
-            println!("❌ Hash ne odgovara!");
+            println!("❌ Hash mismatch!");
             return false;
         }
         println!("✅ Hash OK");
@@ -2670,7 +2672,7 @@ impl UltraBlockchain {
         println!("   computed.merkle_root: {}", hex::encode(root_array));
         println!("   block.merkle_root: {}", hex::encode(block.merkle_root));
         if root_array != block.merkle_root {
-            println!("❌ Merkle root ne odgovara!");
+            println!("❌ Merkle root mismatch!");
             return false;
         }
         println!("✅ Merkle root OK");
@@ -2679,27 +2681,27 @@ impl UltraBlockchain {
         if let Some(agg_sig) = &block.aggregated_signature {
             let validator = self.validator.read();
             if !validator.verify_aggregated(agg_sig, &block.hash) {
-                println!("❌ BLS agregacija nevalidna!");
+                println!("❌ BLS aggregation is invalid!");
                 return false;
             }
             println!("✅ BLS OK");
         } else {
-            println!("⚠️ BLS agregacija ne postoji (preskačem)");
+            println!("⚠️ BLS aggregation is unavailable (skipping)");
         }
 
         // 5. Provera vremena
         println!("   block.timestamp: {}", block.timestamp);
         println!("   prev.timestamp: {}", prev.timestamp);
         if block.timestamp < prev.timestamp {
-            println!("❌ Vreme nije validno! (block.timestamp < prev.timestamp)");
+            println!("❌ Timestamp is invalid! (block.timestamp < prev.timestamp)");
             return false;
         }
-        println!("✅ Vreme OK");
+        println!("✅ Timestamp OK");
 
         // 6. Provera gas-a
         if block.gas_used > block.gas_limit {
             println!(
-                "❌ Gas limit prekoračen! ({} > {})",
+                "❌ Gas limit exceeded! ({} > {})",
                 block.gas_used, block.gas_limit
             );
             return false;
@@ -2709,7 +2711,7 @@ impl UltraBlockchain {
         // 7. Provera veličine
         if block.size > self.max_block_size {
             println!(
-                "❌ Blok prevelik! ({} > {})",
+                "❌ Block is too large! ({} > {})",
                 block.size, self.max_block_size
             );
             return false;
@@ -2718,7 +2720,7 @@ impl UltraBlockchain {
 
         // 8. Provera epoch-e
         if block.epoch <= prev.epoch {
-            println!("❌ Epoch nije validan! ({} <= {})", block.epoch, prev.epoch);
+            println!("❌ Epoch is invalid! ({} <= {})", block.epoch, prev.epoch);
             return false;
         }
         println!("✅ Epoch OK");
@@ -2726,7 +2728,7 @@ impl UltraBlockchain {
         // 9. Provera verzije
         if block.version != self.version {
             println!(
-                "❌ Nepodržana verzija! ({} != {})",
+                "❌ Unsupported version! ({} != {})",
                 block.version, self.version
             );
             return false;
@@ -2761,7 +2763,7 @@ impl UltraBlockchain {
         println!("✅ State Root (MPT) verified by re-execution");
 
         println!(
-            "🎉 SVE PROVERE PROŠLE! Blok {} je VALIDAN (Mysticeti DAG)!",
+            "🎉 ALL CHECKS PASSED! Block {} is VALID (Mysticeti DAG)!",
             block.index
         );
         true
@@ -3090,7 +3092,7 @@ impl UltraBlockchain {
         };
 
         self.checkpoints.push(checkpoint);
-        println!("📌 Checkpoint kreiran za blok {}", block.index);
+        println!("📌 Checkpoint created for block {}", block.index);
     }
 
     pub fn restore_from_checkpoint(&mut self, index: u64) -> Result<(), String> {
@@ -3099,7 +3101,7 @@ impl UltraBlockchain {
             .iter()
             .find(|c| c.block_index == index)
             .cloned()
-            .ok_or("Checkpoint nije pronađen!".to_string())?;
+            .ok_or("Checkpoint was not found".to_string())?;
 
         let block_index = checkpoint.block_index as usize;
         if block_index >= self.chain.len() {
@@ -3123,7 +3125,7 @@ impl UltraBlockchain {
         // Restore total difficulty
         *self.total_difficulty.write() = checkpoint.total_difficulty;
 
-        println!("✅ Restore sa checkpoint-a {} uspešan!", index);
+        println!("✅ Restore from checkpoint {} succeeded!", index);
         Ok(())
     }
 
@@ -3136,9 +3138,9 @@ impl UltraBlockchain {
 
         // 2. Ako je novi lanac duži, izvrši reorg
         if new_chain.len() > self.chain.len() {
-            println!("🔄 REORG: Zamenjujemo lanac!");
-            println!("📊 Stari lanac: {} blokova", self.chain.len());
-            println!("📊 Novi lanac: {} blokova", new_chain.len());
+            println!("🔄 REORG: Replacing chain!");
+            println!("📊 Old chain: {} blocks", self.chain.len());
+            println!("📊 New chain: {} blocks", new_chain.len());
 
             // 3. Rollback stanje do fork_point
             self.rollback_state(fork_point)?;
@@ -3146,7 +3148,7 @@ impl UltraBlockchain {
             // 4. Validacija i dodavanje novih blokova
             for block in &new_chain[fork_point + 1..] {
                 if !self.validate_block(block, &new_chain[block.index as usize - 1]) {
-                    return Err("Nevalidan blok u novom lancu!".to_string());
+                    return Err("Invalid block in the new chain!".to_string());
                 }
                 self.update_state(block);
                 self.chain.push(block.clone());
@@ -3155,12 +3157,12 @@ impl UltraBlockchain {
             }
 
             println!(
-                "✅ REORG uspešan! Novi lanac ima {} blokova",
+                "✅ REORG successful! The new chain has {} blocks",
                 self.chain.len()
             );
             Ok(())
         } else {
-            Err("Novi lanac nije duži".to_string())
+            Err("The new chain is not longer".to_string())
         }
     }
 
@@ -3177,7 +3179,7 @@ impl UltraBlockchain {
         }
 
         if fork_point == 0 && self.chain[0].hash != new_chain[0].hash {
-            return Err("Nema zajedničkog pretka!".to_string());
+            return Err("No common ancestor found!".to_string());
         }
 
         Ok(fork_point)
@@ -3203,7 +3205,7 @@ impl UltraBlockchain {
     pub fn is_chain_valid(&self) -> bool {
         // ✅ AKO JE LANAC PREKRATAK, PROVERI SVE
         if self.chain.len() <= 1 {
-            println!("✅ Lanac je validan! {} blokova", self.chain.len());
+            println!("✅ Chain is valid! {} blocks", self.chain.len());
             return true;
         }
 
@@ -3219,21 +3221,21 @@ impl UltraBlockchain {
             let previous = &self.chain[i - 1];
 
             if current.previous_hash != previous.hash {
-                println!("⚠️ NAPAD DETEKTOVAN: Veza prekinuta na bloku {}!", i);
+                println!("⚠️ ATTACK DETECTED: Link broken at block {}!", i);
                 return false;
             }
 
             if !self.validate_block(current, previous) {
-                println!("⚠️ NAPAD DETEKTOVAN: Blok {} nevalidan!", i);
+                println!("⚠️ ATTACK DETECTED: Block {} is invalid!", i);
                 return false;
             }
         }
-        println!("✅ Lanac je validan! {} blokova", self.chain.len());
+        println!("✅ Chain is valid! {} blocks", self.chain.len());
         true
     }
 
     // ============================================================
-    // 8.10 DIFIKULTADNA ADJUSTACIJA
+    // 8.10 DIFFICULTY ADJUSTMENT
     // ============================================================
     pub fn adjust_difficulty(&mut self) {
         if self.chain.len() < 10 {
@@ -3260,11 +3262,11 @@ impl UltraBlockchain {
 
         self.difficulty.store(new_difficulty, Ordering::SeqCst);
         println!(
-            "📊 Difikultad prilagođen: {} -> {}",
+            "📊 Difficulty adjusted: {} -> {}",
             current_difficulty, new_difficulty
         );
         println!(
-            "⏱️  Vreme za 10 blokova: {}s (očekivano: {}s)",
+            "⏱️  Time for 10 blocks: {}s (expected: {}s)",
             time_diff, expected_time
         );
     }
@@ -3424,7 +3426,7 @@ impl UltraBlockchain {
         mempool.clear();
         drop(mempool);
 
-        println!("🧹 Čišćenje starih podataka završeno!");
+        println!("🧹 Old data cleanup completed!");
     }
 
     // ============================================================
@@ -3449,7 +3451,7 @@ impl UltraBlockchain {
         snapshot.insert("validators".to_string(), validator_data);
         drop(validator);
 
-        println!("📸 Snapshot kreiran!");
+        println!("📸 Snapshot created!");
         snapshot
     }
 
@@ -3457,19 +3459,19 @@ impl UltraBlockchain {
         // Restore lanca
         if let Some(chain_data) = snapshot.get("chain") {
             let chain: Vec<UltraBlock> = bincode::deserialize(chain_data)
-                .map_err(|e| format!("Greška pri restore-u chain-a: {}", e))?;
+                .map_err(|e| format!("Chain restore error: {}", e))?;
             self.chain = chain;
         }
 
         // Restore stanja
         if let Some(state_data) = snapshot.get("state") {
             let state: HashMap<String, u64> = bincode::deserialize(state_data)
-                .map_err(|e| format!("Greška pri restore-u state-a: {}", e))?;
+                .map_err(|e| format!("State restore error: {}", e))?;
             let mut current_state = self.state.write();
             *current_state = state;
         }
 
-        println!("🔄 Snapshot restore-ovan!");
+        println!("🔄 Snapshot restored!");
         Ok(())
     }
 
@@ -3536,13 +3538,19 @@ pub async fn run_node() -> Result<(), String> {
     println!("");
     println!("╔════════════════════════════════════════════════════════╗");
     println!("║         🚀 ULTRA BLOCKCHAIN 3.0                      ║");
-    println!("║      NAJNAPREDNIJI BLOCKCHAIN NA SVETU               ║");
+    println!("║      THE MOST ADVANCED BLOCKCHAIN IN THE WORLD       ║");
     println!("╚════════════════════════════════════════════════════════╝");
     println!("");
 
-    // 1. Kreiranje blockchaina
-    let db_path = std::env::var("ULTRANET_DB_PATH").unwrap_or_else(|_| "ultranet_db".to_string());
-    let shared = SharedStorage::new(&db_path).expect("Failed to open shared storage");
+    // 1. Validate configuration before opening storage or running cryptographic setup.
+    let runtime_config = runtime_config::prepare()?;
+    let db_path = runtime_config.db_path.to_string_lossy().into_owned();
+    let shared = SharedStorage::new(&db_path).map_err(|error| {
+        format!(
+            "Cannot open shared storage at {}: {error}",
+            runtime_config.db_path.display()
+        )
+    })?;
 
     let mut blockchain = UltraBlockchain::with_storage(shared.get_storage());
 
@@ -3552,8 +3560,8 @@ pub async fn run_node() -> Result<(), String> {
     )));
 
     shared.print_stats();
-    println!("✅ Blockchain inicijalizovan!");
-    println!("🔧 Inicijalizacija ZK engine-a...");
+    println!("✅ Blockchain initialized!");
+    println!("🔧 Initializing ZK engine...");
     {
         let mut zk_engine = blockchain.zk_engine.write();
         if let Err(e) = zk_engine.setup() {
@@ -3561,9 +3569,9 @@ pub async fn run_node() -> Result<(), String> {
             return Err(format!("ZK setup error: {}", e));
         }
     }
-    println!("✅ ZK engine inicijalizovan!");
+    println!("✅ ZK engine initialized!");
 
-    println!("🔧 Inicijalizacija Recursive ZK engine-a...");
+    println!("🔧 Initializing Recursive ZK engine...");
     {
         let mut recursive_zk = blockchain.recursive_zk.write();
         if let Err(e) = recursive_zk.setup() {
@@ -3581,17 +3589,17 @@ pub async fn run_node() -> Result<(), String> {
             return Err(format!("Recursive ZK (P2P) setup error: {}", e));
         }
     }
-    println!("✅ Recursive ZK engine inicijalizovan!");
+    println!("✅ Recursive ZK engine initialized!");
     println!(
-        "   - Validatori: {}",
+        "   - Validators: {}",
         blockchain.validator.read().get_validator_count()
     );
     println!(
-        "   - Težina: {}",
+        "   - Difficulty: {}",
         blockchain.difficulty.load(Ordering::SeqCst)
     );
     println!("   - Gas limit: {}", UltraBlockchain::DEFAULT_GAS_LIMIT);
-    println!("   - Verzija: {}", UltraBlockchain::VERSION);
+    println!("   - Version: {}", UltraBlockchain::VERSION);
     println!("");
 
     // ✅ NOVO: Demo scenario (Alice->Bob, mining, simulacija napada) se
@@ -3602,7 +3610,7 @@ pub async fn run_node() -> Result<(), String> {
     // indeksi neočekivano uvećavaju nakon svakog restarta.
     if blockchain.chain.len() > 10000 {
         // Disabling demo scenario
-        println!("🆕 Svež lanac detektovan - pokrećem demo scenario (samo jednom)...");
+        println!("🆕 Fresh chain detected - starting the demo scenario (once only)...");
 
         // 2. Kreiranje novčanika
         let mut alice = UltraWallet::new();
@@ -3612,10 +3620,10 @@ pub async fn run_node() -> Result<(), String> {
         println!("👤 ALICE:    {}", &alice.get_address()[..8]);
         println!("👤 BOB:      {}", &bob.get_address()[..8]);
         println!("👤 CHARLIE:  {}", &charlie.get_address()[..8]);
-        println!("💰 Početno stanje: 1000 tokena\n");
+        println!("💰 Initial balance: 1000 tokens\n");
 
         // 3. Kreiranje privatne transakcije
-        println!("📝 Alice šalje 100 tokena Bobu (privatno)...");
+        println!("📝 Alice is sending 100 tokens to Bob (private)...");
 
         let merkle_root = blockchain.merkle_tree.read().get_root();
         let mut merkle_root_array = [0u8; 32];
@@ -3635,9 +3643,9 @@ pub async fn run_node() -> Result<(), String> {
         drop(zk_engine);
 
         println!("🔐 Nullifier: {}...", hex::encode(&tx.nullifier[..4]));
-        println!("🔐 ZK dokaz: {}...", hex::encode(&tx.zk_proof[..8]));
+        println!("🔐 ZK proof: {}...", hex::encode(&tx.zk_proof[..8]));
         println!(
-            "🔐 Dilithium potpis: {}...",
+            "🔐 Dilithium signature: {}...",
             hex::encode(&tx.signature[..8])
         );
         println!("💨 Gas: {}", tx.calculate_gas());
@@ -3646,36 +3654,36 @@ pub async fn run_node() -> Result<(), String> {
 
         // 4. Dodavanje transakcije
         blockchain.add_transaction(tx)?;
-        println!("✅ Transakcija dodata u enkriptovani mempool!");
+        println!("✅ Transaction added to the encrypted mempool!");
         println!(
-            "   - Mempool veličina: {}",
+            "   - Mempool size: {}",
             blockchain.mempool.read().get_pending_count()
         );
         println!("");
 
         // 5. Rudarenje bloka
-        println!("⏳ Rudarenje bloka...");
+        println!("⏳ Mining block...");
         blockchain.mine_block()?;
 
         // 6. Provera validnosti
-        println!("\n🔍 Provera validnosti lanca...");
+        println!("\n🔍 Checking chain validity...");
         blockchain.is_chain_valid();
 
         // 7. Statistika
-        println!("\n📊 STATISTIKA:");
+        println!("\n📊 STATISTICS:");
         let stats = blockchain.get_stats();
         for (key, value) in stats {
             println!("   - {}: {}", key, value);
         }
 
-        // 8. Simulacija napada
-        println!("\n🚫 SIMULACIJA NAPADA:");
+        // 8. Attack simulation
+        println!("\n🚫 ATTACK SIMULATION:");
         let original_amount = if let Some(block) = blockchain.chain.get_mut(1) {
             if !block.transactions.is_empty() {
                 let orig = block.transactions[0].amount;
                 block.transactions[0].amount = 999999;
                 println!(
-                    "💀 Izmenjena transakcija: amount = {}",
+                    "💀 Tampered transaction: amount = {}",
                     block.transactions[0].amount
                 );
                 Some(orig)
@@ -3686,23 +3694,23 @@ pub async fn run_node() -> Result<(), String> {
             None
         };
 
-        println!("🔍 Provera nakon napada:");
+        println!("🔍 Checking after attack:");
         blockchain.is_chain_valid();
 
         // ✅ VRATI ORIGINALNO STANJE DA BI LANAC OSTAO VALIDAN ZA API
         if let Some(orig) = original_amount {
             if let Some(block) = blockchain.chain.get_mut(1) {
                 block.transactions[0].amount = orig;
-                println!("🛡️ Vraćanje originalnog stanja: amount = {}", orig);
+                println!("🛡️ Restoring original state: amount = {}", orig);
             }
         }
 
         // 9. Rotacija ključeva
-        println!("\n🔄 Rotacija ključeva za Alice...");
+        println!("\n🔄 Rotating Alice's keys...");
         alice.rotate_keys();
 
         // 10. Adjustacija difikultada
-        println!("\n📊 Prilagođavanje težine...");
+        println!("\n📊 Adjusting difficulty...");
         blockchain.adjust_difficulty();
 
         // 11. Kreiranje checkpoint-a
@@ -3711,86 +3719,77 @@ pub async fn run_node() -> Result<(), String> {
         }
 
         // 12. Snapshot
-        println!("\n📸 Kreiranje snapshot-a...");
+        println!("\n📸 Creating snapshot...");
         let snapshot = blockchain.create_snapshot();
-        println!("   - Snapshot veličina: {} bajtova", snapshot.len());
+        println!("   - Snapshot size: {} bytes", snapshot.len());
 
         // 13. Čišćenje starih podataka
-        println!("\n🧹 Čišćenje starih podataka...");
+        println!("\n🧹 Cleaning up old data...");
         blockchain.cleanup(3600);
     } else {
         println!(
-            "🔗 Postojeći lanac detektovan ({} blokova) - preskačem demo scenario.",
+            "🔗 Existing chain detected ({} blocks) - skipping demo scenario.",
             blockchain.chain.len()
         );
-        println!("\n🔍 Provera validnosti lanca...");
+        println!("\n🔍 Checking chain validity...");
         blockchain.is_chain_valid();
     }
 
     // 14. Kraj
     println!("");
     println!("╔════════════════════════════════════════════════════════╗");
-    println!("║         ✅ ULTRA BLOCKCHAIN 3.0 JE OPERATIVAN!      ║");
-    println!("║      🏆 NAJNAPREDNIJI BLOCKCHAIN NA SVETU           ║");
+    println!("║         ✅ ULTRA BLOCKCHAIN 3.0 IS OPERATIONAL!      ║");
+    println!("║      🏆 THE MOST ADVANCED BLOCKCHAIN IN THE WORLD   ║");
     println!("╚════════════════════════════════════════════════════════╝");
     println!("");
-    println!("🔗 Broj blokova: {}", blockchain.chain.len());
+    println!("🔗 Block count: {}", blockchain.chain.len());
     println!(
-        "💰 Ukupno transakcija: {}",
+        "💰 Total transactions: {}",
         blockchain.total_transactions.load(Ordering::SeqCst)
     );
     println!(
-        "🔐 Broj validatora: {}",
+        "🔐 Validator count: {}",
         blockchain.validator.read().get_validator_count()
     );
-    println!("📌 Checkpoint-ova: {}", blockchain.checkpoints.len());
+    println!("📌 Checkpoints: {}", blockchain.checkpoints.len());
     println!("");
 
     // ✅ POKRENI REST API SERVER DIREKTNO
     let api_bind =
         std::env::var("ULTRANET_API_BIND").unwrap_or_else(|_| "127.0.0.1:8081".to_string());
-    println!("🚀 Pokrećem REST API server na http://{api_bind}");
-    println!("📋 Endpoint-i:");
-    println!("   POST /api/transaction - Dodaj transakciju");
-    println!("   POST /api/mine - Rudari blok");
-    println!("   GET  /api/chain - Stanje lanca");
-    println!("   GET  /api/balance/:address - Balans");
-    println!("   GET  /api/validate - Validacija lanca");
-    println!("   GET  /api/block/:index - Blok po indeksu");
-    println!("   GET  /api/stats - Statistika");
+    println!("🚀 Starting REST API server at http://{api_bind}");
+    println!("📋 Endpoints:");
+    println!("   POST /api/transaction - Add transaction");
+    println!("   POST /api/mine - Mine block");
+    println!("   GET  /api/chain - Chain state");
+    println!("   GET  /api/balance/:address - Balance");
+    println!("   GET  /api/validate - Validate chain");
+    println!("   GET  /api/block/:index - Block by index");
+    println!("   GET  /api/stats - Statistics");
     println!("");
-    println!("🔴 Pritisni Ctrl+C za zaustavljanje...");
+    println!("🔴 Press Ctrl+C to stop...");
     println!("");
 
     let blockchain_arc = Arc::new(RwLock::new(blockchain));
 
-    // ✅ POKRENI P2P NODE U POZADINI (pre blokirajućeg REST API poziva)
-    // NAPOMENA: `UltraBlockchain` ne implementira `Clone` (sadrži atomic
-    // brojače i drugo interno stanje), pa P2P čvor koristi svoju sopstvenu
-    // instancu lanca (sinhronizovanu preko `tokio::sync::RwLock`) koja DELI
-    // istu Sled bazu sa REST API instancom.
-    let blockchain_p2p_clone = blockchain_p2p.clone();
+    // Start the P2P node before entering the blocking API server. This keeps
+    // initialization errors in the main result so desktop launches fail clearly.
+    let mut p2p_node = P2PNode::new(blockchain_p2p.clone())
+        .await
+        .map_err(|error| format!("P2P node initialization failed: {error}"))?;
+    p2p_node
+        .start_listening("/ip4/0.0.0.0/tcp/9000")
+        .map_err(|error| format!("P2P listen failed: {error}"))?;
+    println!("✅ P2P node is running on port 9000!");
     tokio::spawn(async move {
-        let mut node = match P2PNode::new(blockchain_p2p_clone).await {
-            Ok(node) => node,
-            Err(e) => {
-                eprintln!("❌ P2P Node greška: {}", e);
-                return;
-            }
-        };
-        if let Err(e) = node.start_listening("/ip4/0.0.0.0/tcp/9000") {
-            eprintln!("❌ P2P listen greška: {}", e);
-            return;
-        }
-        if let Err(e) = node.run().await {
-            eprintln!("❌ P2P run greška: {}", e);
+        if let Err(error) = p2p_node.run().await {
+            eprintln!("❌ P2P node runtime error: {error}");
         }
     });
-    println!("✅ P2P Node je pokrenut na portu 9000!");
 
-    // ✅ DIREKTNO POKRENI SERVER (već si u tokio runtime)
-    if let Err(e) = api::run_server(blockchain_arc).await {
-        eprintln!("❌ Server greška: {}", e);
+    // Start the API directly on the existing Tokio runtime.
+    if let Err(error) = api::run_server(blockchain_arc).await {
+        return Err(format!("API server failed: {error}"));
     }
 
     Ok(())
@@ -4061,7 +4060,7 @@ mod signature_verification_tests {
         let mut blockchain = open_test_chain("remote_root");
         let last_block = blockchain.chain.last().unwrap().clone();
 
-        // 1. Kreiraj "vazdušni" blok sa pogrešnim state root-om
+        // 1. Create a synthetic block with an incorrect state root
         let mut invalid_block = UltraBlock {
             index: last_block.index + 1,
             timestamp: Utc::now().timestamp() as u64,
@@ -4106,11 +4105,13 @@ mod signature_verification_tests {
         let result = blockchain.add_remote_block(invalid_block, vec![]);
         assert!(
             result.is_err(),
-            "Remote blok sa pogrešnim state root-om mora biti odbijen"
+            "Remote block with an incorrect state root must be rejected"
         );
         assert!(
-            result.unwrap_err().contains("Validacija bloka nije uspela"),
-            "Greška mora ukazivati na neuspelu validaciju"
+            result
+                .unwrap_err()
+                .contains("Block validation failed (hash, Merkle, or state root mismatch)"),
+            "The error must identify the failed block validation"
         );
 
         cleanup_test_chain("remote_root");

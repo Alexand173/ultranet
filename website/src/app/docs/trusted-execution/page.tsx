@@ -13,8 +13,8 @@ export default function TrustedExecutionDoc() {
           <section>
             <h2 className="text-2xl font-bold text-platinum uppercase tracking-tight mb-6">01. Computational Privacy</h2>
             <p>
-              In UltraNet, privacy is not just about hiding transaction amounts; it's about <strong>Confidential Computing</strong>. 
-              While Zero-Knowledge (ZK) proofs allow you to prove a statement about hidden data, <strong>Fully Homomorphic Encryption (FHE)</strong> 
+              In UltraNet, privacy is not just about hiding transaction amounts; it&apos;s about <strong>Confidential Computing</strong>.
+              While Zero-Knowledge (ZK) proofs allow you to prove a statement about hidden data, <strong>Fully Homomorphic Encryption (FHE)</strong>
               allows the network to <em>perform math</em> on that data without ever seeing the numbers.
             </p>
           </section>
@@ -36,8 +36,8 @@ export default function TrustedExecutionDoc() {
           <section>
             <h2 className="text-2xl font-bold text-platinum uppercase tracking-tight mb-6">03. The Move Virtual Machine</h2>
             <p>
-              UltraNet uses the <strong>Move VM</strong> for its resource-oriented safety. We have extended the Move runtime with 
-              native FHE instructions. This ensures that assets are physically represented as "Resources" that cannot be 
+              UltraNet uses the <strong>Move VM</strong> for its resource-oriented safety. We have extended the Move runtime with
+              native FHE instructions. This ensures that assets are physically represented as &quot;Resources&quot; that cannot be
               duplicated or dropped, even when their underlying values are encrypted ciphertexts.
             </p>
           </section>

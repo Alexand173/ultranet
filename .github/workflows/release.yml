@@ -3,18 +3,37 @@ name: Publish UltraNet node release
 on:
   push:
     tags:
-      - "v7.1.0"
+      - "v*.*.*"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing semver tag to rebuild and publish"
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 env:
-  RELEASE_TAG: v7.1.0
+  RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
 
 jobs:
+  validate-release:
+    name: Validate release tag
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Reject invalid release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::RELEASE_TAG must match vMAJOR.MINOR.PATCH; received ${RELEASE_TAG}"
+            exit 1
+          fi
+
   build-linux:
     name: Build Linux x64 node
+    needs: validate-release
     runs-on: ubuntu-22.04
     steps:
       - name: Check out source
@@ -49,6 +68,7 @@ jobs:
 
   build-macos:
     name: Build macOS x64 node
+    needs: validate-release
     runs-on: macos-15-intel
     steps:
       - name: Check out source
@@ -83,6 +103,7 @@ jobs:
 
   build-windows:
     name: Build Windows x64 node
+    needs: validate-release
     runs-on: windows-2022
     steps:
       - name: Check out source
@@ -152,14 +173,48 @@ jobs:
           path: windows-build.log
           if-no-files-found: ignore
 
+      - name: Verify Windows configuration preflight
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $binary = "target/x86_64-pc-windows-gnu/release/UltraNet.exe"
+          $env:ULTRANET_DB_PATH = Join-Path $env:RUNNER_TEMP "ultranet-config-check"
+          $env:ULTRANET_PAUSE_ON_ERROR = "false"
+          [Environment]::SetEnvironmentVariable("ULTRANET_ADMIN_TOKEN", $null, "Process")
+          & $binary --check-config
+          if ($LASTEXITCODE -eq 0) {
+            throw "Missing ULTRANET_ADMIN_TOKEN unexpectedly passed configuration validation"
+          }
+          $env:ULTRANET_ADMIN_TOKEN = "a" * 64
+          & $binary --check-config
+          if ($LASTEXITCODE -ne 0) {
+            throw "Valid ULTRANET_ADMIN_TOKEN failed configuration validation"
+          }
+
       - name: Package Windows archive
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target/x86_64-pc-windows-gnu/release/UltraNet.exe dist/UltraNetNode.exe
-          Compress-Archive -Path dist/UltraNetNode.exe -DestinationPath dist/UltraNetNode-windows-x64.zip -Force
-          Remove-Item dist/UltraNetNode.exe
+          New-Item -ItemType Directory -Force -Path dist/package | Out-Null
+          Copy-Item target/x86_64-pc-windows-gnu/release/UltraNet.exe dist/package/UltraNetNode.exe
+          Copy-Item release/windows/Start-UltraNetNode.bat dist/package/Start-UltraNetNode.bat
+          Copy-Item release/windows/UltraNetNode.env.example dist/package/UltraNetNode.env.example
+          Copy-Item release/windows/README-WINDOWS.txt dist/package/README-WINDOWS.txt
+          Compress-Archive -Path dist/package/* -DestinationPath dist/UltraNetNode-windows-x64.zip -Force
+          $extractPath = Join-Path $env:RUNNER_TEMP "ultranet-windows-package-check"
+          Expand-Archive dist/UltraNetNode-windows-x64.zip -DestinationPath $extractPath -Force
+          $members = @(Get-ChildItem $extractPath -File | Select-Object -ExpandProperty Name | Sort-Object)
+          $expected = @("README-WINDOWS.txt", "Start-UltraNetNode.bat", "UltraNetNode.env.example", "UltraNetNode.exe")
+          if ((Compare-Object $members $expected) -or $members.Count -ne $expected.Count) {
+            throw "Windows archive members do not match the desktop package contract: $($members -join ', ')"
+          }
+          foreach ($member in $expected) {
+            $memberPath = Join-Path $extractPath $member
+            if (!(Test-Path $memberPath) -or (Get-Item $memberPath).Length -le 0) {
+              throw "Windows archive member is missing or empty: $member"
+            }
+          }
+          Remove-Item -Recurse -Force dist/package
 
       - name: Upload Windows archive
         uses: actions/upload-artifact@v4
@@ -192,7 +247,7 @@ jobs:
             > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Publish UltraNet v7.1.0
+      - name: Publish UltraNet release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
@@ -201,10 +256,10 @@ jobs:
           prerelease: false
           generate_release_notes: true
           body: |
-            Public UltraNet v7.1.0 sovereign node packages.
+            Public UltraNet ${{ env.RELEASE_TAG }} sovereign node packages.
 
             Archives:
-            - `UltraNetNode-windows-x64.zip` contains `UltraNetNode.exe`.
+            - `UltraNetNode-windows-x64.zip` contains `UltraNetNode.exe`, `Start-UltraNetNode.bat`, `UltraNetNode.env.example`, and `README-WINDOWS.txt`.
             - `UltraNetNode-linux-x64.tar.gz` contains `UltraNetNode`.
             - `UltraNetNode-macos-x64.tar.gz` contains `UltraNetNode`.
 
@@ -214,3 +269,17 @@ jobs:
             dist/UltraNetNode-macos-x64.tar.gz
             dist/UltraNetNode-windows-x64.zip
             dist/SHA256SUMS.txt
+
+      - name: Verify published asset contract
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual=$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | sort)
+          expected=$(printf '%s\n' SHA256SUMS.txt UltraNetNode-linux-x64.tar.gz UltraNetNode-macos-x64.tar.gz UltraNetNode-windows-x64.zip | sort)
+          if [[ "${actual}" != "${expected}" ]]; then
+            echo "::error::Published assets do not match the release contract"
+            diff -u <(printf '%s\n' "${expected}") <(printf '%s\n' "${actual}") || true
+            exit 1
+          fi

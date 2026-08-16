@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import LearnArticle from "@/components/learn/LearnArticle";
-import { getLearnArticle, LEARNING_TRACKS, type LearnSlug } from "@/lib/learn-content";
+import { getLearnArticle, LEARNING_TRACKS } from "@/lib/learn-content";
 
 export function generateStaticParams() {
   return LEARNING_TRACKS.map((track) => ({ slug: track.slug }));

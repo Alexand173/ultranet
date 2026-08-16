@@ -123,6 +123,6 @@ mod tests {
         memory.write("Bob", 500);
         assert_eq!(memory.read("Bob", 1), Some(500));
 
-        println!("✅ Multi-version memory test prošao!");
+        println!("✅ Multi-version memory test passed!");
     }
 }

@@ -18,7 +18,9 @@ sudo install -o root -g ultranet -m 0640 deploy/ultranet.env.example /etc/ultran
 sudoedit /etc/ultranet/ultranet.env
 ```
 
-Set `ULTRANET_CORS_ORIGINS` to the exact HTTPS origin of the deployed Next.js site. Wildcards are rejected. Keep `ULTRANET_API_BIND=127.0.0.1:8081` for systemd deployments. Generate a separate administrator token with `openssl rand -hex 32` and set it as `ULTRANET_ADMIN_TOKEN`; never commit or expose that value to browser code.
+Set `ULTRANET_CORS_ORIGINS` to the exact HTTPS origin of the deployed Next.js site. Wildcards are rejected. Keep `ULTRANET_API_BIND=127.0.0.1:8081` for systemd deployments.
+
+`ULTRANET_ADMIN_TOKEN` is a private administrator bearer token for state-changing node operations; it is not a wallet key, public node identifier, or browser login credential. Generate 32 random bytes locally with `openssl rand -hex 32`, set the resulting 64-character hexadecimal value in `/etc/ultranet/ultranet.env`, and restrict the file to the `root/ultranet` group. On Windows desktop packages, use the same command or the PowerShell generator in `release/windows/README-WINDOWS.txt` and store the value only in the private sibling `UltraNetNode.env`. Never commit, share, log, or expose the token to browser code. A missing or invalid token is a configuration error and prevents the API from starting before storage and cryptographic initialization.
 
 The bearer token protects administrative/state-changing routes:
 
@@ -87,7 +89,11 @@ sudo systemctl enable --now ultranet
 curl --fail http://127.0.0.1:8081/api/stats
 ```
 
-Expose TCP/UDP `9000` to peers. Keep TCP `8081` closed in the VPS firewall; the reverse proxy should connect to `127.0.0.1:8081`.
+Expose TCP/UDP `9000` to peers. Keep TCP `8081` closed in the VPS firewall; the reverse proxy should connect to `127.0.0.1:8081`. If `ULTRANET_DB_PATH` is omitted outside systemd/Docker, the node selects the per-user data directory documented in [`../README.md`](../README.md); an explicit path remains authoritative.
+
+## Windows desktop package
+
+The Windows x64 maintenance package is launcher-first. Extract the complete archive, copy `UltraNetNode.env.example` to `UltraNetNode.env`, create the private administrator token, and double-click `Start-UltraNetNode.bat`. The launcher sets the sibling env-file path, runs `--check-config`, and pauses only for an interactive desktop failure. It uses `%LOCALAPPDATA%\\UltraNet\\data` by default. See [`../release/windows/README-WINDOWS.txt`](../release/windows/README-WINDOWS.txt) for checksum verification, PowerShell token generation, firewall guidance, and log collection. Do not use the desktop env file as a systemd `EnvironmentFile` or put its token into Docker/Next.js configuration.
 
 ## Docker Compose
 

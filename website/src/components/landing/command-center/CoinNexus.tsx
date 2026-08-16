@@ -4,6 +4,7 @@ import { motion, useMotionValue, useSpring, useTransform, AnimatePresence } from
 import { useEffect, useState, useRef } from "react";
 import { Sparkles } from "lucide-react";
 import { clsx } from "clsx";
+import Image from "next/image";
 import Link from "next/link";
 
 const SCRAMBLE_CHARS = "01$!@#%^&*()_+{}:<>?[]";
@@ -57,7 +58,7 @@ export default function CoinNexus({ className }: { className?: string }) {
 
     let iteration = 0;
     const scrambleInterval = setInterval(() => {
-      setScrambledText((prev) =>
+      setScrambledText(() =>
         NEXUS_TITLE.split("")
           .map((char, index) => {
             if (char === " ") return " ";
@@ -87,7 +88,7 @@ export default function CoinNexus({ className }: { className?: string }) {
         animate={{ opacity: 1, y: 0 }}
         className="text-cyan-glow font-mono text-xs md:text-sm tracking-[0.35em] uppercase opacity-70 z-10"
       >
-        // Sovereign Execution Layer v7.1
+        {"// Sovereign Execution Layer v7.1"}
       </motion.p>
 
       <h1
@@ -107,9 +108,11 @@ export default function CoinNexus({ className }: { className?: string }) {
           className="relative w-full h-full rounded-full bg-ink-black pointer-events-auto group cursor-pointer"
           style={{ clipPath: "circle(48.2% at 50% 50%)" }}
         >
-          <img
+          <Image
             src={COIN_IMAGE}
             alt="ULTRA Blockchain Network"
+            fill
+            sizes="(min-width: 1536px) 50vw, (min-width: 1024px) 620px, 420px"
             className="absolute inset-0 z-10 w-full h-full object-contain"
           />
 
@@ -217,7 +220,7 @@ export default function CoinNexus({ className }: { className?: string }) {
             <div className="relative bg-[#010B13]/95 border border-cyan-glow/30 backdrop-blur-xl p-6 shadow-2xl">
               <div className="flex justify-between items-start mb-6">
                 <div className="text-[10px] text-cyan-glow font-mono tracking-widest uppercase">
-                  // Protocol_Module_{hoveredLetter}
+                  {"// Protocol_Module_"}{hoveredLetter}
                 </div>
                 <div className="flex gap-1">
                   <div className="w-1.5 h-1.5 bg-cyan-glow animate-pulse" />

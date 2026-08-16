@@ -62,7 +62,7 @@ export default function LegislationTable() {
                   <span className="font-mono text-xs text-platinum/40 group-hover:text-cyan-glow transition-colors">{law.id}</span>
                   <div className="space-y-1">
                     <p className="font-bold text-lg">{law.title}</p>
-                    <p className="text-sm text-platinum/50 leading-relaxed italic">"{law.text}"</p>
+                    <p className="text-sm text-platinum/50 leading-relaxed italic">&quot;{law.text}&quot;</p>
                   </div>
                   <CheckSquare className="w-5 h-5 text-cyan-glow/20 group-hover:text-cyan-glow transition-colors" />
                 </motion.div>

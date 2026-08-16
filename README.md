@@ -88,12 +88,48 @@ chmod +x UltraNetNode
 ```
 
 ```powershell
-# Windows PowerShell
+# Windows PowerShell (the immutable v7.1.0 rollback archive)
 Expand-Archive .\UltraNetNode-windows-x64.zip -DestinationPath .
 .\UltraNetNode.exe
 ```
 
+The immutable `v7.1.0` release remains available for rollback and contains the
+original executable-only archive. The corrected maintenance release will use a
+new tag after clean Windows validation; its Windows archive contains
+`UltraNetNode.exe`, `Start-UltraNetNode.bat`, `UltraNetNode.env.example`, and
+`README-WINDOWS.txt`. For that package, copy the example to `UltraNetNode.env`,
+create the private `ULTRANET_ADMIN_TOKEN` described below, and launch
+`Start-UltraNetNode.bat` first. The launcher runs `--check-config`, uses the
+writable per-user `%LOCALAPPDATA%\\UltraNet\\data` default, and keeps an
+interactive failure visible. Do not manually change the release links above
+until the maintenance tag's assets and checksums have been verified.
+
 Do not extract or run an archive if its checksum does not match. For non-x86_64 systems, or when you need a source build, follow the compilation instructions in [`VALIDATOR_GUIDE.md`](./VALIDATOR_GUIDE.md).
+
+### What is `ULTRANET_ADMIN_TOKEN`?
+
+Every node API requires `ULTRANET_ADMIN_TOKEN` to protect state-changing administrator operations such as mining, pruning, and AppChain management. It is a private bearer token for the node operator; it is **not** your wallet key, public node identifier, `DILITHIUM_PUB_KEY`, or a value that ordinary website users should share.
+
+Create it locally, then place it only in your service environment or private `UltraNetNode.env` file:
+
+```bash
+openssl rand -hex 32
+```
+
+On Windows PowerShell:
+
+```powershell
+$bytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$token = [BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant()
+$rng.Dispose()
+$token
+```
+
+Copy the resulting 64-character hexadecimal value after `ULTRANET_ADMIN_TOKEN=`. Never commit, email, paste, or place this token in browser code. A missing or invalid token stops the node before it opens storage and prints an English configuration error. On Windows desktop packages, keep the value only in the private sibling `UltraNetNode.env`; on systemd use `/etc/ultranet/ultranet.env`; in Docker, provide the required variable before `docker compose up -d`.
+
+When `ULTRANET_DB_PATH` is not set, the node uses a writable per-user directory: `%LOCALAPPDATA%\\UltraNet\\data` on Windows, `~/Library/Application Support/UltraNet/data` on macOS, and `$XDG_DATA_HOME/ultranet` or `~/.local/share/ultranet` on Linux. An explicit `ULTRANET_DB_PATH` always wins.
 
 **Production networking:**
 - **P2P**: expose TCP/UDP port `9000` (Mainnet)

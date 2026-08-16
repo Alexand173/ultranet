@@ -87,7 +87,7 @@ pub struct ExecuteFunctionRequest {
 fn parse_nullifier(bytes: &[u8]) -> Result<[u8; 32], String> {
     if bytes.len() != 32 {
         return Err(format!(
-            "Nullifier mora imati tačno 32 bajta, primljeno: {}",
+            "Nullifier must contain exactly 32 bytes; received {}",
             bytes.len()
         ));
     }
@@ -128,19 +128,26 @@ pub struct AppState {
 const ADMIN_TOKEN_ENV: &str = "ULTRANET_ADMIN_TOKEN";
 const MIN_ADMIN_TOKEN_BYTES: usize = 32;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct AdminAuthConfig {
     token: Vec<u8>,
 }
 
 fn configured_admin_auth() -> io::Result<AdminAuthConfig> {
-    let token = env::var(ADMIN_TOKEN_ENV).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{ADMIN_TOKEN_ENV} must be set for the node API"),
-        )
-    })?;
+    let token = env::var(ADMIN_TOKEN_ENV).map_err(|_| missing_admin_token_error())?;
+    validate_admin_token(&token)
+}
 
+fn missing_admin_token_error() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!(
+            "{ADMIN_TOKEN_ENV} is required for the node API. This private administrator bearer token protects state-changing node operations; it is not a wallet key or public node identifier. Create a 64-hex-character token with `openssl rand -hex 32`, put it only in UltraNetNode.env or the service environment, and start the node again. Never share it or place it in browser code."
+        ),
+    )
+}
+
+fn validate_admin_token(token: &str) -> io::Result<AdminAuthConfig> {
     if token.starts_with("replace-with-")
         || token.len() < MIN_ADMIN_TOKEN_BYTES
         || token.bytes().any(|byte| byte.is_ascii_whitespace())
@@ -148,13 +155,13 @@ fn configured_admin_auth() -> io::Result<AdminAuthConfig> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!(
-                "{ADMIN_TOKEN_ENV} must be at least {MIN_ADMIN_TOKEN_BYTES} non-whitespace bytes"
+                "{ADMIN_TOKEN_ENV} must be at least {MIN_ADMIN_TOKEN_BYTES} non-whitespace bytes. This private administrator bearer token protects state-changing node operations; it is not a wallet key or public node identifier. Create a fresh 64-hex-character token with `openssl rand -hex 32` or the PowerShell command in README-WINDOWS.txt. Never share it or place it in browser code."
             ),
         ));
     }
 
     Ok(AdminAuthConfig {
-        token: token.into_bytes(),
+        token: token.as_bytes().to_vec(),
     })
 }
 
@@ -474,12 +481,12 @@ pub async fn add_transaction(
     match blockchain.add_transaction(tx) {
         Ok(_) => HttpResponse::Ok().json(ApiResponse {
             success: true,
-            message: "Transakcija dodata!".to_string(),
+            message: "Transaction added!".to_string(),
             data: None,
         }),
         Err(e) => HttpResponse::BadRequest().json(ApiResponse {
             success: false,
-            message: format!("Greška: {}", e),
+            message: format!("Error: {}", e),
             data: None,
         }),
     }
@@ -487,18 +494,18 @@ pub async fn add_transaction(
 
 // 2. DODAJ BLOK (RUDARENJE)
 pub async fn mine_block(state: web::Data<AppState>) -> impl Responder {
-    println!("⛏️ API: Pokrećem rudarenje...");
+    println!("⛏️ API: Starting mining...");
     let mut blockchain = state.blockchain.write();
 
     match blockchain.mine_block() {
         Ok(block) => HttpResponse::Ok().json(ApiResponse {
             success: true,
-            message: format!("Blok {} uspešno dodat!", block.index),
+            message: format!("Block {} added successfully!", block.index),
             data: Some(serde_json::to_value(&block).unwrap()),
         }),
         Err(e) => HttpResponse::BadRequest().json(ApiResponse {
             success: false,
-            message: format!("Greška: {}", e),
+            message: format!("Error: {}", e),
             data: None,
         }),
     }
@@ -512,7 +519,7 @@ pub async fn get_chain_state(state: web::Data<AppState>) -> impl Responder {
 
     HttpResponse::Ok().json(ApiResponse {
         success: true,
-        message: "Stanje lanca".to_string(),
+        message: "Chain state".to_string(),
         data: Some(serde_json::to_value(&stats).unwrap()),
     })
 }
@@ -524,7 +531,7 @@ pub async fn get_balance(state: web::Data<AppState>, address: web::Path<String>)
 
     HttpResponse::Ok().json(ApiResponse {
         success: true,
-        message: "Balans".to_string(),
+        message: "Balance".to_string(),
         data: Some(serde_json::json!({
             "address": address.into_inner(),
             "balance": balance
@@ -540,9 +547,9 @@ pub async fn validate_chain(state: web::Data<AppState>) -> impl Responder {
     HttpResponse::Ok().json(ApiResponse {
         success: valid,
         message: if valid {
-            "Lanac je validan!".to_string()
+            "Chain is valid!".to_string()
         } else {
-            "Lanac je nevalidan!".to_string()
+            "Chain is invalid!".to_string()
         },
         data: Some(serde_json::json!({ "valid": valid })),
     })
@@ -556,13 +563,13 @@ pub async fn get_block(state: web::Data<AppState>, index: web::Path<u64>) -> imp
     if let Some(block) = blockchain.chain.get(index as usize) {
         HttpResponse::Ok().json(ApiResponse {
             success: true,
-            message: "Blok pronađen".to_string(),
+            message: "Block found".to_string(),
             data: Some(serde_json::to_value(block).unwrap()),
         })
     } else {
         HttpResponse::NotFound().json(ApiResponse {
             success: false,
-            message: "Blok nije pronađen".to_string(),
+            message: "Block not found".to_string(),
             data: None,
         })
     }
@@ -586,7 +593,7 @@ pub async fn get_stats(state: web::Data<AppState>) -> impl Responder {
     );
     HttpResponse::Ok().json(ApiResponse {
         success: true,
-        message: "Statistika".to_string(),
+        message: "Statistics".to_string(),
         data: Some(serde_json::to_value(&stats).unwrap()),
     })
 }
@@ -600,7 +607,7 @@ pub async fn get_recursive_proof(state: web::Data<AppState>) -> impl Responder {
     match blockchain.get_latest_recursive_proof() {
         Some(proof) => HttpResponse::Ok().json(ApiResponse {
             success: true,
-            message: "Recursive proof pronađen".to_string(),
+            message: "Recursive proof found".to_string(),
             data: Some(serde_json::json!({
                 "proof": hex::encode(&proof),
                 "size": proof.len()
@@ -608,7 +615,7 @@ pub async fn get_recursive_proof(state: web::Data<AppState>) -> impl Responder {
         }),
         None => HttpResponse::NotFound().json(ApiResponse {
             success: false,
-            message: "Nema recursive proof-a".to_string(),
+            message: "No recursive proof found".to_string(),
             data: None,
         }),
     }
@@ -620,17 +627,17 @@ pub async fn verify_recursive_chain(state: web::Data<AppState>) -> impl Responde
     match blockchain.verify_recursive_chain() {
         Ok(true) => HttpResponse::Ok().json(ApiResponse {
             success: true,
-            message: "Recursive lanac je validan!".to_string(),
+            message: "Recursive chain is valid!".to_string(),
             data: Some(serde_json::json!({ "valid": true })),
         }),
         Ok(false) => HttpResponse::Ok().json(ApiResponse {
             success: false,
-            message: "Recursive lanac je nevalidan!".to_string(),
+            message: "Recursive chain is invalid!".to_string(),
             data: Some(serde_json::json!({ "valid": false })),
         }),
         Err(e) => HttpResponse::BadRequest().json(ApiResponse {
             success: false,
-            message: format!("Greška: {}", e),
+            message: format!("Error: {}", e),
             data: None,
         }),
     }
@@ -1110,7 +1117,7 @@ pub async fn approve_validator(
         _ => {
             return HttpResponse::BadRequest().json(ApiResponse {
                 success: false,
-                message: "proposal_hash mora biti 64 hex karaktera".to_string(),
+                message: "proposal_hash must be 64 hexadecimal characters".to_string(),
                 data: None,
             });
         }
@@ -1146,7 +1153,7 @@ pub async fn approve_validator(
     {
         return HttpResponse::NotFound().json(ApiResponse {
             success: false,
-            message: "Validator proposal nije pronađen".to_string(),
+            message: "Validator proposal not found".to_string(),
             data: None,
         });
     }
@@ -1229,7 +1236,7 @@ pub async fn list_approval_journal(
     if limit == 0 || limit > MAX_APPROVAL_PAGE_SIZE {
         return HttpResponse::BadRequest().json(ApiResponse {
             success: false,
-            message: format!("limit mora biti između 1 i {MAX_APPROVAL_PAGE_SIZE}"),
+            message: format!("limit must be between 1 and {MAX_APPROVAL_PAGE_SIZE}"),
             data: None,
         });
     }
@@ -1238,7 +1245,7 @@ pub async fn list_approval_journal(
         Err(_) => {
             return HttpResponse::BadRequest().json(ApiResponse {
                 success: false,
-                message: "limit je prevelik".to_string(),
+                message: "limit is too large".to_string(),
                 data: None,
             });
         }
@@ -1255,7 +1262,7 @@ pub async fn list_approval_journal(
             _ => {
                 return HttpResponse::BadRequest().json(ApiResponse {
                     success: false,
-                    message: "cursor mora biti 80 hex karaktera".to_string(),
+                    message: "cursor must be 80 hexadecimal characters".to_string(),
                     data: None,
                 });
             }
@@ -1405,7 +1412,7 @@ async fn get_transaction(state: web::Data<AppState>, hash: web::Path<String>) ->
             if let Some(tx) = blockchain.storage.get_transaction(&hash_arr) {
                 return HttpResponse::Ok().json(ApiResponse {
                     success: true,
-                    message: "Transakcija pronađena".to_string(),
+                    message: "Transaction found".to_string(),
                     data: Some(serde_json::to_value(tx).unwrap()),
                 });
             }
@@ -1414,7 +1421,7 @@ async fn get_transaction(state: web::Data<AppState>, hash: web::Path<String>) ->
 
     HttpResponse::NotFound().json(ApiResponse {
         success: false,
-        message: "Transakcija nije pronađena".to_string(),
+        message: "Transaction not found".to_string(),
         data: None,
     })
 }
@@ -1498,7 +1505,11 @@ const DEFAULT_CORS_ORIGINS: &str =
 
 fn configured_api_bind() -> io::Result<String> {
     let bind = env::var("ULTRANET_API_BIND").unwrap_or_else(|_| DEFAULT_API_BIND.to_string());
-    let bind = bind.trim();
+    parse_api_bind(&bind)
+}
+
+fn parse_api_bind(raw: &str) -> io::Result<String> {
+    let bind = raw.trim();
 
     if bind.is_empty() {
         return Err(io::Error::new(
@@ -1506,6 +1517,13 @@ fn configured_api_bind() -> io::Result<String> {
             "ULTRANET_API_BIND cannot be empty",
         ));
     }
+
+    bind.parse::<std::net::SocketAddr>().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("ULTRANET_API_BIND must be a valid IP:port address: {error}"),
+        )
+    })?;
 
     Ok(bind.to_string())
 }
@@ -1556,7 +1574,17 @@ fn configured_cors_origins() -> io::Result<Vec<String>> {
     }
 }
 
-// ===== POKRENI SERVER =====
+/// Validate startup configuration before opening storage or running expensive setup.
+pub fn validate_configuration() -> io::Result<()> {
+    let _ = configured_api_bind()?;
+    let _ = configured_cors_origins()?;
+    let _ = configured_admin_auth()?;
+    AuthConfig::from_env()
+        .map(|_| ())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
+}
+
+// ===== START SERVER =====
 
 fn configure_admin_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
@@ -1597,20 +1625,20 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
         auth_config,
     ));
 
-    println!("🚀 Pokrećem REST API server na http://{api_bind}");
+    println!("🚀 Starting REST API server at http://{api_bind}");
     println!("🔒 CORS allowlist: {}", cors_origins.join(", "));
     println!("🔐 Administrative bearer authentication: enabled");
-    println!("📋 Endpoint-i:");
-    println!("   POST /api/transaction - Dodaj transakciju");
-    println!("   POST /api/mine - Rudari blok");
-    println!("   GET  /api/chain - Stanje lanca");
-    println!("   GET  /api/balance/:address - Balans");
-    println!("   GET  /api/block/:index - Blok po indeksu");
-    println!("   GET  /api/validate - Validacija lanca");
-    println!("   GET  /api/stats - Statistika");
+    println!("📋 Endpoints:");
+    println!("   POST /api/transaction - Add transaction");
+    println!("   POST /api/mine - Mine block");
+    println!("   GET  /api/chain - Chain state");
+    println!("   GET  /api/balance/:address - Balance");
+    println!("   GET  /api/block/:index - Block by index");
+    println!("   GET  /api/validate - Validate chain");
+    println!("   GET  /api/stats - Statistics");
     println!("   GET  /api/recursive/proof - Recursive ZK proof");
-    println!("   GET  /api/recursive/verify - Verifikacija lanca");
-    println!("   GET  /api/stm/stats - Block-STM statistika");
+    println!("   GET  /api/recursive/verify - Verify chain");
+    println!("   GET  /api/stm/stats - Block-STM statistics");
     println!("   GET  /api/fhe/pk - FHE Public Key");
     println!("   POST /api/appchain/create - Create L3 AppChain");
     println!("   POST /api/governance/propose - Submit validator proposal");
@@ -1693,8 +1721,9 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
 #[cfg(test)]
 mod configuration_tests {
     use super::{
-        configure_admin_routes, csrf_cookie, parse_cors_origins, require_admin_token,
-        session_cookie, AdminAuthConfig, AuthChallengeRequest, AuthLoginRequest,
+        configure_admin_routes, csrf_cookie, missing_admin_token_error, parse_api_bind,
+        parse_cors_origins, require_admin_token, session_cookie, validate_admin_token,
+        AdminAuthConfig, AuthChallengeRequest, AuthLoginRequest,
     };
     use crate::{
         auth::{AuthConfig, AuthService, CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME},
@@ -1708,6 +1737,21 @@ mod configuration_tests {
         test as actix_test, web, App, HttpResponse,
     };
     use std::{fs, sync::Arc};
+
+    #[test]
+    fn api_bind_parser_accepts_ip_and_port() {
+        assert_eq!(
+            parse_api_bind(" 127.0.0.1:8081 ").unwrap(),
+            "127.0.0.1:8081"
+        );
+    }
+
+    #[test]
+    fn api_bind_parser_rejects_empty_and_malformed_values() {
+        assert!(parse_api_bind(" ").is_err());
+        assert!(parse_api_bind("localhost:8081").is_err());
+        assert!(parse_api_bind("127.0.0.1").is_err());
+    }
 
     #[test]
     fn cors_parser_accepts_multiple_explicit_origins() {
@@ -1729,6 +1773,34 @@ mod configuration_tests {
     #[test]
     fn cors_parser_rejects_non_http_origins() {
         assert!(parse_cors_origins("dashboard.example.com").is_err());
+    }
+
+    #[test]
+    fn admin_token_validation_rejects_missing_quality_values() {
+        for token in [
+            "replace-with-a-token",
+            "short",
+            "token with whitespace and enough length",
+        ] {
+            let error = validate_admin_token(token).unwrap_err().to_string();
+            assert!(error.contains("ULTRANET_ADMIN_TOKEN"));
+            assert!(!error.contains(token));
+        }
+    }
+
+    #[test]
+    fn admin_token_validation_accepts_a_32_byte_token_without_echoing_it() {
+        let token = "a".repeat(32);
+        let config = validate_admin_token(&token).expect("32-byte token should be accepted");
+        assert_eq!(config.token, token.as_bytes());
+    }
+
+    #[test]
+    fn missing_admin_token_error_contains_actionable_english_guidance() {
+        let error = missing_admin_token_error().to_string();
+        assert!(error.contains("private administrator bearer token"));
+        assert!(error.contains("openssl rand -hex 32"));
+        assert!(error.contains("not a wallet key or public node identifier"));
     }
 
     #[test]

@@ -36,7 +36,7 @@ export default function UnifiedScalabilityDoc() {
             <h2 className="text-2xl font-bold text-platinum uppercase tracking-tight mb-6">03. Recursive SNARK Compression</h2>
             <p>
               To ensure the chain remains light and verifiable for 100 years, UltraNet utilizes <strong>Recursive SNARKs</strong>. 
-              Each new block includes a proof that attests to the validity of the previous block's proof plus the current state transition.
+              Each new block includes a proof that attests to the validity of the previous block&apos;s proof plus the current state transition.
               This allows a new node to verify the entire history of the blockchain in constant time (ms) rather than re-playing years of transactions.
             </p>
           </section>

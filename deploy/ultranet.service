@@ -3,7 +3,7 @@ Description=UltraNet v7.1 Sovereign Validator Node
 # Original UltraNet service configuration © 2026 Vladan Jotov; ISC License.
 After=network-online.target
 Wants=network-online.target
-Documentation=https://github.com/your-repo/UltraNet_Linux/blob/main/VALIDATOR_GUIDE.md
+Documentation=https://github.com/Alexand173/ultranet/blob/main/VALIDATOR_GUIDE.md
 
 [Service]
 Type=simple
@@ -11,6 +11,8 @@ User=ultranet
 Group=ultranet
 WorkingDirectory=/opt/ultranet
 EnvironmentFile=-/etc/ultranet/ultranet.env
+# Never wait for interactive input when systemd reports a startup error.
+Environment=ULTRANET_PAUSE_ON_ERROR=false
 ExecStart=/opt/ultranet/target/release/UltraNet
 
 # The database path is supplied by /etc/ultranet/ultranet.env.

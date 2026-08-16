@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Command, X, ChevronRight, CornerDownLeft } from "lucide-react";
+import { Search, Command, CornerDownLeft } from "lucide-react";
 import { CHAPTERS, getIcon, Chapter } from "@/lib/constants";
 import { clsx } from "clsx";
 
@@ -157,7 +157,7 @@ export default function GlobalCommandSearch() {
                             "font-mono text-[10px] uppercase tracking-widest mb-0.5",
                             selectedIndex === index ? "text-cyan-glow/70" : "text-platinum/30"
                           )}>
-                            {chapter.category} // CH_{chapter.id.toString().padStart(2, '0')}
+                            {chapter.category} {"//"} CH_{chapter.id.toString().padStart(2, '0')}
                           </div>
                           <div className={clsx(
                             "font-bold text-sm uppercase tracking-tight transition-colors",

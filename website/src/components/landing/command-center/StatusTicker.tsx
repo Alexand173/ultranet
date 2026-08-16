@@ -36,7 +36,7 @@ export default function StatusTicker({ position, blockHeight, provingTime }: Sta
         <div className="ticker-track gap-12 whitespace-nowrap text-platinum/40">
           {items.map((item, i) => (
             <span key={i} className="flex items-center gap-2">
-              <span className="text-cyan-glow/30">//</span>
+              <span className="text-cyan-glow/30">{"//"}</span>
               {item}
             </span>
           ))}

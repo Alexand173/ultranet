@@ -242,33 +242,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     let mut dag = MysticetiDAG::new(5, 1);
-    println!("✅ MysticetiDAG kreiran!");
-    println!("   Validatori: {}", dag.validator_count);
+    println!("✅ MysticetiDAG created!");
+    println!("   Validators: {}", dag.validator_count);
     println!("   Faulty: {}", dag.faulty);
     println!();
 
-    println!("📦 Kreiram genesis vertex...");
+    println!("📦 Creating genesis vertex...");
     let genesis = MysticetiVertex::new(0, 0, vec![]);
     let genesis_hash = genesis.hash;
     dag.add_vertex(genesis)?;
-    println!("   Genesis vertex dodat!");
+    println!("   Genesis vertex added!");
     println!();
 
-    println!("📦 Kreiram validator vertexe...");
+    println!("📦 Creating validator vertices...");
     let start = Instant::now();
 
-    // Round 1 - svi validatori kreiraju vertexe
+    // Round 1 - all validators create vertices
     let mut round_1_hashes = Vec::new();
     for i in 0..5 {
         let vertex = MysticetiVertex::new(i, 1, vec![genesis_hash]);
         let hash = vertex.hash;
         dag.add_vertex(vertex)?;
         round_1_hashes.push(hash);
-        println!("   Validator {} dodao vertex", i);
+        println!("   Validator {} added a vertex", i);
     }
 
     let duration = start.elapsed();
-    println!("   Vrijeme: {:?}", duration);
+    println!("   Time: {:?}", duration);
     println!();
 
     let stats = dag.get_stats();
@@ -309,11 +309,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if let Some(anchor) = dag.get_anchor(round) {
             println!(
-                "   Round {}: Anchor je validator {}",
+                "   Round {}: Anchor is validator {}",
                 round, anchor.validator_id
             );
         } else {
-            println!("   Round {}: Nema anchor-a", round);
+            println!("   Round {}: No anchor", round);
         }
 
         last_round_hashes = current_round_hashes;
@@ -337,7 +337,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if let Some(leader) = dag.get_leader_with_reputation(round, &reputation_map) {
             println!(
-                "   Round {}: Lider je validator {} (reputacija: {:.2})",
+                "   Round {}: Leader is validator {} (reputation: {:.2})",
                 round,
                 leader.validator_id,
                 reputation_map.get(&leader.validator_id).unwrap_or(&0.0)
@@ -348,14 +348,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!();
 
-    println!("✅ IMPLICITNI KONSENZUS (Mysticeti):");
-    println!("   Broj komitovanih vertexa: {}", dag.committed.len());
+    println!("✅ IMPLICIT CONSENSUS (Mysticeti):");
+    println!("   Committed vertices: {}", dag.committed.len());
     println!();
 
-    println!("🎉 MYSTICETI DAG DEMO ZAVRŠEN!");
-    println!("   Ukupno vertexa: {}", dag.vertices.len());
-    println!("   Ukupno round-ova: {}", dag.by_round.len());
-    println!("   Komitovano: {}", dag.committed.len());
+    println!("🎉 MYSTICETI DAG DEMO COMPLETE!");
+    println!("   Total vertices: {}", dag.vertices.len());
+    println!("   Total rounds: {}", dag.by_round.len());
+    println!("   Committed: {}", dag.committed.len());
 
     Ok(())
 }

@@ -53,7 +53,7 @@ export default function AutonomousIntelligenceDoc() {
             <h4 className="text-sm font-bold text-platinum uppercase mb-2">Hybrid Sovereignty</h4>
             <p className="text-xs text-platinum/60 leading-relaxed max-w-xl mx-auto">
               A unique 2-of-3 multi-signature override remains active for emergency interventions, 
-              providing a "circuit breaker" for the autonomous governor in unforeseen black-swan events.
+              providing a &quot;circuit breaker&quot; for the autonomous governor in unforeseen black-swan events.
             </p>
           </div>
         </div>

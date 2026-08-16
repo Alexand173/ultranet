@@ -245,7 +245,7 @@ impl MoveVM {
         self.storage.storage.flush().map_err(|e| e.to_string())?;
 
         println!(
-            "📦 Move module '{}' deployed persistentally at {}!",
+            "📦 Move module '{}' deployed persistently at {}!",
             name, sender
         );
         Ok(())

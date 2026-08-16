@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { BookOpen, Search, ChevronRight, ExternalLink } from "lucide-react";
-import { CHAPTERS, getIcon } from "@/lib/constants";
+import { CHAPTERS, getIcon, type Chapter } from "@/lib/constants";
 
 export default function DocsHub() {
   const [search, setSearch] = useState("");
@@ -151,7 +151,7 @@ export default function DocsHub() {
             <div className="font-mono text-xs text-platinum/20 uppercase tracking-[0.4em] mb-4">
               [ 0_MATCHES_FOUND ]
             </div>
-            <p className="text-platinum/40 text-sm">No chapters found matching "{search}" in {activeCategory}.</p>
+            <p className="text-platinum/40 text-sm">No chapters found matching &quot;{search}&quot; in {activeCategory}.</p>
           </div>
         )}
       </main>
@@ -176,7 +176,7 @@ export default function DocsHub() {
   );
 }
 
-function ChapterContent({ chapter, isComingSoon }: { chapter: any; isComingSoon?: boolean }) {
+function ChapterContent({ chapter, isComingSoon }: { chapter: Chapter; isComingSoon?: boolean }) {
   return (
     <>
       <div className="flex justify-between items-start mb-6">

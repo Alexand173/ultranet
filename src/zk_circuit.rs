@@ -154,7 +154,7 @@ impl UltraZKEngine {
     pub fn create_proof(&mut self, circuit: PrivateTransactionCircuit) -> Result<Vec<u8>, String> {
         self.ensure_keys()?;
 
-        println!("🛡️ ZK Engine: Generisanje Groth16 dokaza...");
+        println!("🛡️ ZK Engine: Generating Groth16 proof...");
         self.set_progress(30, "Synthesizing constraints...");
 
         use rand::SeedableRng;
@@ -206,9 +206,9 @@ impl UltraZKEngine {
             .map_err(|e| format!("Verification execution error: {}", e))?;
 
         if is_valid {
-            println!("✅ ZK Engine: Arkworks Groth16 dokaz je VALIDAN!");
+            println!("✅ ZK Engine: Arkworks Groth16 proof is VALID!");
         } else {
-            println!("❌ ZK Engine: Arkworks Groth16 dokaz je NEVALIDAN!");
+            println!("❌ ZK Engine: Arkworks Groth16 proof is INVALID!");
         }
 
         Ok(is_valid)

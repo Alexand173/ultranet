@@ -101,13 +101,12 @@ fn build_base_tx() -> Transaction {
 fn main() {
     println!("🧪 Sovereign 2-of-3 Multi-Sig offline test\n");
 
-    let raw =
-        fs::read_to_string(BACKUP_PATH).expect("Ne mogu da pročitam backup fajl sa ključevima");
-    let backup: BackupFile = serde_json::from_str(&raw).expect("Nevalidan backup JSON");
+    let raw = fs::read_to_string(BACKUP_PATH).expect("Cannot read the key backup file");
+    let backup: BackupFile = serde_json::from_str(&raw).expect("Invalid backup JSON");
     assert_eq!(
         backup.owners.len(),
         3,
-        "Backup treba da ima tačno 3 owner-a"
+        "The backup must contain exactly 3 owners"
     );
 
     let db_path = "test_sovereign_sig_db";
@@ -125,12 +124,12 @@ fn main() {
     tx_ok.signature = combined;
 
     println!(
-        "Test 1: potpisi od '{}' + '{}' (2-od-3)",
+        "Test 1: signatures from '{}' + '{}' (2-of-3)",
         backup.owners[0].name, backup.owners[1].name
     );
     match blockchain.add_transaction(tx_ok) {
-        Ok(()) => println!("  ✅ PROŠAO — transakcija prihvaćena (2-of-3 threshold zadovoljen)\n"),
-        Err(e) => println!("  ❌ NIJE PROŠAO — greška: {}\n", e),
+        Ok(()) => println!("  ✅ PASSED — transaction accepted (2-of-3 threshold satisfied)\n"),
+        Err(e) => println!("  ❌ FAILED — error: {}\n", e),
     }
 
     // ---------- TEST 2: samo 1 potpis (Owner #3) → treba da PUKNE (Insufficient signatures) ----------
@@ -141,16 +140,18 @@ fn main() {
     tx_fail.signature = sig3;
 
     println!(
-        "Test 2: samo 1 potpis ('{}') — ovo NE treba da prođe",
+        "Test 2: only 1 signature ('{}') — this must NOT pass",
         backup.owners[2].name
     );
     match blockchain.add_transaction(tx_fail) {
-        Ok(()) => println!(
-            "  ❌ NEOČEKIVANO PROŠAO — sigurnosna greška, 1 potpis ne treba da bude dovoljan!\n"
-        ),
-        Err(e) => println!("  ✅ PROŠAO (očekivana odbijenica) — {}\n", e),
+        Ok(()) => {
+            println!("  ❌ UNEXPECTED PASS — security error: 1 signature must not be sufficient!\n")
+        }
+        Err(e) => println!("  ✅ PASSED (expected rejection) — {}\n", e),
     }
 
     let _ = fs::remove_dir_all(db_path);
-    println!("🧹 Privremena test baza obrisana. Mainnet baza (ultranet_db) nije dodirnuta.");
+    println!(
+        "🧹 Temporary test database removed. The mainnet database (ultranet_db) was not touched."
+    );
 }

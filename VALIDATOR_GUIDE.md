@@ -66,12 +66,47 @@ chmod +x UltraNetNode
 ```
 
 ```powershell
-# Windows PowerShell
+# Windows PowerShell (the immutable v7.1.0 rollback archive)
 Expand-Archive .\UltraNetNode-windows-x64.zip -DestinationPath .
 .\UltraNetNode.exe
 ```
 
-The release packages do not include configuration files or private keys. If your host is not x86_64, or you require a source build, continue with the compilation path below.
+The immutable `v7.1.0` package does not include configuration files or private
+keys. The corrected maintenance package will be published under a new tag only
+after clean Windows validation; it will contain `UltraNetNode.exe`,
+`Start-UltraNetNode.bat`, `UltraNetNode.env.example`, and `README-WINDOWS.txt`.
+For that package, copy the example to `UltraNetNode.env`, create the private
+admin token below, and launch `Start-UltraNetNode.bat` first. The launcher runs
+`--check-config` before storage/cryptographic setup and keeps interactive
+configuration failures visible. Do not update the release links in this guide
+until the maintenance tag's assets and checksums have been verified.
+
+If your host is not x86_64, or you require a source build, continue with the compilation path below.
+
+### 2.4 Administrator token for ordinary operators
+
+`ULTRANET_ADMIN_TOKEN` is a private administrator bearer token required by the node API for state-changing operations such as mining, pruning, and AppChain management. It is not a wallet key, public node identifier, or `DILITHIUM_PUB_KEY`. Do not share it or place it in browser code.
+
+Create a fresh 32-byte token locally:
+
+```bash
+openssl rand -hex 32
+```
+
+On Windows PowerShell:
+
+```powershell
+$bytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$token = [BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant()
+$rng.Dispose()
+$token
+```
+
+Set the resulting 64-character hexadecimal value in `UltraNetNode.env` for the Windows package or in `/etc/ultranet/ultranet.env` for systemd. Keep the file private. If the node reports that `ULTRANET_ADMIN_TOKEN` is required, create a token with one of the commands above and restart the node; do not use a wallet key or public identity in its place.
+
+When `ULTRANET_DB_PATH` is omitted, local desktop launches use `%LOCALAPPDATA%\\UltraNet\\data` on Windows, `~/Library/Application Support/UltraNet/data` on macOS, and `$XDG_DATA_HOME/ultranet` or `~/.local/share/ultranet` on Linux. An explicit `ULTRANET_DB_PATH` remains authoritative for systemd, Docker, and existing state.
 
 ## 3. Deployment Sequence
 

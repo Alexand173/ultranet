@@ -68,7 +68,7 @@ export default function LoginPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [returnPath]);
 
   const finishLogin = (message: string) => {
     setStatus("success");

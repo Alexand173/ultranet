@@ -101,7 +101,7 @@ impl MysticetiDAG {
                 && !parent_hash.iter().all(|&b| b == 0)
             {
                 return Err(format!(
-                    "Parent {:x?} not found (neither in RAM nor in Index)",
+                    "Parent {:x?} not found (neither in RAM nor in index)",
                     parent_hash
                 ));
             }

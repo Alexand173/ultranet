@@ -123,12 +123,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("📡 L1 Anchor Response: {}", resp.text().await?);
 
     println!("\n============================================================");
-    println!("🎉 DEMO ZAVRŠEN!");
+    println!("🎉 DEMO COMPLETE!");
     println!("============================================================");
-    println!("Mreža je izvršila sabiranje i oduzimanje balansa homomorfno.");
-    println!("Veličina stanja u Sled-u je porasla, ali su podaci ostali enkriptovani.");
-    println!("Samo korisnik sa klijentskim ključem može pročitati balans.");
-    println!("Pogledaj logove UltraNet čvora za '✅ [FHE] Transferred' potvrdu.");
+    println!("The network performed homomorphic balance addition and subtraction.");
+    println!("The Sled state grew, but the data remained encrypted.");
+    println!("Only a user with the client key can read the balance.");
+    println!("Check the UltraNet node logs for the '✅ [FHE] Transferred' confirmation.");
 
     Ok(())
 }

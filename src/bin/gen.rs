@@ -13,10 +13,10 @@ fn main() {
     println!("==================================================");
     println!("🔐 ULTRANET WALLET GENERATOR");
     println!("==================================================");
-    println!("\n📝 ADRESA: 0x{}", hex::encode(address));
-    println!("\n🔑 PRIVATNI KLJUČ (hex): {}", hex::encode(private_key));
-    println!("🔑 PRIVATNI KLJUČ (dec): {:?}", private_key);
+    println!("\n📝 ADDRESS: 0x{}", hex::encode(address));
+    println!("\n🔑 PRIVATE KEY (hex): {}", hex::encode(private_key));
+    println!("🔑 PRIVATE KEY (dec): {:?}", private_key);
     println!("\n==================================================");
-    println!("⚠️  ČUVAJ PRIVATNI KLJUČ NA SIGURNOM MESTU!");
+    println!("⚠️  KEEP THE PRIVATE KEY IN A SAFE PLACE!");
     println!("==================================================");
 }

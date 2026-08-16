@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, LoaderCircle, LockKeyhole, RotateCcw } from "lucide-react";
+import { AlertTriangle, LoaderCircle, RotateCcw } from "lucide-react";
 import { fetchAuthSession, logout, type AuthSession } from "@/lib/auth";
 import { emptyNetworkStats, fetchLatestTransactions, fetchNetworkStats, type LatestTransaction, type LiveNetworkStats } from "@/lib/api";
 import { mineBlock, OperatorRequestError, type MineBlockResult } from "@/lib/operator";

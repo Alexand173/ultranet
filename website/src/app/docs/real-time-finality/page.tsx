@@ -22,7 +22,7 @@ export default function RealTimeFinalityDoc() {
           <section className="bg-cyan-glow/5 border border-cyan-glow/10 p-8 rounded-sm">
             <h2 className="text-xl font-bold text-cyan-glow uppercase tracking-tight mb-4">02. Optimized Proving Pipeline</h2>
             <p className="mb-6">
-              The <strong>506ms Proving Time</strong> seen on our dashboard isn't just a number—it's the result of 
+              The <strong>506ms Proving Time</strong> seen on our dashboard isn&apos;t just a number—it&apos;s the result of
               aggressive hardware-aware optimization of our ZK and FHE stacks.
             </p>
             <div className="space-y-4">
@@ -44,9 +44,9 @@ export default function RealTimeFinalityDoc() {
           <section>
             <h2 className="text-2xl font-bold text-platinum uppercase tracking-tight mb-6">03. Sharded Merkle Patricia Trie</h2>
             <p>
-              State storage is often the primary bottleneck for TPS. UltraNet's <strong>Sharded MPT</strong> partitions 
-              the entire global state into 16 independent database shards (backed by <em>Sled</em>). This allows 
-              concurrent disk I/O, ensuring that state-heavy transactions don't block the rest of the network.
+              State storage is often the primary bottleneck for TPS. UltraNet&apos;s <strong>Sharded MPT</strong> partitions
+              the entire global state into 16 independent database shards (backed by <em>Sled</em>). This allows
+              concurrent disk I/O, ensuring that state-heavy transactions don&apos;t block the rest of the network.
             </p>
           </section>
 

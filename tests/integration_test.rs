@@ -632,7 +632,7 @@ mod tests {
         assert_eq!(body["success"].as_bool(), Some(false));
         assert_eq!(
             body["message"].as_str(),
-            Some("Validator proposal nije pronađen")
+            Some("Validator proposal not found")
         );
 
         cleanup(&format!("test_db_int_{}", name));

@@ -14,7 +14,7 @@ export default function Layer0FoundationDoc() {
             <h2 className="text-2xl font-bold text-platinum uppercase tracking-tight mb-6">01. Mysticeti & Bullshark Consensus</h2>
             <p>
               UltraNet utilizes a <strong>Directed Acyclic Graph (DAG)</strong> based consensus mechanism. Unlike linear chains where 
-              one validator proposes a single block, our validators broadcast vertices simultaneously. This removes the "leader bottleneck" 
+              one validator proposes a single block, our validators broadcast vertices simultaneously. This removes the &quot;leader bottleneck&quot;
               and significantly reduces latency.
             </p>
           </section>

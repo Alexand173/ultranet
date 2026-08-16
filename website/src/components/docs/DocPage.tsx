@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { ChevronLeft, Terminal, Shield, Cpu, Activity, Brain } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 
 interface DocPageProps {
   title: string;
@@ -69,7 +69,7 @@ export default function DocPage({ title, subtitle, pillar, content, icon }: DocP
           
           <div className="prose prose-invert prose-cyan max-w-none">
             <p className="text-xl text-platinum/60 font-mono leading-relaxed mb-12 italic border-l-2 border-cyan-glow/30 pl-6">
-              "{subtitle}"
+              &quot;{subtitle}&quot;
             </p>
             <div className="space-y-12">
               {content}

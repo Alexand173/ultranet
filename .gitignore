@@ -5,6 +5,11 @@ owner1_key.json
 owner1_key*.json
 wallet*.json
 
+# Local environment files and secrets - NEVER commit
+*.env
+.env.*
+!**/*.env.example
+
 # Compiled files
 target/
 *.rs.bk
@@ -19,12 +24,14 @@ target/
 ultranet_db/
 ultranet_p2p_db/
 test_db/
+test_db_*/
 
 # Node modules and frontend builds
 website/node_modules/
 website/.next/
 website/out/
 website/dist/
+*.tsbuildinfo
 
 # Documents, scripts, and temporary files
 *.docx
@@ -34,6 +41,7 @@ website/dist/
 *:Zone.Identifier
 *.mat
 *.txt
+!release/windows/README-WINDOWS.txt
 *.sh
 *.ptau
 *.zkey

@@ -34,7 +34,7 @@ export default function VisualNoise() {
           }}
           className="absolute font-mono text-[6px] text-cyan-glow uppercase tracking-[0.4em] whitespace-nowrap"
         >
-          System_Check: {Math.random().toString(16).substring(2, 8)} // OK
+          System_Check: {Math.random().toString(16).substring(2, 8)} {"//"} OK
         </motion.div>
       ))}
 

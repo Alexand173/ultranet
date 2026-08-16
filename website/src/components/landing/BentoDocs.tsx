@@ -60,7 +60,7 @@ export default function BentoDocs() {
           The Sovereign Guide
         </h2>
         <p className="text-platinum/40 max-w-2xl font-mono text-sm">
-          Explore the foundational pillars of UltraNet's next-generation blockchain architecture.
+          Explore the foundational pillars of UltraNet&apos;s next-generation blockchain architecture.
         </p>
       </div>
 

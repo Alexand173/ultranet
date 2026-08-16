@@ -127,7 +127,12 @@
     content: "";
     position: fixed;
     inset: -200%;
-    background-image: url("https://grainy-gradients.vercel.app/noise.svg");
+    background-image:
+      radial-gradient(circle at 12% 18%, rgba(255, 255, 255, 0.09) 0 0.7px, transparent 0.8px),
+      radial-gradient(circle at 78% 64%, rgba(15, 255, 255, 0.07) 0 0.6px, transparent 0.7px),
+      linear-gradient(135deg, rgba(255, 255, 255, 0.025), transparent 35%, rgba(15, 255, 255, 0.02) 65%, transparent);
+    background-size: 17px 17px, 23px 23px, 100% 100%;
+    background-blend-mode: screen;
     opacity: 0.1;
     pointer-events: none;
     z-index: 100;

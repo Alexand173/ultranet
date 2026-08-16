@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { ArrowRight, Box, ChevronRight, Download, GitBranch, Key, Terminal } from "lucide-react";
@@ -126,9 +127,11 @@ export default function SwarmOnboarding() {
       {/* Left Panel: Visual/Context */}
       <div className="relative overflow-hidden flex flex-col justify-end p-12 bg-zinc-900 border-r border-platinum/10">
         <div className="absolute inset-0 opacity-40 mix-blend-overlay">
-          <img
+          <Image
             src="https://images.unsplash.com/photo-1680992046617-e2e35451bcdb?crop=entropy&cs=srgb&fm=jpg&q=85"
             alt="Server Room"
+            fill
+            sizes="(min-width: 768px) 50vw, 100vw"
             className="w-full h-full object-cover"
           />
         </div>
@@ -139,7 +142,7 @@ export default function SwarmOnboarding() {
             <h2 className="text-4xl md:text-5xl font-bold leading-tight">Join the<br /><span className="text-cyan-glow">Validator Swarm</span></h2>
             <p className="max-w-md text-platinum/60">
               UltraNet is bootstrapped by a global swarm of infrastructure providers.
-              Validators help anchor state transitions; active rewards follow the node's protocol and governance configuration.
+              Validators help anchor state transitions; active rewards follow the node&apos;s protocol and governance configuration.
             </p>
           </div>
 

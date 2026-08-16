@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { motion, useMotionValue, useSpring, useTransform } from "framer-motion";
 import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
@@ -71,9 +72,11 @@ export default function GlobalCoin() {
           style={{ "--mask-x": "50%", "--mask-y": "50%" } as React.CSSProperties}
         >
           {/* object-contain guarantees the full coin rim text is never cropped */}
-          <img
+          <Image
             src={COIN_IMAGE}
             alt="ULTRA Blockchain Network coin — decentralized, scalable, secure"
+            fill
+            sizes="192px"
             className="absolute inset-0 z-10 w-full h-full object-contain"
           />
 
