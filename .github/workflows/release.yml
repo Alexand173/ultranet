@@ -191,6 +191,23 @@ jobs:
             throw "Valid ULTRANET_ADMIN_TOKEN failed configuration validation"
           }
 
+      - name: Verify Windows FHE startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $binary = "target/x86_64-pc-windows-gnu/release/UltraNet.exe"
+          $env:ULTRANET_DB_PATH = Join-Path $env:RUNNER_TEMP "ultranet-fhe-check"
+          $env:ULTRANET_PAUSE_ON_ERROR = "false"
+          $env:ULTRANET_ADMIN_TOKEN = "a" * 64
+          if (Test-Path $env:ULTRANET_DB_PATH) {
+            Remove-Item -Recurse -Force $env:ULTRANET_DB_PATH
+          }
+          & $binary --check-fhe
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows FHE initialization failed with exit code $LASTEXITCODE"
+          }
+          Remove-Item -Recurse -Force $env:ULTRANET_DB_PATH
+
       - name: Package Windows archive
         shell: pwsh
         run: |

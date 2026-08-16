@@ -121,4 +121,6 @@ move-table-extension = { git = "https://github.com/aptos-labs/aptos-core", packa
 tfhe = { version = "0.7", features = ["integer", "x86_64-unix", "boolean"] }
 
 [target.'cfg(not(unix))'.dependencies]
-tfhe = { version = "0.7", features = ["integer", "x86_64", "boolean"] }
+# The Windows build supplies its own OS-backed seed to TFHE and uses the
+# portable software PRNG so older x86_64 CPUs do not require RDSEED or AES-NI.
+tfhe = { version = "0.7", features = ["integer", "boolean"] }

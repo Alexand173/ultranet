@@ -24,6 +24,11 @@ UltraNetNode.exe --check-config
 set "CHECK_EXIT=%ERRORLEVEL%"
 if not "%CHECK_EXIT%"=="0" exit /b %CHECK_EXIT%
 
+echo Checking FHE initialization...
+UltraNetNode.exe --check-fhe
+set "FHE_CHECK_EXIT=%ERRORLEVEL%"
+if not "%FHE_CHECK_EXIT%"=="0" exit /b %FHE_CHECK_EXIT%
+
 echo Starting UltraNetNode. Press Ctrl+C to stop it.
 UltraNetNode.exe
 set "EXIT_CODE=%ERRORLEVEL%"

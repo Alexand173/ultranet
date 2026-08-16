@@ -19,17 +19,17 @@ The UltraNet kernel is optimized for parallel hardware. To maintain the **sub-mi
 - **OS**: Linux (Ubuntu 22.04 LTS / Debian 12 / RHEL 9).
 - **Kernel**: 5.15+ (Required for optimal `tokio` asynchronous I/O performance).
 
-### 2.3 Published v7.1.0 Node Packages
+### 2.3 Published v7.1.3 Node Packages
 
-For x86_64 hosts, the [published UltraNet v7.1.0 GitHub release](https://github.com/Alexand173/ultranet/releases/tag/v7.1.0) provides precompiled node binaries. Select the archive for your platform:
+For x86_64 hosts, the [published UltraNet v7.1.3 GitHub release](https://github.com/Alexand173/ultranet/releases/tag/v7.1.3) provides precompiled node binaries. Select the archive for your platform:
 
 | Platform | Download | Contains |
 | :--- | :--- | :--- |
-| Windows x64 | [`UltraNetNode-windows-x64.zip`](https://github.com/Alexand173/ultranet/releases/download/v7.1.0/UltraNetNode-windows-x64.zip) | `UltraNetNode.exe` |
-| Linux x64 | [`UltraNetNode-linux-x64.tar.gz`](https://github.com/Alexand173/ultranet/releases/download/v7.1.0/UltraNetNode-linux-x64.tar.gz) | `UltraNetNode` |
-| macOS x64 (Intel) | [`UltraNetNode-macos-x64.tar.gz`](https://github.com/Alexand173/ultranet/releases/download/v7.1.0/UltraNetNode-macos-x64.tar.gz) | `UltraNetNode` |
+| Windows x64 | [`UltraNetNode-windows-x64.zip`](https://github.com/Alexand173/ultranet/releases/download/v7.1.3/UltraNetNode-windows-x64.zip) | `UltraNetNode.exe` plus launcher and configuration template |
+| Linux x64 | [`UltraNetNode-linux-x64.tar.gz`](https://github.com/Alexand173/ultranet/releases/download/v7.1.3/UltraNetNode-linux-x64.tar.gz) | `UltraNetNode` |
+| macOS x64 (Intel) | [`UltraNetNode-macos-x64.tar.gz`](https://github.com/Alexand173/ultranet/releases/download/v7.1.3/UltraNetNode-macos-x64.tar.gz) | `UltraNetNode` |
 
-Download the [release checksum manifest](https://github.com/Alexand173/ultranet/releases/download/v7.1.0/SHA256SUMS.txt) at the same time. Verify the archive before extracting or executing it:
+Download the [release checksum manifest](https://github.com/Alexand173/ultranet/releases/download/v7.1.3/SHA256SUMS.txt) at the same time. Verify the archive before extracting or executing it:
 
 ```bash
 # Linux: download one archive plus SHA256SUMS.txt
@@ -77,8 +77,9 @@ after clean Windows validation; it will contain `UltraNetNode.exe`,
 `Start-UltraNetNode.bat`, `UltraNetNode.env.example`, and `README-WINDOWS.txt`.
 For that package, copy the example to `UltraNetNode.env`, create the private
 admin token below, and launch `Start-UltraNetNode.bat` first. The launcher runs
-`--check-config` before storage/cryptographic setup and keeps interactive
-configuration failures visible. Do not update the release links in this guide
+`--check-config` and `--check-fhe` before storage/cryptographic setup and keeps
+interactive configuration failures visible. Do not update the release links in
+this guide
 until the maintenance tag's assets and checksums have been verified.
 
 If your host is not x86_64, or you require a source build, continue with the compilation path below.

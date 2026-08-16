@@ -40,15 +40,15 @@ docker compose -f deploy/docker-compose.production.yml up -d --build
 
 ## 📦 Published Node Release
 
-UltraNet `v7.1.0` is published with precompiled x86_64 node binaries. Use the [GitHub release page](https://github.com/Alexand173/ultranet/releases/tag/v7.1.0) as the source of truth for the release notes and assets. The archives contain only the node executable; configure the node environment before starting it.
+UltraNet `v7.1.3` is published with precompiled x86_64 node binaries. Use the [GitHub release page](https://github.com/Alexand173/ultranet/releases/tag/v7.1.3) as the source of truth for the release notes and assets. Configure the node environment before starting it.
 
 | Platform | Direct download | Archive contents |
 | :--- | :--- | :--- |
-| Windows x64 | [`UltraNetNode-windows-x64.zip`](https://github.com/Alexand173/ultranet/releases/download/v7.1.0/UltraNetNode-windows-x64.zip) | `UltraNetNode.exe` |
-| Linux x64 | [`UltraNetNode-linux-x64.tar.gz`](https://github.com/Alexand173/ultranet/releases/download/v7.1.0/UltraNetNode-linux-x64.tar.gz) | `UltraNetNode` |
-| macOS x64 (Intel) | [`UltraNetNode-macos-x64.tar.gz`](https://github.com/Alexand173/ultranet/releases/download/v7.1.0/UltraNetNode-macos-x64.tar.gz) | `UltraNetNode` |
+| Windows x64 | [`UltraNetNode-windows-x64.zip`](https://github.com/Alexand173/ultranet/releases/download/v7.1.3/UltraNetNode-windows-x64.zip) | `UltraNetNode.exe` plus launcher and configuration template |
+| Linux x64 | [`UltraNetNode-linux-x64.tar.gz`](https://github.com/Alexand173/ultranet/releases/download/v7.1.3/UltraNetNode-linux-x64.tar.gz) | `UltraNetNode` |
+| macOS x64 (Intel) | [`UltraNetNode-macos-x64.tar.gz`](https://github.com/Alexand173/ultranet/releases/download/v7.1.3/UltraNetNode-macos-x64.tar.gz) | `UltraNetNode` |
 
-Download the [published `SHA256SUMS.txt` manifest](https://github.com/Alexand173/ultranet/releases/download/v7.1.0/SHA256SUMS.txt) beside the archive and verify it before extracting or executing the binary. The manifest lists all three archives, so the Linux command below ignores entries for files you did not download:
+Download the [published `SHA256SUMS.txt` manifest](https://github.com/Alexand173/ultranet/releases/download/v7.1.3/SHA256SUMS.txt) beside the archive and verify it before extracting or executing the binary. The manifest lists all three archives, so the Linux command below ignores entries for files you did not download:
 
 ```bash
 # Linux (GNU coreutils)
@@ -99,9 +99,10 @@ new tag after clean Windows validation; its Windows archive contains
 `UltraNetNode.exe`, `Start-UltraNetNode.bat`, `UltraNetNode.env.example`, and
 `README-WINDOWS.txt`. For that package, copy the example to `UltraNetNode.env`,
 create the private `ULTRANET_ADMIN_TOKEN` described below, and launch
-`Start-UltraNetNode.bat` first. The launcher runs `--check-config`, uses the
-writable per-user `%LOCALAPPDATA%\\UltraNet\\data` default, and keeps an
-interactive failure visible. Do not manually change the release links above
+`Start-UltraNetNode.bat` first. The launcher runs `--check-config` and
+`--check-fhe` before starting the node, uses the writable per-user
+`%LOCALAPPDATA%\\UltraNet\\data` default, and keeps an interactive failure
+visible. Do not manually change the release links above
 until the maintenance tag's assets and checksums have been verified.
 
 Do not extract or run an archive if its checksum does not match. For non-x86_64 systems, or when you need a source build, follow the compilation instructions in [`VALIDATOR_GUIDE.md`](./VALIDATOR_GUIDE.md).

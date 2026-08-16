@@ -9,7 +9,7 @@ export interface ReleaseAsset {
   readonly description: string;
 }
 
-export const RELEASE_TAG = "v7.1.0" as const;
+export const RELEASE_TAG = "v7.1.3" as const;
 export const RELEASE_REPOSITORY_URL = "https://github.com/Alexand173/ultranet";
 export const RELEASE_URL = `${RELEASE_REPOSITORY_URL}/releases/tag/${RELEASE_TAG}`;
 export const RELEASE_ASSET_BASE_URL = `${RELEASE_REPOSITORY_URL}/releases/download/${RELEASE_TAG}`;

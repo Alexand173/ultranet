@@ -93,7 +93,7 @@ Expose TCP/UDP `9000` to peers. Keep TCP `8081` closed in the VPS firewall; the 
 
 ## Windows desktop package
 
-The Windows x64 maintenance package is launcher-first. Extract the complete archive, copy `UltraNetNode.env.example` to `UltraNetNode.env`, create the private administrator token, and double-click `Start-UltraNetNode.bat`. The launcher sets the sibling env-file path, runs `--check-config`, and pauses only for an interactive desktop failure. It uses `%LOCALAPPDATA%\\UltraNet\\data` by default. See [`../release/windows/README-WINDOWS.txt`](../release/windows/README-WINDOWS.txt) for checksum verification, PowerShell token generation, firewall guidance, and log collection. Do not use the desktop env file as a systemd `EnvironmentFile` or put its token into Docker/Next.js configuration.
+The Windows x64 maintenance package is launcher-first. Extract the complete archive, copy `UltraNetNode.env.example` to `UltraNetNode.env`, create the private administrator token, and double-click `Start-UltraNetNode.bat`. The launcher sets the sibling env-file path, runs `--check-config` and `--check-fhe`, and pauses only for an interactive desktop failure. It uses `%LOCALAPPDATA%\\UltraNet\\data` by default. See [`../release/windows/README-WINDOWS.txt`](../release/windows/README-WINDOWS.txt) for checksum verification, PowerShell token generation, firewall guidance, and log collection. Do not use the desktop env file as a systemd `EnvironmentFile` or put its token into Docker/Next.js configuration.
 
 ## Docker Compose
 

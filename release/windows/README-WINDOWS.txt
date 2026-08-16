@@ -73,13 +73,18 @@ For a normal desktop launch, double-click Start-UltraNetNode.bat. The launcher:
   * starts in the folder containing the package;
   * loads the sibling UltraNetNode.env file;
   * runs --check-config before storage and cryptographic initialization;
+  * runs --check-fhe to verify the Windows entropy and key-storage path;
   * keeps configuration failures visible and returns a non-zero exit code; and
-  * starts UltraNetNode.exe only after configuration succeeds.
+  * starts UltraNetNode.exe only after both checks succeed.
 
 When an expected configuration error occurs, the console remains open until
 Enter is pressed. The node uses this writable default data directory:
 
   %LOCALAPPDATA%\UltraNet\data
+
+The Windows build obtains the initial FHE seed from the Windows operating
+system CSPRNG. It does not require the CPU's RDSEED or AES-NI instructions;
+64-bit Windows remains required.
 
 Leave ULTRANET_DB_PATH commented to use that default. If you choose another
 path, create it first and use a real absolute Windows path in UltraNetNode.env.
@@ -88,6 +93,7 @@ Do not place the database under a protected system directory.
 A terminal launch is also supported:
 
   .\UltraNetNode.exe --check-config
+  .\UltraNetNode.exe --check-fhe
   .\UltraNetNode.exe
 
 Set ULTRANET_PAUSE_ON_ERROR=false in that terminal when you do not want a
