@@ -155,7 +155,7 @@ ULTRANET_DB_PATH=/var/lib/ultranet \
 ```
 For a VPS, use the hardened `systemd` service described below instead of a shell background process.
 
-### 4.3 Ensuring 24/7 Uptime (systemd)
+### 4.2 Ensuring 24/7 Uptime (systemd)
 Use the production service file, which runs under a dedicated `ultranet` user, reads `/etc/ultranet/ultranet.env`, and keeps the API on loopback:
 
 ```bash
@@ -168,7 +168,7 @@ journalctl -u ultranet -f
 
 The root-level `ultranet.service.template` is kept in sync for existing workflows. See [`deploy/README.md`](./deploy/README.md) for binary installation, persistent storage, firewall, and reverse-proxy instructions.
 
-### 4.4 Validator Registration
+### 4.3 Validator Registration
 During the **Bootstrap Phase (v7.1)**, the validator set is managed by the 2-of-3 Sovereign Multi-Sig.
 1. **Identity Extraction**: Locate your `QuantumKeyPair` public key in the initial logs.
 2. **On-boarding Request**: Submit your public key to the governance portal.
