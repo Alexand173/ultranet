@@ -276,7 +276,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          actual=$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | sort)
+          actual=$(gh release view "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --json assets \
+            --jq '.assets[].name' | sort)
           expected=$(printf '%s\n' SHA256SUMS.txt UltraNetNode-linux-x64.tar.gz UltraNetNode-macos-x64.tar.gz UltraNetNode-windows-x64.zip | sort)
           if [[ "${actual}" != "${expected}" ]]; then
             echo "::error::Published assets do not match the release contract"
