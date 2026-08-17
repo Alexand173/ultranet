@@ -149,7 +149,7 @@ The workflow uses the GitHub `production` environment and these secrets:
 - `ULTRANET_DEPLOY_SSH_KEY` — private Ed25519 key whose public half is installed for `ultranet-deploy`.
 - `ULTRANET_DEPLOY_KNOWN_HOSTS` — pinned `known_hosts` entry for the production SSH host.
 
-Do not put these values in the repository, workflow YAML, frontend environment files, or public logs. The workflow requires strict host-key checking and never falls back to `StrictHostKeyChecking=no`.
+Do not put these values in the repository, workflow YAML, frontend environment files, or public logs. The workflow requires strict host-key checking and never falls back to `StrictHostKeyChecking=no`. If validation fails, the workflow reports only the missing secret names and never prints secret values.
 
 ### One-time VPS bootstrap
 

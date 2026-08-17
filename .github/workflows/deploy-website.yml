@@ -50,22 +50,15 @@ jobs:
             echo "::error::commit_sha must be a 40-character commit SHA"
             exit 1
           }
-          [[ -n "${DEPLOY_HOST}" ]] || {
-            echo "::error::ULTRANET_DEPLOY_HOST is not configured"
+          missing_secrets=()
+          [[ -n "${DEPLOY_HOST}" ]] || missing_secrets+=(ULTRANET_DEPLOY_HOST)
+          [[ "${DEPLOY_USER}" == "ultranet-deploy" ]] || missing_secrets+=(ULTRANET_DEPLOY_USER)
+          [[ -n "${DEPLOY_SSH_KEY}" ]] || missing_secrets+=(ULTRANET_DEPLOY_SSH_KEY)
+          [[ -n "${DEPLOY_KNOWN_HOSTS}" ]] || missing_secrets+=(ULTRANET_DEPLOY_KNOWN_HOSTS)
+          if (( ${#missing_secrets[@]} > 0 )); then
+            printf '::error::Missing or invalid production secret(s): %s\n' "${missing_secrets[*]}"
             exit 1
-          }
-          [[ "${DEPLOY_USER}" == "ultranet-deploy" ]] || {
-            echo "::error::ULTRANET_DEPLOY_USER must be ultranet-deploy"
-            exit 1
-          }
-          [[ -n "${DEPLOY_SSH_KEY}" ]] || {
-            echo "::error::ULTRANET_DEPLOY_SSH_KEY is not configured"
-            exit 1
-          }
-          [[ -n "${DEPLOY_KNOWN_HOSTS}" ]] || {
-            echo "::error::ULTRANET_DEPLOY_KNOWN_HOSTS is not configured"
-            exit 1
-          }
+          fi
           actual_sha="$(git rev-parse HEAD)"
           [[ "${actual_sha,,}" == "${REQUESTED_COMMIT_SHA,,}" ]] || {
             echo "::error::checked out SHA ${actual_sha} does not match requested SHA ${REQUESTED_COMMIT_SHA}"
