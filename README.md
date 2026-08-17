@@ -40,15 +40,15 @@ docker compose -f deploy/docker-compose.production.yml up -d --build
 
 ## 📦 Published Node Release
 
-UltraNet `v7.1.3` is published with precompiled x86_64 node binaries. Use the [GitHub release page](https://github.com/Alexand173/ultranet/releases/tag/v7.1.3) as the source of truth for the release notes and assets. Configure the node environment before starting it.
+UltraNet `v7.1.4` is published with precompiled x86_64 node binaries. Use the [GitHub release page](https://github.com/Alexand173/ultranet/releases/tag/v7.1.4) as the source of truth for the release notes and assets. Configure the node environment before starting it.
 
 | Platform | Direct download | Archive contents |
 | :--- | :--- | :--- |
-| Windows x64 | [`UltraNetNode-windows-x64.zip`](https://github.com/Alexand173/ultranet/releases/download/v7.1.3/UltraNetNode-windows-x64.zip) | `UltraNetNode.exe` plus launcher and configuration template |
-| Linux x64 | [`UltraNetNode-linux-x64.tar.gz`](https://github.com/Alexand173/ultranet/releases/download/v7.1.3/UltraNetNode-linux-x64.tar.gz) | `UltraNetNode` |
-| macOS x64 (Intel) | [`UltraNetNode-macos-x64.tar.gz`](https://github.com/Alexand173/ultranet/releases/download/v7.1.3/UltraNetNode-macos-x64.tar.gz) | `UltraNetNode` |
+| Windows x64 | [`UltraNetNode-windows-x64.zip`](https://github.com/Alexand173/ultranet/releases/download/v7.1.4/UltraNetNode-windows-x64.zip) | `UltraNetNode.exe` plus launcher and configuration template |
+| Linux x64 | [`UltraNetNode-linux-x64.tar.gz`](https://github.com/Alexand173/ultranet/releases/download/v7.1.4/UltraNetNode-linux-x64.tar.gz) | `UltraNetNode` |
+| macOS x64 (Intel) | [`UltraNetNode-macos-x64.tar.gz`](https://github.com/Alexand173/ultranet/releases/download/v7.1.4/UltraNetNode-macos-x64.tar.gz) | `UltraNetNode` |
 
-Download the [published `SHA256SUMS.txt` manifest](https://github.com/Alexand173/ultranet/releases/download/v7.1.3/SHA256SUMS.txt) beside the archive and verify it before extracting or executing the binary. The manifest lists all three archives, so the Linux command below ignores entries for files you did not download:
+Download the [published `SHA256SUMS.txt` manifest](https://github.com/Alexand173/ultranet/releases/download/v7.1.4/SHA256SUMS.txt) beside the archive and verify it before extracting or executing the binary. The manifest lists all three archives, so the Linux command below ignores entries for files you did not download:
 
 ```bash
 # Linux (GNU coreutils)
