@@ -10,6 +10,9 @@ export interface ReleaseAsset {
 }
 
 export const RELEASE_TAG = "v7.1.4" as const;
+export const RELEASE_PIPELINE_STATUS = "VERIFIED // SUCCESS" as const;
+export const RELEASE_PIPELINE_STATUS_DESCRIPTION =
+  "All platform builds and published asset verification passed." as const;
 export const RELEASE_REPOSITORY_URL = "https://github.com/Alexand173/ultranet";
 export const RELEASE_URL = `${RELEASE_REPOSITORY_URL}/releases/tag/${RELEASE_TAG}`;
 export const RELEASE_ASSET_BASE_URL = `${RELEASE_REPOSITORY_URL}/releases/download/${RELEASE_TAG}`;

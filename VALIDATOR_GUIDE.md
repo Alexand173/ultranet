@@ -66,21 +66,21 @@ chmod +x UltraNetNode
 ```
 
 ```powershell
-# Windows PowerShell (the immutable v7.1.0 rollback archive)
+# Windows PowerShell desktop package
 Expand-Archive .\UltraNetNode-windows-x64.zip -DestinationPath .
-.\UltraNetNode.exe
+Copy-Item .\UltraNetNode.env.example .\UltraNetNode.env
+notepad .\UltraNetNode.env
+.\Start-UltraNetNode.bat
 ```
 
-The immutable `v7.1.0` package does not include configuration files or private
-keys. The corrected maintenance package will be published under a new tag only
-after clean Windows validation; it will contain `UltraNetNode.exe`,
-`Start-UltraNetNode.bat`, `UltraNetNode.env.example`, and `README-WINDOWS.txt`.
-For that package, copy the example to `UltraNetNode.env`, create the private
-admin token below, and launch `Start-UltraNetNode.bat` first. The launcher runs
+The published `v7.1.4` Windows package contains `UltraNetNode.exe`,
+`Start-UltraNetNode.bat`, `UltraNetNode.env.example`, and
+`README-WINDOWS.txt`. Copy the example to `UltraNetNode.env`, create the
+private admin token below, and launch the batch file first. It runs
 `--check-config` and `--check-fhe` before storage/cryptographic setup and keeps
-interactive configuration failures visible. Do not update the release links in
-this guide
-until the maintenance tag's assets and checksums have been verified.
+interactive configuration failures visible. The `v7.1.4` release pipeline
+completed successfully for Linux, macOS, Windows, and published asset-contract
+verification.
 
 If your host is not x86_64, or you require a source build, continue with the compilation path below.
 

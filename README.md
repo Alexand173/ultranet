@@ -88,22 +88,22 @@ chmod +x UltraNetNode
 ```
 
 ```powershell
-# Windows PowerShell (the immutable v7.1.0 rollback archive)
+# Windows PowerShell desktop package
 Expand-Archive .\UltraNetNode-windows-x64.zip -DestinationPath .
-.\UltraNetNode.exe
+Copy-Item .\UltraNetNode.env.example .\UltraNetNode.env
+notepad .\UltraNetNode.env
+.\Start-UltraNetNode.bat
 ```
 
-The immutable `v7.1.0` release remains available for rollback and contains the
-original executable-only archive. The corrected maintenance release will use a
-new tag after clean Windows validation; its Windows archive contains
-`UltraNetNode.exe`, `Start-UltraNetNode.bat`, `UltraNetNode.env.example`, and
-`README-WINDOWS.txt`. For that package, copy the example to `UltraNetNode.env`,
-create the private `ULTRANET_ADMIN_TOKEN` described below, and launch
-`Start-UltraNetNode.bat` first. The launcher runs `--check-config` and
-`--check-fhe` before starting the node, uses the writable per-user
-`%LOCALAPPDATA%\\UltraNet\\data` default, and keeps an interactive failure
-visible. Do not manually change the release links above
-until the maintenance tag's assets and checksums have been verified.
+The published `v7.1.4` Windows archive contains `UltraNetNode.exe`,
+`Start-UltraNetNode.bat`, `UltraNetNode.env.example`, and
+`README-WINDOWS.txt`. Copy the example to `UltraNetNode.env`, create the
+private `ULTRANET_ADMIN_TOKEN` described below, and launch the batch file first.
+It runs `--check-config` and `--check-fhe` before starting the node, uses the
+writable per-user `%LOCALAPPDATA%\\UltraNet\\data` default, and keeps an
+interactive failure visible. The `v7.1.4` release pipeline completed
+successfully for Linux, macOS, Windows, and published asset-contract
+verification.
 
 Do not extract or run an archive if its checksum does not match. For non-x86_64 systems, or when you need a source build, follow the compilation instructions in [`VALIDATOR_GUIDE.md`](./VALIDATOR_GUIDE.md).
 

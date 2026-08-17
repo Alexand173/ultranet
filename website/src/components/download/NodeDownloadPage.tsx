@@ -15,6 +15,8 @@ import {
   RELEASE_ASSETS,
   RELEASE_CHECKSUM_FILE_NAME,
   RELEASE_CHECKSUM_URL,
+  RELEASE_PIPELINE_STATUS,
+  RELEASE_PIPELINE_STATUS_DESCRIPTION,
   RELEASE_REPOSITORY_URL,
   RELEASE_TAG,
   RELEASE_URL,
@@ -61,6 +63,13 @@ export default function NodeDownloadPage() {
               <dd className="mt-2 font-mono text-sm text-cyan-glow">STABLE // PUBLIC</dd>
             </div>
           </dl>
+          <div className="mt-3 flex flex-col gap-1 border border-emerald-300/20 bg-emerald-300/[0.04] px-4 py-3 font-mono sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.18em] text-platinum/40">Release pipeline</p>
+              <p className="mt-1 text-sm text-emerald-300">{RELEASE_PIPELINE_STATUS}</p>
+            </div>
+            <p className="text-xs leading-relaxed text-platinum/50">{RELEASE_PIPELINE_STATUS_DESCRIPTION}</p>
+          </div>
         </div>
       </section>
 
