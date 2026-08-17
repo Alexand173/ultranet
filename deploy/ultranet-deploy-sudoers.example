@@ -1,0 +1,4 @@
+# Install as /etc/sudoers.d/ultranet-deploy-dashboard and validate with visudo.
+# The helper validates the commit SHA and archive contents before any swap.
+Defaults:ultranet-deploy !setenv
+ultranet-deploy ALL=(root) NOPASSWD: /usr/local/sbin/ultranet-dashboard-deploy *

@@ -137,3 +137,40 @@ sudo systemctl enable --now ultranet-dashboard.service
 ```
 
 The dashboard service listens only on `127.0.0.1:3000`; Caddy exposes it at `https://dashboard.ultranetwork.cc`. Never copy `sovereign_keys.json` into the VPS, container build context, image, or frontend deployment. The repository `.dockerignore` excludes it as a second line of defense; keep the offline sovereign key ceremony outside the node host.
+
+## Automated frontend deployment
+
+`.github/workflows/deploy-website.yml` builds and deploys the Next.js dashboard when `main` changes under `website/`, `deploy/README.md`, `deploy/website.env.example`, or `ULTRA_NET_TECHNICAL_GUIDE.md`. It also supports a manual dispatch with an explicit 40-character commit SHA. Rust-only changes do not restart the dashboard.
+
+The workflow uses the GitHub `production` environment and these secrets:
+
+- `ULTRANET_DEPLOY_HOST` — production host name or address.
+- `ULTRANET_DEPLOY_USER` — must be `ultranet-deploy`.
+- `ULTRANET_DEPLOY_SSH_KEY` — private Ed25519 key whose public half is installed for `ultranet-deploy`.
+- `ULTRANET_DEPLOY_KNOWN_HOSTS` — pinned `known_hosts` entry for the production SSH host.
+
+Do not put these values in the repository, workflow YAML, frontend environment files, or public logs. The workflow requires strict host-key checking and never falls back to `StrictHostKeyChecking=no`.
+
+### One-time VPS bootstrap
+
+Run as `root` through the existing administrative SSH path. Use a dedicated key for GitHub Actions; do not reuse a personal root key:
+
+```bash
+useradd --create-home --home-dir /home/ultranet-deploy --shell /bin/bash --comment "UltraNet frontend deploy" ultranet-deploy
+install -d -o ultranet-deploy -g ultranet-deploy -m 0700 /home/ultranet-deploy/.ssh
+install -d -o ultranet-deploy -g ultranet-deploy -m 0750 /var/lib/ultranet-deploy/staging
+install -d -o ultranet -g ultranet -m 0750 /opt/ultranet/releases
+install -o root -g root -m 0755 deploy/ultranet-dashboard-deploy.sh /usr/local/sbin/ultranet-dashboard-deploy
+install -o root -g root -m 0440 deploy/ultranet-deploy-sudoers.example /etc/sudoers.d/ultranet-deploy-dashboard
+visudo -cf /etc/sudoers.d/ultranet-deploy-dashboard
+```
+
+Install the GitHub Actions public key in `/home/ultranet-deploy/.ssh/authorized_keys` with these options before the `ssh-ed25519` key: `no-agent-forwarding,no-port-forwarding,no-X11-forwarding,no-pty`. The account owns only the upload staging directory and can run only `/usr/local/sbin/ultranet-dashboard-deploy` through the installed sudo rule. The helper rejects unsafe archive members, runs the server-side `npm ci --include=dev`, lint, type-check, and build, verifies the generated whitepaper, keeps one rollback release, and restarts only `ultranet-dashboard.service`.
+
+The deployment archive contains only the website source and `ULTRA_NET_TECHNICAL_GUIDE.md`; it excludes `.git`, `node_modules`, `.next`, environment files, keys, databases, and Rust build outputs. The canonical Markdown source is installed at `/opt/ultranet/ULTRA_NET_TECHNICAL_GUIDE.md` so future server builds can regenerate the HTML reader.
+
+### Manual redeploy and rollback
+
+To redeploy a specific commit after the production secrets are configured, use the workflow's **Run workflow** action and enter its full commit SHA. The server helper builds and verifies the candidate before swapping `/opt/ultranet/website`. If the dashboard restart, local whitepaper routes, PDF route, validator state, or generated asset checks fail, it restores the previous website and restarts the prior dashboard release. `ultranet.service` is never restarted by this workflow.
+
+Keep the previous release directory until the public HTTPS verification passes. Remove old `/opt/ultranet/releases/previous-*` and `/opt/ultranet/releases/failed-*` directories only during an explicit maintenance cleanup after reviewing their contents.

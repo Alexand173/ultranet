@@ -43,6 +43,7 @@ website/dist/
 *.txt
 !release/windows/README-WINDOWS.txt
 *.sh
+!deploy/ultranet-dashboard-deploy.sh
 *.ptau
 *.zkey
 *.wtns

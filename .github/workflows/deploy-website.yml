@@ -1,0 +1,180 @@
+name: Deploy UltraNet website
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "website/**"
+      - "deploy/README.md"
+      - "deploy/website.env.example"
+      - "ULTRA_NET_TECHNICAL_GUIDE.md"
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "40-character commit SHA to deploy (blank uses the selected ref)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ultranet-frontend-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy website
+    runs-on: ubuntu-22.04
+    environment:
+      name: production
+    env:
+      DEPLOY_HOST: ${{ secrets.ULTRANET_DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.ULTRANET_DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.ULTRANET_DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.ULTRANET_DEPLOY_KNOWN_HOSTS }}
+      REQUESTED_COMMIT_SHA: ${{ inputs.commit_sha || github.sha }}
+    steps:
+      - name: Check out selected commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.commit_sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Validate deployment inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${REQUESTED_COMMIT_SHA}" =~ ^[0-9a-fA-F]{40}$ ]] || {
+            echo "::error::commit_sha must be a 40-character commit SHA"
+            exit 1
+          }
+          [[ -n "${DEPLOY_HOST}" ]] || {
+            echo "::error::ULTRANET_DEPLOY_HOST is not configured"
+            exit 1
+          }
+          [[ "${DEPLOY_USER}" == "ultranet-deploy" ]] || {
+            echo "::error::ULTRANET_DEPLOY_USER must be ultranet-deploy"
+            exit 1
+          }
+          [[ -n "${DEPLOY_SSH_KEY}" ]] || {
+            echo "::error::ULTRANET_DEPLOY_SSH_KEY is not configured"
+            exit 1
+          }
+          [[ -n "${DEPLOY_KNOWN_HOSTS}" ]] || {
+            echo "::error::ULTRANET_DEPLOY_KNOWN_HOSTS is not configured"
+            exit 1
+          }
+          actual_sha="$(git rev-parse HEAD)"
+          [[ "${actual_sha,,}" == "${REQUESTED_COMMIT_SHA,,}" ]] || {
+            echo "::error::checked out SHA ${actual_sha} does not match requested SHA ${REQUESTED_COMMIT_SHA}"
+            exit 1
+          }
+          echo "DEPLOY_SHA=${actual_sha}" >> "${GITHUB_ENV}"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install website dependencies
+        working-directory: website
+        run: npm ci --include=dev
+
+      - name: Lint website
+        working-directory: website
+        run: npm run lint
+
+      - name: Type-check website
+        working-directory: website
+        run: npx tsc --noEmit
+
+      - name: Build website
+        working-directory: website
+        run: npm run build
+
+      - name: Verify generated whitepaper asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          generated="website/public/docs/ultranet-whitepaper.html"
+          test -s "${generated}"
+          grep -Fq "UltraNet v7.1 Sovereign Technical Guide" "${generated}"
+          grep -Fq "34_CHAPTERS" "${generated}"
+          grep -Fq '<div class="mermaid"' "${generated}"
+          ! grep -Fq "THIS PAGE COULD NOT BE FOUND" "${generated}"
+          test -s website/public/docs/ultranet-whitepaper.pdf
+
+      - name: Package deployment inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tar --create --gzip --file="dist/ultranet-website-${DEPLOY_SHA}.tar.gz" \
+            --exclude='website/node_modules' \
+            --exclude='website/.next' \
+            --exclude='website/.env' \
+            --exclude='website/.env.*' \
+            --exclude='website/public/docs/ultranet-whitepaper.html' \
+            website \
+            ULTRA_NET_TECHNICAL_GUIDE.md
+          tar -tzf "dist/ultranet-website-${DEPLOY_SHA}.tar.gz" \
+            | grep -Fqx "ULTRA_NET_TECHNICAL_GUIDE.md"
+          tar -tzf "dist/ultranet-website-${DEPLOY_SHA}.tar.gz" \
+            | grep -Fqx "website/scripts/generate-whitepaper.mjs"
+
+      - name: Configure strict SSH verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "${RUNNER_TEMP}/ultranet-ssh"
+          printf '%s\n' "${DEPLOY_SSH_KEY}" > "${RUNNER_TEMP}/ultranet-ssh/id_ed25519"
+          printf '%s\n' "${DEPLOY_KNOWN_HOSTS}" > "${RUNNER_TEMP}/ultranet-ssh/known_hosts"
+          chmod 0600 "${RUNNER_TEMP}/ultranet-ssh/id_ed25519" "${RUNNER_TEMP}/ultranet-ssh/known_hosts"
+
+      - name: Upload deployment inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp \
+            -i "${RUNNER_TEMP}/ultranet-ssh/id_ed25519" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${RUNNER_TEMP}/ultranet-ssh/known_hosts" \
+            "dist/ultranet-website-${DEPLOY_SHA}.tar.gz" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:/var/lib/ultranet-deploy/staging/${DEPLOY_SHA}.tar.gz"
+
+      - name: Run guarded VPS deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh \
+            -i "${RUNNER_TEMP}/ultranet-ssh/id_ed25519" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${RUNNER_TEMP}/ultranet-ssh/known_hosts" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "sudo -n /usr/local/sbin/ultranet-dashboard-deploy ${DEPLOY_SHA}"
+
+      - name: Verify public website
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in /docs/whitepaper /docs/ultranet-whitepaper.html /docs/ultranet-whitepaper.pdf; do
+            curl --fail --silent --show-error --head --location --max-time 30 "https://ultranetwork.cc${path}"
+          done
+          reader_response="${RUNNER_TEMP}/ultranet-reader-response.html"
+          html_response="${RUNNER_TEMP}/ultranet-html-response.html"
+          curl --fail --silent --show-error --location --max-time 30 \
+            --output "${reader_response}" \
+            https://ultranetwork.cc/docs/whitepaper
+          curl --fail --silent --show-error --location --max-time 30 \
+            --output "${html_response}" \
+            https://ultranetwork.cc/docs/ultranet-whitepaper.html
+          grep -Fq "UltraNet Technical Whitepaper" "${reader_response}"
+          grep -Fq "UltraNet v7.1 Sovereign Technical Guide" "${html_response}"
