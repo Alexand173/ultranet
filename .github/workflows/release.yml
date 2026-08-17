@@ -35,9 +35,16 @@ jobs:
     name: Build Linux x64 node
     needs: validate-release
     runs-on: ubuntu-22.04
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      CARGO_NET_RETRY: "5"
+      CARGO_HTTP_TIMEOUT: "120"
+      GIT_TERMINAL_PROMPT: "0"
     steps:
       - name: Check out source
         uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Install native build dependencies
         run: |
@@ -46,6 +53,16 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ultranet-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ultranet-cargo-
 
       - name: Build UltraNet
         run: cargo build --release --locked --bin UltraNet
@@ -68,11 +85,19 @@ jobs:
 
   build-macos:
     name: Build macOS x64 node
-    needs: validate-release
+    needs: [validate-release, build-linux]
     runs-on: macos-15-intel
+    timeout-minutes: 60
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      CARGO_NET_RETRY: "5"
+      CARGO_HTTP_TIMEOUT: "120"
+      GIT_TERMINAL_PROMPT: "0"
     steps:
       - name: Check out source
         uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Install LLVM for bindgen
         run: |
@@ -81,6 +106,26 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Cargo dependency cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ultranet-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ultranet-cargo-
+
+      - name: Verify locked Aptos source is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --no-deps --format-version 1 >/dev/null
+          test -d "$HOME/.cargo/git/checkouts" || {
+            echo "::error::Cargo Git cache is missing the locked Aptos checkout"
+            exit 1
+          }
 
       - name: Build UltraNet
         run: cargo build --release --locked --bin UltraNet
@@ -108,6 +153,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Install MinGW toolchain
         uses: msys2/setup-msys2@v2
