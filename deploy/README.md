@@ -119,6 +119,8 @@ NEXT_PUBLIC_API_BASE_URL=https://api.example.com NEXT_PUBLIC_EXPLORER_URL=https:
 npm run start -- --hostname 127.0.0.1 --port 3000
 ```
 
+The `prebuild` and `predev` hooks generate `public/docs/ultranet-whitepaper.html` from the canonical `ULTRA_NET_TECHNICAL_GUIDE.md` at the repository root. Keep that source file at `/opt/ultranet/ULTRA_NET_TECHNICAL_GUIDE.md` beside the deployed `website/` directory; the existing `public/docs/ultranet-whitepaper.pdf` remains the downloadable export.
+
 For a persistent systemd dashboard, copy [`ultranet-dashboard.service`](./ultranet-dashboard.service) to `/etc/systemd/system/` and create `/etc/ultranet/website.env` from [`website.env.example`](./website.env.example). Build with the public API variables present because Next.js embeds `NEXT_PUBLIC_*` values during `npm run build`. The build also needs frontend devDependencies such as TypeScript, so use `npm ci --include=dev`; keep `NODE_ENV=production` for the service runtime:
 
 ```bash
