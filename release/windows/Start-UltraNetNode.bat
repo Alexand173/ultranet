@@ -10,10 +10,28 @@ if not exist "UltraNetNode.exe" (
 )
 
 if not exist "UltraNetNode.env" (
-  echo UltraNetNode.env was not found.
-  echo Copy UltraNetNode.env.example to UltraNetNode.env, create a private admin token, and try again.
-  pause
-  exit /b 1
+  if not exist "UltraNetNode.env.example" (
+    echo UltraNetNode.env and UltraNetNode.env.example were not found.
+    echo Extract the complete UltraNet Windows package before starting the node.
+    pause
+    exit /b 1
+  )
+
+  echo First run: creating UltraNetNode.env from the safe template...
+  copy /Y "UltraNetNode.env.example" "UltraNetNode.env" >nul
+  if errorlevel 1 (
+    echo Could not create UltraNetNode.env in this folder.
+    echo Extract the package into a writable folder and try again.
+    pause
+    exit /b 1
+  )
+
+  echo Add a strong, randomly generated ULTRANET_ADMIN_TOKEN to UltraNetNode.env.
+  echo Use 32 random bytes / 64 hex characters for security.
+  echo Never reuse a wallet key, short password, or public value as the token.
+  echo The node will not start while the template placeholder is present.
+  echo Opening UltraNetNode.env in Notepad...
+  start "" /wait notepad.exe "%~dp0UltraNetNode.env"
 )
 
 set "ULTRANET_ENV_FILE=%~dp0UltraNetNode.env"

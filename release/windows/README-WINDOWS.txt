@@ -26,8 +26,17 @@ Do not extract or execute an archive after a checksum mismatch.
 2. Extract and create the private configuration file
 ------------------------------------------------------
 
-Extract the complete archive into a folder that you can write to. In that
-folder, copy:
+Extract the complete archive into a folder that you can write to. On the
+first double-click of Start-UltraNetNode.bat, the launcher automatically copies:
+
+  UltraNetNode.env.example  ->  UltraNetNode.env
+
+and opens the new private file in Notepad. Add the token described in the next
+section, save the file, close Notepad, and let the launcher run its checks. The
+launcher never generates or prints the administrator token, and it will not
+start while the template placeholder is present.
+
+You can also create the file manually with:
 
   UltraNetNode.env.example  ->  UltraNetNode.env
 
@@ -39,11 +48,13 @@ process or service variable always takes precedence over the file.
 3. Create ULTRANET_ADMIN_TOKEN
 ------------------------------
 
-ULTRANET_ADMIN_TOKEN is a private administrator bearer token for state-changing
-node operations such as mining, pruning, and AppChain management. It is not a
-wallet key, a public node identifier, a DILITHIUM_PUB_KEY, or an ordinary-user
-login token. The node requires it before the API can start; it is never
-generated automatically and must never be exposed to website code.
+ULTRANET_ADMIN_TOKEN is a strong, randomly generated private administrator
+bearer token for state-changing node operations such as mining, pruning, and
+AppChain management. Use 32 random bytes / 64 hexadecimal characters. Never
+use a short password, reused token, wallet key, public node identifier,
+DILITHIUM_PUB_KEY, or ordinary-user login token. The node requires it before
+the API can start; it is never generated automatically and must never be
+exposed to website code.
 
 OpenSSL (Git for Windows, OpenSSL, or another trusted local installation):
 
