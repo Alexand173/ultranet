@@ -114,10 +114,11 @@ jobs:
             --exclude='website/public/docs/ultranet-whitepaper.html' \
             website \
             ULTRA_NET_TECHNICAL_GUIDE.md
-          tar -tzf "dist/ultranet-website-${DEPLOY_SHA}.tar.gz" \
-            | grep -Fqx "ULTRA_NET_TECHNICAL_GUIDE.md"
-          tar -tzf "dist/ultranet-website-${DEPLOY_SHA}.tar.gz" \
-            | grep -Fqx "website/scripts/generate-whitepaper.mjs"
+          archive_members="dist/ultranet-website-${DEPLOY_SHA}.members"
+          tar -tzf "dist/ultranet-website-${DEPLOY_SHA}.tar.gz" > "${archive_members}"
+          grep -Fqx "ULTRA_NET_TECHNICAL_GUIDE.md" "${archive_members}"
+          grep -Fqx "website/scripts/generate-whitepaper.mjs" "${archive_members}"
+          rm -f "${archive_members}"
 
       - name: Configure strict SSH verification
         shell: bash
