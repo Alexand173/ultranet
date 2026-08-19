@@ -105,7 +105,7 @@ $rng.Dispose()
 $token
 ```
 
-Set the resulting 64-character hexadecimal value in `UltraNetNode.env` for the Windows package or in `/etc/ultranet/ultranet.env` for systemd. Keep the file private. If the node reports that `ULTRANET_ADMIN_TOKEN` is required, create a token with one of the commands above and restart the node; do not use a wallet key or public identity in its place.
+Set the resulting 64-character hexadecimal value in `UltraNetNode.env` for the Windows package or in `/etc/ultranet/ultranet.env` for systemd. This is the recommended format: current runtime validation requires at least 32 non-whitespace bytes, but does not yet enforce hexadecimal characters or exactly 64 characters. Keep the file private. If the node reports that `ULTRANET_ADMIN_TOKEN` is required, create a token with one of the commands above and restart the node; do not use a wallet key or public identity in its place.
 
 When `ULTRANET_DB_PATH` is omitted, local desktop launches use `%LOCALAPPDATA%\\UltraNet\\data` on Windows, `~/Library/Application Support/UltraNet/data` on macOS, and `$XDG_DATA_HOME/ultranet` or `~/.local/share/ultranet` on Linux. An explicit `ULTRANET_DB_PATH` remains authoritative for systemd, Docker, and existing state.
 

@@ -128,7 +128,7 @@ $rng.Dispose()
 $token
 ```
 
-Copy the resulting 64-character hexadecimal value after `ULTRANET_ADMIN_TOKEN=`. Never commit, email, paste, or place this token in browser code. A missing or invalid token stops the node before it opens storage and prints an English configuration error. On Windows desktop packages, keep the value only in the private sibling `UltraNetNode.env`; on systemd use `/etc/ultranet/ultranet.env`; in Docker, provide the required variable before `docker compose up -d`.
+Copy the resulting 64-character hexadecimal value after `ULTRANET_ADMIN_TOKEN=`. This is the recommended format: the current runtime validation requires at least 32 non-whitespace bytes, but it does not yet enforce hexadecimal characters or exactly 64 characters. Use the recommended format for compatibility with the intended security contract. Never commit, email, paste, or place this token in browser code. A missing or invalid token stops the node before it opens storage and prints an English configuration error. On Windows desktop packages, keep the value only in the private sibling `UltraNetNode.env`; on systemd use `/etc/ultranet/ultranet.env`; in Docker, provide the required variable before `docker compose up -d`.
 
 When `ULTRANET_DB_PATH` is not set, the node uses a writable per-user directory: `%LOCALAPPDATA%\\UltraNet\\data` on Windows, `~/Library/Application Support/UltraNet/data` on macOS, and `$XDG_DATA_HOME/ultranet` or `~/.local/share/ultranet` on Linux. An explicit `ULTRANET_DB_PATH` always wins.
 

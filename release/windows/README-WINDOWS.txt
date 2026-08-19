@@ -50,11 +50,13 @@ process or service variable always takes precedence over the file.
 
 ULTRANET_ADMIN_TOKEN is a strong, randomly generated private administrator
 bearer token for state-changing node operations such as mining, pruning, and
-AppChain management. Use 32 random bytes / 64 hexadecimal characters. Never
-use a short password, reused token, wallet key, public node identifier,
-DILITHIUM_PUB_KEY, or ordinary-user login token. The node requires it before
-the API can start; it is never generated automatically and must never be
-exposed to website code.
+AppChain management. The recommended format is 32 random bytes / 64 lowercase
+hexadecimal characters. Current runtime validation requires at least 32
+non-whitespace bytes, but does not yet enforce hexadecimal characters or
+exactly 64 characters. Never use a short password, reused token, wallet key,
+public node identifier, DILITHIUM_PUB_KEY, or ordinary-user login token. The
+node requires it before the API can start; it is never generated automatically
+and must never be exposed to website code.
 
 OpenSSL (Git for Windows, OpenSSL, or another trusted local installation):
 
