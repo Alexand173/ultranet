@@ -167,7 +167,13 @@ curl --fail --silent --show-error --output /dev/null --max-time 20 \
 
 validator_after="$(systemctl is-active "$VALIDATOR_SERVICE" 2>/dev/null || true)"
 if [[ "$validator_after" != "$validator_before" ]]; then
-  rollback "validator state changed from ${validator_before:-unknown} to ${validator_after:-unknown}"
+  # A dashboard restart can overlap validator startup. `activating` to
+  # `active` is the expected healthy transition; every other change still
+  # fails closed so an unrelated validator outage cannot be hidden.
+  if [[ "$validator_before" != "activating" || "$validator_after" != "active" ]]; then
+    rollback "validator state changed from ${validator_before:-unknown} to ${validator_after:-unknown}"
+  fi
+  log "validator state transitioned normally from activating to active"
 fi
 
 mv "$WORK_ROOT" "$RELEASE_ROOT"
