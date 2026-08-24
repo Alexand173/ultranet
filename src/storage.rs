@@ -16,6 +16,9 @@ pub struct Storage {
     pub db: Db,
     pub blocks: Tree,
     pub transactions: Tree,
+    pub pending_transactions: Tree,
+    pub nullifiers: Tree,
+    pub account_nonces: Tree,
     pub validators: Tree,
     pub checkpoints: Tree,
     pub dag_vertices: Tree,
@@ -48,6 +51,9 @@ impl Storage {
         let storage = Self {
             blocks: db.open_tree("blocks")?,
             transactions: db.open_tree("transactions")?,
+            pending_transactions: db.open_tree("pending_transactions")?,
+            nullifiers: db.open_tree("nullifiers")?,
+            account_nonces: db.open_tree("account_nonces")?,
             validators: db.open_tree("validators")?,
             checkpoints: db.open_tree("checkpoints")?,
             dag_vertices: db.open_tree("dag_vertices")?,
@@ -89,22 +95,173 @@ impl Storage {
         let value = bincode::serialize(block).unwrap();
         self.blocks.insert(key, value)?;
 
-        // Indeksiraj svaku transakciju po njenom hešu
+        // Indeksiraj svaku transakciju po njenom hešu i atomarno promoviši
+        // pending zapis u potvrđenu istoriju.
         for tx in &block.transactions {
             let tx_hash = tx.get_hash();
             let tx_val = bincode::serialize(tx)
                 .map_err(|_| sled::Error::Unsupported("serialize tx failed".into()))?;
             self.transactions.insert(&tx_hash, tx_val)?;
+            self.pending_transactions.remove(&tx_hash)?;
+            self.nullifiers.insert(tx.nullifier, &tx_hash)?;
+
+            let next_nonce = tx.nonce.saturating_add(1);
+            if self
+                .get_account_nonce(&tx.sender)
+                .map_or(true, |current| current < next_nonce)
+            {
+                self.save_account_nonce(&tx.sender, next_nonce)?;
+            }
         }
+        self.db.flush()?;
 
         Ok(())
     }
 
     pub fn get_transaction(&self, hash: &[u8; 32]) -> Option<Transaction> {
-        if let Some(value) = self.transactions.get(hash).ok().flatten() {
-            return bincode::deserialize(&value).ok();
+        self.get_confirmed_transaction(hash)
+            .or_else(|| self.get_pending_transaction(hash))
+    }
+
+    pub fn get_confirmed_transaction(&self, hash: &[u8; 32]) -> Option<Transaction> {
+        self.transactions
+            .get(hash)
+            .ok()
+            .flatten()
+            .and_then(|value| bincode::deserialize(&value).ok())
+    }
+
+    pub fn is_pending_transaction(&self, hash: &[u8; 32]) -> bool {
+        self.pending_transactions
+            .contains_key(hash)
+            .unwrap_or(false)
+    }
+
+    pub fn get_transaction_by_nullifier(&self, nullifier: &[u8; 32]) -> Option<Transaction> {
+        if let Some(hash) = self.get_nullifier(nullifier) {
+            return self.get_transaction(&hash);
         }
-        None
+        self.get_pending_transaction_by_nullifier(nullifier)
+            .ok()
+            .flatten()
+    }
+
+    pub fn delete_nullifier_if_matches(
+        &self,
+        nullifier: &[u8; 32],
+        hash: &[u8; 32],
+    ) -> Result<bool, sled::Error> {
+        match self.nullifiers.compare_and_swap(
+            nullifier,
+            Some(hash.as_slice()),
+            None as Option<&[u8]>,
+        )? {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    pub fn save_pending_transaction(&self, tx: &Transaction) -> Result<(), sled::Error> {
+        let hash = tx.get_hash();
+        let value = bincode::serialize(tx)
+            .map_err(|_| sled::Error::Unsupported("serialize pending transaction failed".into()))?;
+        self.pending_transactions.insert(hash, value)?;
+        self.db.flush()?;
+        Ok(())
+    }
+
+    pub fn get_pending_transaction(&self, hash: &[u8; 32]) -> Option<Transaction> {
+        self.pending_transactions
+            .get(hash)
+            .ok()
+            .flatten()
+            .and_then(|value| bincode::deserialize(&value).ok())
+    }
+
+    pub fn delete_pending_transaction(&self, hash: &[u8; 32]) -> Result<(), sled::Error> {
+        self.pending_transactions.remove(hash)?;
+        self.db.flush()?;
+        Ok(())
+    }
+
+    pub fn get_pending_transactions_for_address(
+        &self,
+        address: &str,
+    ) -> Result<Vec<Transaction>, String> {
+        self.get_all_pending_transactions().map(|transactions| {
+            transactions
+                .into_iter()
+                .filter(|tx| tx.sender == address || tx.recipient == address)
+                .collect()
+        })
+    }
+
+    pub fn get_pending_transaction_by_nullifier(
+        &self,
+        nullifier: &[u8; 32],
+    ) -> Result<Option<Transaction>, String> {
+        Ok(self
+            .get_all_pending_transactions()?
+            .into_iter()
+            .find(|tx| &tx.nullifier == nullifier))
+    }
+
+    pub fn get_all_pending_transactions(&self) -> Result<Vec<Transaction>, String> {
+        self.pending_transactions
+            .iter()
+            .map(|item| {
+                let (key, value) = item.map_err(|error| error.to_string())?;
+                let hash: [u8; 32] = key
+                    .as_ref()
+                    .try_into()
+                    .map_err(|_| "pending transaction key must be exactly 32 bytes".to_string())?;
+                let tx = bincode::deserialize::<Transaction>(&value).map_err(|error| {
+                    format!("invalid pending transaction {}: {error}", hex::encode(hash))
+                })?;
+                if tx.get_hash() != hash {
+                    return Err(format!(
+                        "pending transaction hash mismatch {}",
+                        hex::encode(hash)
+                    ));
+                }
+                Ok(tx)
+            })
+            .collect()
+    }
+
+    pub fn get_nullifier(&self, nullifier: &[u8; 32]) -> Option<[u8; 32]> {
+        self.nullifiers
+            .get(nullifier)
+            .ok()
+            .flatten()
+            .and_then(|value| value.as_ref().try_into().ok())
+    }
+
+    pub fn reserve_nullifier(
+        &self,
+        nullifier: &[u8; 32],
+        hash: &[u8; 32],
+    ) -> Result<bool, sled::Error> {
+        match self.nullifiers.compare_and_swap(
+            nullifier,
+            None as Option<&[u8]>,
+            Some(hash.as_slice()),
+        )? {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    pub fn get_account_nonce(&self, address: &str) -> Option<u64> {
+        let value = self.account_nonces.get(address.as_bytes()).ok().flatten()?;
+        let bytes: [u8; 8] = value.as_ref().try_into().ok()?;
+        Some(u64::from_be_bytes(bytes))
+    }
+
+    pub fn save_account_nonce(&self, address: &str, nonce: u64) -> Result<(), sled::Error> {
+        self.account_nonces
+            .insert(address.as_bytes(), nonce.to_be_bytes().as_slice())?;
+        Ok(())
     }
 
     pub fn get_block(&self, index: u64) -> Option<UltraBlock> {
@@ -179,6 +336,16 @@ impl Storage {
         let hash = tx.get_hash();
         let value = bincode::serialize(tx).unwrap();
         self.transactions.insert(hash, value)?;
+        self.pending_transactions.remove(hash)?;
+        self.nullifiers.insert(tx.nullifier, &hash)?;
+        let next_nonce = tx.nonce.saturating_add(1);
+        if self
+            .get_account_nonce(&tx.sender)
+            .map_or(true, |current| current < next_nonce)
+        {
+            self.save_account_nonce(&tx.sender, next_nonce)?;
+        }
+        self.db.flush()?;
         Ok(())
     }
 
@@ -462,6 +629,9 @@ impl Storage {
             shard.clear()?;
         }
         self.transactions.clear()?;
+        self.pending_transactions.clear()?;
+        self.nullifiers.clear()?;
+        self.account_nonces.clear()?;
         self.validators.clear()?;
         self.checkpoints.clear()?;
         self.dag_vertices.clear()?;
@@ -486,6 +656,9 @@ impl Clone for Storage {
             db: self.db.clone(),
             blocks: self.blocks.clone(),
             transactions: self.transactions.clone(),
+            pending_transactions: self.pending_transactions.clone(),
+            nullifiers: self.nullifiers.clone(),
+            account_nonces: self.account_nonces.clone(),
             validators: self.validators.clone(),
             checkpoints: self.checkpoints.clone(),
             dag_vertices: self.dag_vertices.clone(),

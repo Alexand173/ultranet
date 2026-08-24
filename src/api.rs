@@ -23,6 +23,7 @@ use actix_web::{
 use hex;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use sha3::Digest;
 use std::sync::Arc;
 use std::{env, io};
 use subtle::ConstantTimeEq;
@@ -35,6 +36,7 @@ use subtle::ConstantTimeEq;
 // IDENTIČNU poruku (`create_transaction_message`) i poziva pravu Dilithium
 // verifikaciju (`QuantumKeyPair::verify`) unutar `validate_transaction`.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TransactionRequest {
     pub sender: String,
     pub sender_public_key: Vec<u8>,
@@ -47,6 +49,14 @@ pub struct TransactionRequest {
     pub gas_limit: u64,
     pub gas_price: u64,
     pub signature: Vec<u8>,
+    #[serde(default)]
+    pub chain_id: u32,
+    #[serde(default = "default_legacy_transaction_version")]
+    pub version: u32,
+}
+
+fn default_legacy_transaction_version() -> u32 {
+    UltraBlockchain::LEGACY_TRANSACTION_VERSION
 }
 
 #[derive(Debug, Serialize)]
@@ -54,6 +64,51 @@ pub struct ApiResponse {
     pub success: bool,
     pub message: String,
     pub data: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AccountResponse {
+    pub address: String,
+    pub balance: u64,
+    pub nonce: u64,
+    pub decimals: u8,
+    pub updated_at: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FeeEstimateResponse {
+    pub recipient: String,
+    pub amount: u64,
+    pub fee: u64,
+    pub gas_limit: u64,
+    pub gas_price: u64,
+    pub total: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TransactionView {
+    pub id: String,
+    pub hash: String,
+    pub sender: String,
+    pub recipient: String,
+    pub amount: u64,
+    pub fee: u64,
+    pub nonce: u64,
+    pub timestamp: u64,
+    pub status: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FeeEstimateQuery {
+    pub recipient: String,
+    pub amount: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AddressTransactionsQuery {
+    pub limit: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -400,6 +455,29 @@ pub async fn auth_logout(auth: web::Data<AuthService>, request: HttpRequest) -> 
         }))
 }
 
+fn transaction_view(tx: &Transaction, status: &str) -> TransactionView {
+    let hash = tx.get_hash();
+    TransactionView {
+        id: hex::encode(&hash[..8]),
+        hash: hex::encode(hash),
+        sender: tx.sender.clone(),
+        recipient: tx.recipient.clone(),
+        amount: tx.amount,
+        fee: tx.fee,
+        nonce: tx.nonce,
+        timestamp: tx.timestamp,
+        status: status.to_string(),
+    }
+}
+
+fn transaction_response(tx: &Transaction, status: &str) -> HttpResponse {
+    HttpResponse::Ok().json(ApiResponse {
+        success: true,
+        message: "Transaction accepted".to_string(),
+        data: Some(serde_json::to_value(transaction_view(tx, status)).unwrap()),
+    })
+}
+
 // 1. DODAJ TRANSAKCIJU
 pub async fn add_transaction(
     state: web::Data<AppState>,
@@ -407,9 +485,6 @@ pub async fn add_transaction(
 ) -> impl Responder {
     let blockchain = state.blockchain.read();
 
-    // 0. Osnovna sanitizacija ulaza - dužina niza za nullifier mora biti
-    // tačno 32 bajta pošto je Transaction.nullifier fiksni [u8; 32] i ulazi
-    // direktno u poruku koja je potpisana Dilithium ključem klijenta.
     let nullifier = match parse_nullifier(&req.nullifier) {
         Ok(n) => n,
         Err(e) => {
@@ -421,44 +496,84 @@ pub async fn add_transaction(
         }
     };
 
-    let mut recipient_bytes = [0u8; 32];
-    let r_bytes = req.recipient.as_bytes();
-    let r_len = std::cmp::min(r_bytes.len(), 32);
-    recipient_bytes[..r_len].copy_from_slice(&r_bytes[..r_len]);
+    if req.chain_id != UltraBlockchain::L1_CHAIN_ID
+        || req.version != UltraBlockchain::LEGACY_TRANSACTION_VERSION
+    {
+        return HttpResponse::BadRequest().json(ApiResponse {
+            success: false,
+            message: "Standard transfers require L1 chain_id 0 and transaction version 1"
+                .to_string(),
+            data: None,
+        });
+    }
 
-    // 1. Generisanje ZK dokaza za privatnost iznosa (koristi ISTI nullifier
-    // koji je klijent potpisao, kako bi tx.nullifier i zk_proof.nullifier
-    // bili konzistentni).
+    if let Some(existing) = blockchain.storage.get_transaction_by_nullifier(&nullifier) {
+        let existing_hash = existing.get_hash();
+        if existing.sender != req.sender
+            || existing.sender_public_key != req.sender_public_key
+            || existing.recipient != req.recipient
+            || existing.amount != req.amount
+            || existing.fee != req.fee
+            || existing.nonce != req.nonce
+            || existing.signature != req.signature
+        {
+            return HttpResponse::Conflict().json(ApiResponse {
+                success: false,
+                message: "Transaction nullifier is already bound to different fields".to_string(),
+                data: None,
+            });
+        }
+        let status = if blockchain.storage.is_pending_transaction(&existing_hash) {
+            "pending"
+        } else {
+            "confirmed"
+        };
+        return transaction_response(&existing, status);
+    }
+
+    let mut recipient_bytes = [0u8; 32];
+    let recipient_bytes_source = req.recipient.as_bytes();
+    let recipient_length = std::cmp::min(recipient_bytes_source.len(), recipient_bytes.len());
+    recipient_bytes[..recipient_length]
+        .copy_from_slice(&recipient_bytes_source[..recipient_length]);
+
+    let current_balance = blockchain.get_balance(&req.sender);
+    let merkle_root = blockchain.merkle_tree.read().get_root();
+    let mut merkle_root_array = [0u8; 32];
+    merkle_root_array.copy_from_slice(&merkle_root[..32]);
+    let public_key_digest = sha3::Sha3_256::digest(&req.sender_public_key);
+    let mut public_key_digest_array = [0u8; 32];
+    public_key_digest_array.copy_from_slice(&public_key_digest);
+
+    // Generate the proof from the current account and state-root context. The
+    // private circuit currently exposes only the nullifier as a public input;
+    // using live values here prevents the public endpoint from retaining the
+    // old demo balance/key/merkle placeholders.
     let circuit = PrivateTransactionCircuit {
         amount: Some(req.amount),
         recipient: Some(recipient_bytes),
         timestamp: Some(req.timestamp),
-        merkle_root: Some([0; 32]), // Dummy
+        merkle_root: Some(merkle_root_array),
         nullifier: Some(nullifier),
-        block_height: Some(0),
-        sender_balance: Some(1000), // Dummy balance za test
-        sender_public_key: Some([0; 32]),
+        block_height: Some(blockchain.chain.len() as u64),
+        sender_balance: Some(current_balance),
+        sender_public_key: Some(public_key_digest_array),
         sender_private_key_hash: Some([0; 32]),
         merkle_path: Some(vec![[0; 32]; MERKLE_TREE_DEPTH]),
         signature: Some([0; 64]),
     };
 
-    let zk_proof_res = blockchain.zk_engine.write().create_proof(circuit);
-    if let Err(e) = zk_proof_res {
-        return HttpResponse::InternalServerError().json(ApiResponse {
-            success: false,
-            message: format!("ZK Proof Error: {}", e),
-            data: None,
-        });
-    }
-    let zk_proof = zk_proof_res.unwrap();
+    let zk_proof = match blockchain.zk_engine.write().create_proof(circuit) {
+        Ok(proof) => proof,
+        Err(error) => {
+            return HttpResponse::InternalServerError().json(ApiResponse {
+                success: false,
+                message: format!("ZK Proof Error: {error}"),
+                data: None,
+            });
+        }
+    };
 
-    // 2. Kreiraj transakciju koristeći STVARAN javni ključ i potpis primljen
-    // od klijenta. Nikakav podatak se ne fabrikuje na serveru - server samo
-    // sklapa `Transaction` od već-potpisanih polja i prosleđuje ga u
-    // `blockchain.add_transaction`, koji poziva `validate_transaction` i
-    // vrši pravu Dilithium verifikaciju (uključujući provera da sender
-    // adresa odgovara priloženom javnom ključu).
     let tx = Transaction {
         sender: req.sender.clone(),
         sender_public_key: req.sender_public_key.clone(),
@@ -474,19 +589,23 @@ pub async fn add_transaction(
         gas_price: req.gas_price,
         proof_type: ProofType::Transaction,
         payload: TransactionPayload::StandardTransfer,
-        chain_id: 0,
-        version: 1,
+        chain_id: req.chain_id,
+        version: req.version,
     };
+    let tx_hash = tx.get_hash();
 
-    match blockchain.add_transaction(tx) {
-        Ok(_) => HttpResponse::Ok().json(ApiResponse {
-            success: true,
-            message: "Transaction added!".to_string(),
-            data: None,
-        }),
-        Err(e) => HttpResponse::BadRequest().json(ApiResponse {
+    match blockchain.add_transaction(tx.clone()) {
+        Ok(_) => transaction_response(
+            &tx,
+            if blockchain.storage.is_pending_transaction(&tx_hash) {
+                "pending"
+            } else {
+                "confirmed"
+            },
+        ),
+        Err(error) => HttpResponse::BadRequest().json(ApiResponse {
             success: false,
-            message: format!("Error: {}", e),
+            message: format!("Error: {error}"),
             data: None,
         }),
     }
@@ -529,14 +648,158 @@ pub async fn get_balance(state: web::Data<AppState>, address: web::Path<String>)
     let blockchain = state.blockchain.read();
     let balance = blockchain.get_balance(&address);
 
+    let address = address.into_inner();
     HttpResponse::Ok().json(ApiResponse {
         success: true,
         message: "Balance".to_string(),
         data: Some(serde_json::json!({
-            "address": address.into_inner(),
-            "balance": balance
+            "address": address,
+            "balance": balance,
+            "decimals": UltraBlockchain::ULTRA_DECIMALS,
         })),
     })
+}
+
+pub async fn get_account(state: web::Data<AppState>, address: web::Path<String>) -> impl Responder {
+    let address = address.into_inner();
+    if !UltraBlockchain::is_valid_address(&address) {
+        return HttpResponse::BadRequest().json(ApiResponse {
+            success: false,
+            message: "Address must be a 64-character lowercase hexadecimal value".to_string(),
+            data: None,
+        });
+    }
+
+    let blockchain = state.blockchain.read();
+    let updated_at = blockchain
+        .chain
+        .last()
+        .map(|block| block.timestamp)
+        .unwrap_or_else(|| chrono::Utc::now().timestamp().max(0) as u64);
+    let account = AccountResponse {
+        address: address.clone(),
+        balance: blockchain.get_balance(&address),
+        nonce: blockchain.get_next_nonce(&address),
+        decimals: UltraBlockchain::ULTRA_DECIMALS,
+        updated_at,
+    };
+
+    HttpResponse::Ok().json(ApiResponse {
+        success: true,
+        message: "Account".to_string(),
+        data: Some(serde_json::to_value(account).unwrap()),
+    })
+}
+
+pub async fn estimate_transaction_fee(query: web::Query<FeeEstimateQuery>) -> impl Responder {
+    let recipient = query.recipient.trim().to_string();
+    if !UltraBlockchain::is_valid_address(&recipient) {
+        return HttpResponse::BadRequest().json(ApiResponse {
+            success: false,
+            message: "Recipient must be a 64-character lowercase hexadecimal address".to_string(),
+            data: None,
+        });
+    }
+    if query.amount == 0 || query.amount > UltraBlockchain::MAX_TRANSFER_AMOUNT {
+        return HttpResponse::BadRequest().json(ApiResponse {
+            success: false,
+            message: "Amount must be greater than zero and within the transfer limit".to_string(),
+            data: None,
+        });
+    }
+
+    let fee = UltraBlockchain::minimum_transfer_fee(query.amount);
+    let Some(total) = query.amount.checked_add(fee) else {
+        return HttpResponse::BadRequest().json(ApiResponse {
+            success: false,
+            message: "Transaction total exceeds the maximum integer value".to_string(),
+            data: None,
+        });
+    };
+    let estimate = FeeEstimateResponse {
+        recipient,
+        amount: query.amount,
+        fee,
+        gas_limit: 500_000,
+        gas_price: 1,
+        total,
+    };
+
+    HttpResponse::Ok().json(ApiResponse {
+        success: true,
+        message: "Transaction fee estimate".to_string(),
+        data: Some(serde_json::to_value(estimate).unwrap()),
+    })
+}
+
+pub async fn get_address_transactions(
+    state: web::Data<AppState>,
+    address: web::Path<String>,
+    query: web::Query<AddressTransactionsQuery>,
+) -> impl Responder {
+    let address = address.into_inner();
+    if !UltraBlockchain::is_valid_address(&address) {
+        return HttpResponse::BadRequest().json(ApiResponse {
+            success: false,
+            message: "Address must be a 64-character lowercase hexadecimal value".to_string(),
+            data: None,
+        });
+    }
+    let limit = query.limit.unwrap_or(20);
+    if !(1..=100).contains(&limit) {
+        return HttpResponse::BadRequest().json(ApiResponse {
+            success: false,
+            message: "limit must be between 1 and 100".to_string(),
+            data: None,
+        });
+    }
+    let limit = limit as usize;
+    let blockchain = state.blockchain.read();
+    let mut transactions = Vec::new();
+
+    for block in blockchain.chain.iter().rev() {
+        for tx in block.transactions.iter().rev() {
+            if tx.sender == address || tx.recipient == address {
+                transactions.push(transaction_view(tx, "confirmed"));
+                if transactions.len() >= limit {
+                    break;
+                }
+            }
+        }
+        if transactions.len() >= limit {
+            break;
+        }
+    }
+
+    if transactions.len() < limit {
+        let pending = match blockchain
+            .storage
+            .get_pending_transactions_for_address(&address)
+        {
+            Ok(pending) => pending,
+            Err(error) => {
+                return HttpResponse::InternalServerError().json(ApiResponse {
+                    success: false,
+                    message: format!("Failed to load pending transactions: {error}"),
+                    data: None,
+                });
+            }
+        };
+        for tx in pending {
+            transactions.push(transaction_view(&tx, "pending"));
+            if transactions.len() >= limit {
+                break;
+            }
+        }
+    }
+
+    transactions.sort_by(|left, right| right.timestamp.cmp(&left.timestamp));
+    transactions.truncate(limit);
+    HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "message": "Address transactions",
+        "transactions": transactions,
+    }))
 }
 
 // 5. PROVERI VALIDNOST
@@ -1410,10 +1673,15 @@ async fn get_transaction(state: web::Data<AppState>, hash: web::Path<String>) ->
             hash_arr.copy_from_slice(&hash_bytes);
 
             if let Some(tx) = blockchain.storage.get_transaction(&hash_arr) {
+                let status = if blockchain.storage.is_pending_transaction(&hash_arr) {
+                    "pending"
+                } else {
+                    "confirmed"
+                };
                 return HttpResponse::Ok().json(ApiResponse {
                     success: true,
                     message: "Transaction found".to_string(),
-                    data: Some(serde_json::to_value(tx).unwrap()),
+                    data: Some(serde_json::to_value(transaction_view(&tx, status)).unwrap()),
                 });
             }
         }
@@ -1629,7 +1897,11 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
     println!("🔒 CORS allowlist: {}", cors_origins.join(", "));
     println!("🔐 Administrative bearer authentication: enabled");
     println!("📋 Endpoints:");
-    println!("   POST /api/transaction - Add transaction");
+    println!("   POST /api/transaction - Add wallet-signed transaction");
+    println!("   GET  /api/transaction/:hash - Transaction status");
+    println!("   GET  /api/transaction/estimate - Fee estimate");
+    println!("   GET  /api/account/:address - Account balance and nonce");
+    println!("   GET  /api/address/:address/transactions - Address history");
     println!("   POST /api/mine - Mine block");
     println!("   GET  /api/chain - Chain state");
     println!("   GET  /api/balance/:address - Balance");
@@ -1671,6 +1943,16 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
             .service(web::resource("/VALIDATOR_GUIDE.md").to(validator_guide))
             .service(web::resource("/TECHNICAL_MANIFEST.md").to(technical_manifest))
             .route("/api/transaction", web::post().to(add_transaction))
+            .route(
+                "/api/transaction/estimate",
+                web::get().to(estimate_transaction_fee),
+            )
+            .route("/api/transaction/{hash}", web::get().to(get_transaction))
+            .route("/api/account/{address}", web::get().to(get_account))
+            .route(
+                "/api/address/{address}/transactions",
+                web::get().to(get_address_transactions),
+            )
             .route("/api/chain", web::get().to(get_chain_state))
             .route("/api/balance/{address}", web::get().to(get_balance))
             .route("/api/validate", web::get().to(validate_chain))
@@ -1710,7 +1992,6 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
             .route("/api/manifest", web::get().to(get_manifest))
             .route("/api/ai/history", web::get().to(get_ai_history))
             .route("/api/zk/progress", web::get().to(get_zk_progress))
-            .route("/api/transaction/{hash}", web::get().to(get_transaction))
             .route("/api/search/{query}", web::get().to(search))
     })
     .bind(api_bind)?

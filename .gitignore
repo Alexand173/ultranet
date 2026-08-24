@@ -31,6 +31,7 @@ website/node_modules/
 website/.next/
 website/out/
 website/dist/
+website/crypto/ultra-dilithium5/build/
 *.tsbuildinfo
 
 # Documents, scripts, and temporary files
@@ -44,6 +45,9 @@ website/dist/
 !release/windows/README-WINDOWS.txt
 *.sh
 !deploy/ultranet-dashboard-deploy.sh
+!website/crypto/ultra-dilithium5/build.sh
+!website/crypto/ultra-dilithium5/NOTICE.txt
+!website/public/crypto/NOTICE-pqclean-dilithium5.txt
 *.ptau
 *.zkey
 *.wtns

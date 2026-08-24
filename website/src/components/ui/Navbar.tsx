@@ -14,6 +14,7 @@ const NAV_LINKS = [
   { name: "WHITEPAPER", href: "/docs/whitepaper" },
   { name: "DOWNLOAD_NODE", href: "/download" },
   { name: "VALIDATOR", href: "/validator" },
+  { name: "SEND_ULTRA", href: "/transact" },
   { name: "JOIN_SWARM", href: "/#swarm" },
 ];
 
@@ -37,7 +38,7 @@ export default function Navbar() {
         </Link>
 
         {/* Desktop Nav */}
-        <div className="hidden lg:flex items-center gap-12">
+        <div className="hidden lg:flex items-center gap-8">
           {NAV_LINKS.map((link) => (
             <Link 
               key={link.name} 

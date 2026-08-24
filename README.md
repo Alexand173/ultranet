@@ -149,7 +149,9 @@ For the complete runbook, including protected state-changing routes, see [`deplo
 - **Security**: 2-of-3 Sovereign Multi-Sig Shield for Genesis funds.
 
 ## 👥 Joining the Network
-Prospective validators should follow the [**Validator Onboarding Portal**](http://localhost:8081/dashboard) directly in the node dashboard.
+Prospective validators should start with the public [**Validator Onboarding page**](https://ultranetwork.cc/validator), run the v7.1.5 node, and submit a signed proposal after the Genesis connection is visible.
+
+Users can send `$ULTRA` through the public [**Send $ULTRA wallet flow**](https://ultranetwork.cc/transact). The wallet keeps key material local, shows an explicit review, and never asks for `ULTRANET_ADMIN_TOKEN`.
 
 **Documentation:**
 - [**`AUTHORS.md`**](./AUTHORS.md): Authorship, provenance, and licensing scope.

@@ -1,0 +1,7 @@
+The sources under pqclean/ are copied from pqcrypto-dilithium 0.5.0,
+Dilithium-5 clean implementation, which is released to the public domain
+under CC0. The upstream source notices are retained in the source files and
+in pqclean/crypto_sign/dilithium5/clean/LICENSE.
+
+The wrapper in this directory is UltraNet source code under the repository
+ISC license.

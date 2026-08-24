@@ -1,0 +1,12 @@
+UltraNet browser Dilithium-5 module
+
+The crypto sources in website/crypto/ultra-dilithium5/pqclean are from the
+pqcrypto-dilithium 0.5.0 PQClean Dilithium-5 clean implementation.
+
+The Dilithium-5 clean implementation is released to the public domain under
+CC0. For Keccak and AES, the upstream source notices apply; this module uses
+Keccak/SHAKE sources from the same public-domain-compatible PQClean source
+tree. See website/crypto/ultra-dilithium5/pqclean/crypto_sign/dilithium5/clean/LICENSE.
+
+The C wrapper and browser loader are UltraNet source code under the repository
+ISC license.

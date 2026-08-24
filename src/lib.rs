@@ -23,7 +23,7 @@
 use hex;
 use rayon::prelude::*;
 use sha3::{Digest, Sha3_256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -1058,6 +1058,8 @@ pub struct UltraBlockchain {
     pub validator: Arc<RwLock<BLSValidator>>,
     pub mempool: Arc<RwLock<EncryptedMempool>>,
     pub merkle_tree: Arc<RwLock<MerkleTree>>,
+    pub pending_nonces: Arc<RwLock<HashMap<String, HashSet<u64>>>>,
+    pub admission_lock: Arc<parking_lot::Mutex<()>>,
     pub difficulty: Arc<AtomicU64>,
     pub max_block_size: usize,
     pub block_time: u64,
@@ -1299,7 +1301,9 @@ impl std::fmt::Display for UltraWallet {
 // ============================================================
 impl UltraBlockchain {
     pub const GENESIS_REWARD: u64 = 50;
+    pub const ULTRA_DECIMALS: u8 = 6;
     pub const DEFAULT_GAS_LIMIT: u64 = 10_000_000;
+    pub const MAX_TRANSFER_AMOUNT: u64 = 1_000_000_000;
     pub const MAX_TRANSACTIONS_PER_BLOCK: usize = 1000;
     pub const MIN_BLOCK_TIME: u64 = 10;
     pub const VERSION: u32 = 1;
@@ -1307,6 +1311,21 @@ impl UltraBlockchain {
     pub const PAYLOAD_BOUND_TRANSACTION_VERSION: u32 = 2;
     pub const APPROVAL_BOUND_TRANSACTION_VERSION: u32 = 3;
     pub const L1_CHAIN_ID: u32 = 0;
+
+    pub fn is_valid_address(address: &str) -> bool {
+        address.len() == 64
+            && address
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    }
+
+    pub fn minimum_transfer_fee(amount: u64) -> u64 {
+        if amount == 0 {
+            0
+        } else {
+            std::cmp::max(1, amount / 100)
+        }
+    }
 
     pub const SOVEREIGN_ADDR: &str =
         "3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c";
@@ -1512,7 +1531,27 @@ impl UltraBlockchain {
             approval_records.len()
         );
 
-        let mempool = EncryptedMempool::new(10000);
+        let mut mempool = EncryptedMempool::new(10000);
+
+        // Pending transfers are durable so a lost client response can be
+        // resolved after a node restart instead of being silently forgotten.
+        let pending_transactions = storage
+            .get_all_pending_transactions()
+            .unwrap_or_else(|error| panic!("Failed to load pending transactions: {error}"));
+        let mut pending_nonces: HashMap<String, HashSet<u64>> = HashMap::new();
+        let active_validators = validator_instance.get_active_validators();
+        for tx in &pending_transactions {
+            for validator_pk in &active_validators {
+                mempool.add_validator(validator_pk.clone());
+            }
+            if let Err(error) = mempool.add_transaction(tx) {
+                panic!("Failed to restore pending transaction: {error}");
+            }
+            pending_nonces
+                .entry(tx.sender.clone())
+                .or_default()
+                .insert(tx.nonce);
+        }
 
         // ✅ NOVO: Učitaj postojeći lanac blokova sa diska (ako postoji).
         // Bez ovoga, `self.chain` je pri svakom restartu bio SAMO genesis
@@ -1564,6 +1603,7 @@ impl UltraBlockchain {
         let mut rebuilt_state: HashMap<String, u64> = HashMap::new();
         let mut rebuilt_merkle_tree = MerkleTree::new(256);
         let mut rebuilt_history: Vec<[u8; 32]> = Vec::new();
+        let mut rebuilt_nonces: HashMap<String, u64> = HashMap::new();
         let mut total_tx_count: u64 = 0;
         let mut last_epoch: u64 = 0;
         let mut last_total_difficulty: u128 = 4;
@@ -1605,6 +1645,9 @@ impl UltraBlockchain {
                     );
                 }
 
+                let next_nonce = tx.nonce.saturating_add(1);
+                let current_nonce = rebuilt_nonces.entry(tx.sender.clone()).or_insert(0);
+                *current_nonce = (*current_nonce).max(next_nonce);
                 total_tx_count += 1;
             }
             if let Some(first_validator) = block.validator_set.first() {
@@ -1634,6 +1677,17 @@ impl UltraBlockchain {
             last_total_difficulty = block.total_difficulty;
         }
 
+        for (address, nonce) in rebuilt_nonces {
+            if storage
+                .get_account_nonce(&address)
+                .map_or(true, |stored_nonce| stored_nonce < nonce)
+            {
+                storage
+                    .save_account_nonce(&address, nonce)
+                    .unwrap_or_else(|error| panic!("Failed to save account nonce: {error}"));
+            }
+        }
+
         let total_blocks_loaded = chain.len() as u64;
         let pending_proposals = storage
             .get_all_pending_proposals()
@@ -1651,6 +1705,8 @@ impl UltraBlockchain {
             zk_engine: Arc::new(RwLock::new(zk_engine)),
             mempool: Arc::new(RwLock::new(mempool)),
             merkle_tree: Arc::new(RwLock::new(rebuilt_merkle_tree)),
+            pending_nonces: Arc::new(RwLock::new(pending_nonces)),
+            admission_lock: Arc::new(parking_lot::Mutex::new(())),
             difficulty: Arc::new(AtomicU64::new(4)),
             max_block_size: 1_000_000,
             block_time: Self::MIN_BLOCK_TIME,
@@ -1725,6 +1781,33 @@ impl UltraBlockchain {
     // 8.1 DODAVANJE TRANSAKCIJE
     // ============================================================
     pub fn add_transaction(&self, tx: Transaction) -> Result<(), String> {
+        // Admission is serialized so two browser submissions cannot reserve the
+        // same sender nonce or nullifier between validation and persistence.
+        let _admission_guard = self.admission_lock.lock();
+
+        if let Some(existing) = self.storage.get_transaction_by_nullifier(&tx.nullifier) {
+            if existing.sender == tx.sender
+                && existing.sender_public_key == tx.sender_public_key
+                && existing.recipient == tx.recipient
+                && existing.amount == tx.amount
+                && existing.fee == tx.fee
+                && existing.nonce == tx.nonce
+                && existing.signature == tx.signature
+            {
+                return Ok(());
+            }
+            return Err("Transaction nullifier is already bound to different fields".to_string());
+        }
+
+        if self
+            .pending_nonces
+            .read()
+            .get(&tx.sender)
+            .is_some_and(|nonces| nonces.contains(&tx.nonce))
+        {
+            return Err("Transaction nonce is already pending for this sender".to_string());
+        }
+
         // 1. Validacija transakcije
         self.validate_transaction(&tx)?;
 
@@ -1780,24 +1863,46 @@ impl UltraBlockchain {
             return Err(format!("Transaction is too large! Size: {}", tx_size));
         }
 
-        // 5. Dodaj u mempool
+        let tx_hash = tx.get_hash();
+        if !self
+            .storage
+            .reserve_nullifier(&tx.nullifier, &tx_hash)
+            .map_err(|error| format!("Failed to reserve transaction nullifier: {error}"))?
+        {
+            return Err("Transaction nullifier is already pending or confirmed".to_string());
+        }
+
+        // 5. Dodaj u mempool and persist the public pending transaction before
+        // returning success to the API caller.
         {
             let mut mempool = self.mempool.write();
             let validators = self.validator.read().get_active_validators();
             for validator_pk in validators {
                 mempool.add_validator(validator_pk);
             }
-            mempool.add_transaction(&tx)?;
+            if let Err(error) = mempool.add_transaction(&tx) {
+                let _ = self
+                    .storage
+                    .delete_nullifier_if_matches(&tx.nullifier, &tx_hash);
+                return Err(error);
+            }
         }
+        if let Err(error) = self.storage.save_pending_transaction(&tx) {
+            self.rollback_pending_transaction(&tx);
+            return Err(format!("Failed to persist pending transaction: {error}"));
+        }
+        self.pending_nonces
+            .write()
+            .entry(tx.sender.clone())
+            .or_default()
+            .insert(tx.nonce);
 
         if let Some((proposal_hash, proposal)) = proposal_to_persist {
             if let Err(error) = self
                 .storage
                 .save_pending_proposal(&proposal_hash, &proposal)
             {
-                self.mempool
-                    .write()
-                    .remove_transactions(std::slice::from_ref(&tx));
+                self.rollback_pending_transaction(&tx);
                 return Err(format!("Failed to persist validator proposal: {error}"));
             }
             self.pending_proposals
@@ -1855,6 +1960,24 @@ impl UltraBlockchain {
         Ok(())
     }
 
+    fn rollback_pending_transaction(&self, tx: &Transaction) {
+        let hash = tx.get_hash();
+        self.mempool
+            .write()
+            .remove_transactions(std::slice::from_ref(tx));
+        let _ = self.storage.delete_pending_transaction(&hash);
+        let _ = self
+            .storage
+            .delete_nullifier_if_matches(&tx.nullifier, &hash);
+        let mut pending_nonces = self.pending_nonces.write();
+        if let Some(nonces) = pending_nonces.get_mut(&tx.sender) {
+            nonces.remove(&tx.nonce);
+            if nonces.is_empty() {
+                pending_nonces.remove(&tx.sender);
+            }
+        }
+    }
+
     // ============================================================
     // 8.2 VALIDACIJA TRANSAKCIJE
     // ============================================================
@@ -1877,6 +2000,9 @@ impl UltraBlockchain {
             && !is_payload_bound_validator_approval
         {
             return Err(format!("Unsupported transaction version! {}", tx.version));
+        }
+        if tx.version == Self::LEGACY_TRANSACTION_VERSION && tx.chain_id != Self::L1_CHAIN_ID {
+            return Err("Legacy version 1 transactions require L1 chain_id 0".to_string());
         }
 
         if tx.sender == Self::SOVEREIGN_ADDR {
@@ -1970,13 +2096,16 @@ impl UltraBlockchain {
         // gore preko `self.zk_engine.verify_proof(...)` (arkworks Groth16).
 
         // 3. Provera balansa
+        let total_cost = tx
+            .amount
+            .checked_add(tx.fee)
+            .ok_or_else(|| "Transaction total exceeds the maximum integer value".to_string())?;
         let state = self.state.read();
         let sender_balance = state.get(&tx.sender).unwrap_or(&0);
-        if tx.amount + tx.fee > *sender_balance {
+        if total_cost > *sender_balance {
             return Err(format!(
                 "Insufficient balance! Current: {}, required: {}",
-                sender_balance,
-                tx.amount + tx.fee
+                sender_balance, total_cost
             ));
         }
 
@@ -1990,7 +2119,7 @@ impl UltraBlockchain {
         }
 
         // 5. Provera fee-ja
-        let min_fee = tx.amount / 100; // 1% minimum
+        let min_fee = Self::minimum_transfer_fee(tx.amount);
         if tx.fee < min_fee {
             return Err(format!("Fee is too low! Minimum: {}", min_fee));
         }
@@ -1999,6 +2128,13 @@ impl UltraBlockchain {
         if tx.recipient.is_empty() || tx.recipient.len() > 100 {
             return Err("Invalid recipient!".to_string());
         }
+        if matches!(tx.payload, TransactionPayload::StandardTransfer)
+            && !Self::is_valid_address(&tx.recipient)
+        {
+            return Err(
+                "Recipient must be a 64-character lowercase hexadecimal address".to_string(),
+            );
+        }
 
         // 7. Provera da li je sender != recipient
         if tx.sender == tx.recipient {
@@ -2006,34 +2142,71 @@ impl UltraBlockchain {
         }
 
         // 8. Provera maksimalnog iznosa
-        if tx.amount > 1_000_000_000 {
+        if tx.amount > Self::MAX_TRANSFER_AMOUNT {
             return Err("Amount is too large!".to_string());
         }
 
-        // 9. Provera nonce-a
+        // 9. Provera nonce-a. A transaction already admitted to the mempool
+        // owns its reserved nonce; new submissions must use the next nonce.
+        let is_reserved_pending_nonce = self
+            .pending_nonces
+            .read()
+            .get(&tx.sender)
+            .is_some_and(|nonces| nonces.contains(&tx.nonce));
         let expected_nonce = self.get_nonce(&tx.sender);
-        if tx.nonce != expected_nonce {
+        if !is_reserved_pending_nonce && tx.nonce != expected_nonce {
             return Err(format!(
                 "Invalid nonce! Expected: {}, received: {}",
                 expected_nonce, tx.nonce
             ));
         }
 
-        // 10. Provera verzije
-        if tx.version != Self::LEGACY_TRANSACTION_VERSION
-            && tx.version != Self::PAYLOAD_BOUND_TRANSACTION_VERSION
-            && tx.version != Self::APPROVAL_BOUND_TRANSACTION_VERSION
-        {
-            return Err(format!("Unsupported version! {}", tx.version));
-        }
-
         Ok(())
     }
 
-    fn get_nonce(&self, _address: &str) -> u64 {
-        // U pravoj implementaciji, ovo bi čuvalo nonce za svaki address
-        // Za demo, vraćamo 0
-        0
+    pub fn get_account_nonce(&self, address: &str) -> u64 {
+        self.storage.get_account_nonce(address).unwrap_or(0)
+    }
+
+    pub fn get_next_nonce(&self, address: &str) -> u64 {
+        let confirmed = self.get_account_nonce(address);
+        let pending = self
+            .pending_nonces
+            .read()
+            .get(address)
+            .map(|nonces| {
+                nonces
+                    .iter()
+                    .copied()
+                    .max()
+                    .unwrap_or(confirmed)
+                    .saturating_add(1)
+            })
+            .unwrap_or(confirmed);
+        std::cmp::max(confirmed, pending)
+    }
+
+    fn get_nonce(&self, address: &str) -> u64 {
+        let confirmed = self.get_account_nonce(address);
+        let pending = self.pending_nonces.read();
+        let next_pending = pending
+            .get(address)
+            .and_then(|nonces| nonces.iter().copied().max())
+            .map(|nonce| nonce.saturating_add(1))
+            .unwrap_or(confirmed);
+        std::cmp::max(confirmed, next_pending)
+    }
+
+    fn clear_pending_nonces(&self, transactions: &[Transaction]) {
+        let mut pending_nonces = self.pending_nonces.write();
+        for tx in transactions {
+            if let Some(nonces) = pending_nonces.get_mut(&tx.sender) {
+                nonces.remove(&tx.nonce);
+                if nonces.is_empty() {
+                    pending_nonces.remove(&tx.sender);
+                }
+            }
+        }
     }
 
     /// Builds the canonical signing preimage used by node validation.
@@ -2154,7 +2327,10 @@ impl UltraBlockchain {
         *self.total_difficulty.write() += 1;
 
         // 9. Sačuvaj u bazu
-        let _ = self.storage.save_block(&block);
+        if let Err(error) = self.storage.save_block(&block) {
+            return Err(format!("Failed to persist remote block: {error}"));
+        }
+        self.clear_pending_nonces(&block.transactions);
 
         println!("✅ Remote block {} added to chain", block.index);
         Ok(())
@@ -2418,6 +2594,7 @@ impl UltraBlockchain {
         if let Err(e) = self.storage.save_block(&new_block) {
             eprintln!("❌ Failed to save block {}: {}", new_block.index, e);
         } else {
+            self.clear_pending_nonces(&new_block.transactions);
             println!("💾 Block {} saved to disk", new_block.index);
         }
 
@@ -3839,6 +4016,64 @@ mod signature_verification_tests {
     }
 
     #[test]
+    fn browser_version_one_digest_fixture_matches_rust() {
+        let blockchain = open_test_chain("digest_fixture");
+        let tx = Transaction {
+            sender: "11".repeat(32),
+            sender_public_key: vec![],
+            recipient: "22".repeat(32),
+            amount: 25_000_000,
+            signature: vec![],
+            zk_proof: vec![],
+            nullifier: (0u8..32).collect::<Vec<_>>().try_into().unwrap(),
+            timestamp: 1_700_000_000,
+            fee: 250_000,
+            nonce: 0,
+            gas_limit: 500_000,
+            gas_price: 1,
+            proof_type: ProofType::Transaction,
+            payload: TransactionPayload::StandardTransfer,
+            chain_id: UltraBlockchain::L1_CHAIN_ID,
+            version: UltraBlockchain::LEGACY_TRANSACTION_VERSION,
+        };
+        let digest = blockchain.create_transaction_message(&tx);
+        assert_eq!(
+            hex::encode(digest),
+            "f968acd8ef5f17f72eed6d71d1c4ba9a03de4bbb5c28f3da2718ef6d18079c72"
+        );
+        cleanup_test_chain("digest_fixture");
+    }
+
+    #[test]
+    fn legacy_transaction_rejects_non_l1_chain_id() {
+        let blockchain = open_test_chain("legacy_chain_id");
+        let transaction = Transaction {
+            sender: "11".repeat(32),
+            sender_public_key: vec![],
+            recipient: "22".repeat(32),
+            amount: 1,
+            signature: vec![],
+            zk_proof: vec![],
+            nullifier: [0xAA; 32],
+            timestamp: Utc::now().timestamp() as u64,
+            fee: 1,
+            nonce: 0,
+            gas_limit: 500_000,
+            gas_price: 1,
+            proof_type: ProofType::Transaction,
+            payload: TransactionPayload::StandardTransfer,
+            chain_id: 1,
+            version: UltraBlockchain::LEGACY_TRANSACTION_VERSION,
+        };
+
+        let error = blockchain
+            .validate_transaction(&transaction)
+            .expect_err("legacy transfers must not be admitted on another chain");
+        assert_eq!(error, "Legacy version 1 transactions require L1 chain_id 0");
+        cleanup_test_chain("legacy_chain_id");
+    }
+
+    #[test]
     fn test_valid_dilithium_signature_is_accepted() {
         let blockchain = open_test_chain("valid");
         let wallet = UltraWallet::new();
@@ -3921,9 +4156,11 @@ mod signature_verification_tests {
 
         let message = blockchain.create_transaction_message(&tx);
         tx.signature = wallet.keypair.sign(&message);
+        let proposal_result = blockchain.validate_transaction(&tx);
         assert!(
-            blockchain.validate_transaction(&tx).is_ok(),
-            "A correctly signed version 2 proposal must validate"
+            proposal_result.is_ok(),
+            "A correctly signed version 2 proposal must validate: {:?}",
+            proposal_result
         );
 
         let mut metadata_tampered = tx.clone();
@@ -3990,9 +4227,11 @@ mod signature_verification_tests {
             signatures.extend_from_slice(&owners[1].sign(&message));
             signatures
         };
+        let approval_result = blockchain.validate_transaction(&approval);
         assert!(
-            blockchain.validate_transaction(&approval).is_ok(),
-            "A correctly signed version 3 approval must validate"
+            approval_result.is_ok(),
+            "A correctly signed version 3 approval must validate: {:?}",
+            approval_result
         );
 
         let mut tampered = approval;

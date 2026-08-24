@@ -242,7 +242,82 @@ Legacy transaction version `1` remains supported for existing transfers, Move tr
 
 The backend implementation is in `UltraBlockchain::create_transaction_message`, `propose_validator`, and `approve_validator`. Regression coverage proves that changing proposal metadata, proposal public keys, or approval proposal hashes invalidates the signature.
 
-## 8. Minimal provider example
+## 8. Generic wallet transactions
+
+UltraWallet may also sign a standard L1 `$ULTRA` transfer for the public `POST /api/transaction` endpoint:
+
+```ts
+const signedTransaction = await window.ultraWallet.request({
+  method: "ultranet_signTransaction",
+  params: {
+    recipient: "<64 lowercase hexadecimal address>",
+    amount: 25_000_000,
+    fee: 250_000,
+    nonce: 0,
+    timestamp: Math.floor(Date.now() / 1000),
+    nullifier: [/* exactly 32 fresh bytes */],
+    gasLimit: 500_000,
+    gasPrice: 1,
+    chainId: 0,
+    version: 1,
+  },
+});
+```
+
+`amount` and `fee` are integer base units. The website presents six decimal places, so `25_000_000` is `25.000000 $ULTRA`. The node's current minimum transfer fee is one percent of the amount, with a minimum of one base unit. The wallet must show the sender, recipient, amount, fee, total, node origin, and irreversible-transfer warning before signing.
+
+The version-1 signing digest is exactly:
+
+```text
+SHA3-256(
+  sender UTF-8 bytes ||
+  recipient UTF-8 bytes ||
+  amount.to_le_bytes() ||
+  fee.to_le_bytes() ||
+  timestamp.to_le_bytes() ||
+  nullifier[32] ||
+  nonce.to_le_bytes() ||
+  gas_limit.to_le_bytes() ||
+  gas_price.to_le_bytes()
+)
+```
+
+`chain_id`, `version`, and the JSON object are not included in this legacy digest because the Rust validator's version-1 `create_transaction_message` does not hash them. A future signing-envelope version must be introduced and vector-tested before changing this order.
+
+The response contains only public fields and the raw 2,592-byte Dilithium-5 public key, 4,627-byte signature, and transaction values as JSON arrays/numbers. Private keys, seeds, recovery phrases, passwords, and admin tokens must never appear in the response or request:
+
+```json
+{
+  "sender": "<derived address>",
+  "sender_public_key": [/* 2,592 bytes */],
+  "recipient": "<64 lowercase hexadecimal address>",
+  "amount": 25000000,
+  "fee": 250000,
+  "nonce": 0,
+  "timestamp": 1785183488,
+  "nullifier": [/* 32 bytes */],
+  "gas_limit": 500000,
+  "gas_price": 1,
+  "signature": [/* 4,627 bytes */],
+  "chain_id": 0,
+  "version": 1
+}
+```
+
+Submit it to `POST <API_BASE_URL>/api/transaction`. This is a wallet-authorized public transfer endpoint; it does not use `ULTRANET_ADMIN_TOKEN`, an admin bearer header, or the operator session. A successful response returns a transaction projection with a hash and `status: "pending"`. The same signed request may be submitted again after an uncertain network response: the node binds the nullifier to the original fields and returns the existing hash instead of adding a second mempool entry. A different transaction using the same nullifier is rejected.
+
+Read-only account and history routes are:
+
+```text
+GET /api/account/<address>
+GET /api/transaction/estimate?recipient=<address>&amount=<base-units>
+GET /api/address/<address>/transactions?limit=20
+GET /api/transaction/<hash>
+```
+
+Status values are `pending`, `confirmed`, or `failed`. If the submission response is lost, do not automatically sign or submit another transfer; keep the public signed request in memory only and use the explicit status/idempotency action. The node's `ULTRANET_ADMIN_TOKEN` remains a private operator credential for routes such as mining, pruning, and AppChain administration.
+
+## 9. Minimal provider example
 
 The following example shows the provider boundary only. The signing implementation must remain inside the wallet and is intentionally omitted:
 
