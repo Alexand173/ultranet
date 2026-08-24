@@ -532,7 +532,7 @@ A `PeerManager` tracks connected peers and their reported chain height. `sync_ch
 ### 15.3 Your Genesis Node's Multiaddr
 
 ```
-/ip4/109.245.57.92/tcp/9000/p2p/12D3KooWPe7NqASC5uZunHYRNtrguJZfLMfgjY9pFQkjEjqR8ciG
+/ip4/167.233.161.115/tcp/9000/p2p/12D3KooWRFWD4VDW7g2t4VEmajjyfrGh5ZuQUoPVxFeq7ffRetgP
 ```
 
 Sharing this string with a prospective validator is the *entire* onboarding requirement on the networking side — their node will dial this address, perform the libp2p handshake, and begin gossip exchange automatically.
@@ -541,7 +541,7 @@ Sharing this string with a prospective validator is the *entire* onboarding requ
 
 ```mermaid
 graph TD
-    G[Genesis Node<br/>109.245.57.92:9000<br/>Peers: 0] -.->|awaiting connections| P1[Future Validator 1]
+    G[Genesis Node<br/>167.233.161.115:9000<br/>Peers: 0] -.->|awaiting connections| P1[Future Validator 1]
     G -.-> P2[Future Validator 2]
     G -.-> P3[Future Validator N]
 ```
@@ -828,7 +828,7 @@ Every block a validator successfully mines mints **50.0 $ULTRA** (subject to hal
 ```mermaid
 flowchart TD
     A[1. Install & Run UltraNet Node] --> B[2. Generate Dilithium-5 Keypair]
-    B --> C[3. Dial Genesis Multiaddr<br/>/ip4/109.245.57.92/tcp/9000/...]
+    B --> C[3. Dial Genesis Multiaddr<br/>/ip4/167.233.161.115/tcp/9000/...]
     C --> D[4. Submit ValidatorJoinProposal<br/>POST /api/governance/propose]
     D --> E{Sovereign Reviews<br/>2-of-3 Multi-Sig}
     E -->|Approved| F[5. Node Recognized as Validator]
@@ -1016,7 +1016,7 @@ INNER_PUBLIC_INPUTS    = 3          (recursive circuit)
 FHE_PARAM_SET          = PARAM_MESSAGE_2_CARRY_2_KS_PBS
 API_PORT               = 8081
 P2P_PORT               = 9000
-GENESIS_MULTIADDR      = /ip4/109.245.57.92/tcp/9000/p2p/12D3KooWPe7NqASC5uZunHYRNtrguJZfLMfgjY9pFQkjEjqR8ciG
+GENESIS_MULTIADDR      = /ip4/167.233.161.115/tcp/9000/p2p/12D3KooWRFWD4VDW7g2t4VEmajjyfrGh5ZuQUoPVxFeq7ffRetgP
 ```
 
 ---

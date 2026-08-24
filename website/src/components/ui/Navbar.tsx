@@ -13,6 +13,7 @@ const NAV_LINKS = [
   { name: "EXPLORER", href: EXPLORER_URL },
   { name: "WHITEPAPER", href: "/docs/whitepaper" },
   { name: "DOWNLOAD_NODE", href: "/download" },
+  { name: "VALIDATOR", href: "/validator" },
   { name: "JOIN_SWARM", href: "/#swarm" },
 ];
 
