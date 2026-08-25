@@ -38,7 +38,7 @@ const ONBOARDING_STEPS = [
   {
     number: "03",
     title: "Submit proposal",
-    description: "Prepare your node alias and public Dilithium-5 key. UltraWallet signs the proposal locally; activation still requires 2-of-3 Sovereign approval.",
+    description: "Export DILITHIUM_PUB_KEY.hex locally, choose your node alias, and prepare the public key. UltraWallet signs the proposal locally; activation still requires 2-of-3 Sovereign approval.",
     icon: ShieldCheck,
   },
 ] as const;
@@ -141,8 +141,53 @@ export default function ValidatorOnboardingPage() {
                 <li key={file} className="flex items-center gap-3"><Check className="h-4 w-4 shrink-0 text-cyan-glow" aria-hidden="true" /><code>{file}</code></li>
               ))}
             </ul>
-            <div className="mt-8 border border-amber-300/30 bg-amber-300/10 p-4 text-xs leading-6 text-amber-100">
-              <div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /><p>Generate a fresh 32-byte / 64-hex-character <code>ULTRANET_ADMIN_TOKEN</code> locally. Never show it in a recording, commit it, or paste it into website code.</p></div>
+            <div className="mt-8 space-y-6 border-t border-platinum/10 pt-8">
+              <article aria-labelledby="admin-token-explanation-title" className="min-w-0 border border-amber-300/30 bg-amber-300/10 p-5">
+                <div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-200" aria-hidden="true" /><div><p className="font-mono text-[10px] uppercase tracking-[0.18em] text-amber-200">01 // Private node password</p><h3 id="admin-token-explanation-title" className="mt-2 font-space-grotesk text-xl font-bold uppercase tracking-tight text-platinum">What is ULTRANET_ADMIN_TOKEN?</h3></div></div>
+                <p className="mt-4 text-sm leading-7 text-amber-100/85">Treat this token like a private key or a strong password for your node: anyone who has it can call protected administrator operations such as mining and maintenance. Technically, it is <strong className="text-amber-100">not</strong> your Dilithium wallet private key, not your <code> DILITHIUM_PUB_KEY.hex</code>, and not your public Peer ID. It cannot sign a wallet transfer or validator proposal.</p>
+                <p className="mt-3 text-sm leading-7 text-amber-100/85"><strong className="text-amber-100">Generate it locally, never on an online website.</strong> An internet generator could record the value. Use one of these commands on the same computer that runs your node:</p>
+                <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-amber-200/80">Linux // macOS // Git Bash</p>
+                    <pre className="mt-2 overflow-x-auto border border-amber-200/20 bg-ink-black/50 p-3 font-mono text-[11px] leading-6 text-platinum/80"><code>{`openssl rand -hex 32`}</code></pre>
+                  </div>
+                  <div>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-amber-200/80">Windows PowerShell</p>
+                    <pre className="mt-2 overflow-x-auto border border-amber-200/20 bg-ink-black/50 p-3 font-mono text-[11px] leading-6 text-platinum/80"><code>{`$bytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$token = [BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant()
+$rng.Dispose()
+$token`}</code></pre>
+                  </div>
+                </div>
+                <ol className="mt-5 space-y-2 border-t border-amber-200/15 pt-4 text-xs leading-6 text-amber-100/80">
+                  <li><span className="mr-2 font-mono text-amber-200">01</span>Copy the one-time output into <code>UltraNetNode.env</code> as <code>ULTRANET_ADMIN_TOKEN=your-64-hex-character-value</code>.</li>
+                  <li><span className="mr-2 font-mono text-amber-200">02</span>Save the file, close Notepad, and run <code>Start-UltraNetNode.bat</code> again. Never commit, email, record, or paste the token into this website.</li>
+                  <li><span className="mr-2 font-mono text-amber-200">03</span>In your first-run console, <code>Administrative bearer authentication: enabled</code> means the token was accepted. <code>P2P node is running</code> means the node started; <code>Peer ID</code> is only the public networking identity.</li>
+                </ol>
+              </article>
+
+              <article aria-labelledby="validator-identity-explanation-title" className="min-w-0 border border-cyan-glow/25 bg-cyan-glow/[0.03] p-5">
+                <div className="flex items-start gap-3"><Key className="mt-0.5 h-4 w-4 shrink-0 text-cyan-glow" aria-hidden="true" /><div><p className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-glow">02 // Validator identity</p><h3 id="validator-identity-explanation-title" className="mt-2 font-space-grotesk text-xl font-bold uppercase tracking-tight text-platinum">What are the alias and DILITHIUM_PUB_KEY.hex?</h3></div></div>
+                <p className="mt-4 text-sm leading-7 text-platinum/65"><strong className="text-platinum">Node alias</strong> is simply the human-readable name shown to operators and governance, similar to a username or display name—for example <code className="text-platinum/85">Genesis-Alpha-01</code>. It is not a password, login, wallet address, or private key. Choose a clear name for this node.</p>
+                <p className="mt-3 text-sm leading-7 text-platinum/65"><strong className="text-platinum"><code>DILITHIUM_PUB_KEY.hex</code></strong> is the public half of the validator&apos;s Dilithium-5 identity. Paste the complete public key, not a shortened example. The private/secret half stays in the node&apos;s protected data directory and must never be pasted into the form.</p>
+                <div className="mt-4 border border-cyan-glow/15 bg-ink-black/60 p-4 text-xs leading-6 text-platinum/65">
+                  <p><strong className="text-cyan-glow">Where is it?</strong> The first-run output in your screenshot shows a libp2p <code className="text-platinum/85">Peer ID</code>, not this Dilithium key. <code className="text-platinum/85">P2P node is running</code> confirms the network process started; it is not a key. Do not copy the Peer ID, admin token, wallet address, or a random hex value into this field.</p>
+                  <p className="mt-3">After the node is configured, run the export command from the folder containing the node binary. It creates the stable local identity once and writes only its public key; it refuses to overwrite an existing public-key file.</p>
+                  <pre className="mt-4 max-w-full overflow-x-auto whitespace-pre-wrap break-words border border-cyan-glow/15 bg-ink-black/70 p-3 font-mono text-[11px] leading-6 text-platinum/80"><code>{`# Windows PowerShell
+.\\UltraNetNode.exe --export-validator-public-key .\\DILITHIUM_PUB_KEY.hex
+
+# Linux / macOS
+./UltraNetNode --export-validator-public-key ./DILITHIUM_PUB_KEY.hex`}</code></pre>
+                  <p className="mt-3">Open <code className="text-platinum/85">DILITHIUM_PUB_KEY.hex</code>, copy its complete line into the proposal form, and keep <code className="text-platinum/85">validator_dilithium5_key.json</code> private. If you are using an older release that does not recognize this command, use the updated package built from this repository; never invent or download a key from an online generator.</p>
+                </div>
+                <ol className="mt-5 space-y-2 border-t border-cyan-glow/15 pt-4 text-xs leading-6 text-platinum/65">
+                  <li><span className="mr-2 font-mono text-cyan-glow">01</span>Keep the node running and open inbound TCP and UDP port <code className="text-platinum/85">9000</code>. A first heartbeat with <code className="text-platinum/85">tracked peers: 0</code> means no peer is connected yet; it is not the Dilithium key.</li>
+                  <li><span className="mr-2 font-mono text-cyan-glow">02</span>Enter the alias and complete public key in the proposal form, connect UltraWallet, and let it sign locally.</li>
+                  <li><span className="mr-2 font-mono text-cyan-glow">03</span>Submission places the proposal in governance; 2-of-3 Sovereign approval is still required before activation.</li>
+                </ol>
+              </article>
             </div>
           </div>
 

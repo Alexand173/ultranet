@@ -109,6 +109,24 @@ Set the resulting 64-character hexadecimal value in `UltraNetNode.env` for the W
 
 When `ULTRANET_DB_PATH` is omitted, local desktop launches use `%LOCALAPPDATA%\\UltraNet\\data` on Windows, `~/Library/Application Support/UltraNet/data` on macOS, and `$XDG_DATA_HOME/ultranet` or `~/.local/share/ultranet` on Linux. An explicit `ULTRANET_DB_PATH` remains authoritative for systemd, Docker, and existing state.
 
+### 2.5 Export the validator public key
+
+The first-run console prints a public libp2p `Peer ID`, but that is not the Dilithium key required by the proposal form. After configuring the node and starting it successfully, run the export command from the folder containing the node binary:
+
+```powershell
+# Windows PowerShell
+.\\UltraNetNode.exe --export-validator-public-key .\\DILITHIUM_PUB_KEY.hex
+```
+
+```bash
+# Linux or macOS
+./UltraNetNode --export-validator-public-key ./DILITHIUM_PUB_KEY.hex
+```
+
+The command creates one stable Dilithium-5 identity in the private node data directory and writes only the public half to `DILITHIUM_PUB_KEY.hex`. The output is a complete lowercase hexadecimal public key (2,592 bytes / 5,184 hex characters). Copy the complete line into the `DILITHIUM_PUB_KEY.hex` proposal field. Keep `validator_dilithium5_key.json` private; it contains the corresponding secret key. The command refuses to overwrite an existing output file. It does not submit a proposal or replace the local UltraWallet signature.
+
+Never copy the `Peer ID`, `ULTRANET_ADMIN_TOKEN`, wallet address, or a random online-generated value into the public-key field. Older release archives that do not recognize `--export-validator-public-key` must be replaced with an updated package built from this repository.
+
 ## 3. Deployment Sequence
 
 ### 3.1 Environment Hardening
@@ -171,8 +189,8 @@ The root-level `ultranet.service.template` is kept in sync for existing workflow
 
 ### 4.3 Validator Registration
 During the **Bootstrap Phase (v7.1)**, the validator set is managed by the 2-of-3 Sovereign Multi-Sig.
-1. **Identity Extraction**: Locate your `QuantumKeyPair` public key in the initial logs.
-2. **On-boarding Request**: Submit your public key to the governance portal.
+1. **Identity Extraction**: Run `--export-validator-public-key` and keep the generated `DILITHIUM_PUB_KEY.hex` public file.
+2. **On-boarding Request**: Submit the complete public key to the governance portal; do not submit the private `validator_dilithium5_key.json` file.
 3. **Weight Assignment**: Once approved, your weight will be added to the BLS aggregation set in `src/lib.rs`.
 
 ## 5. Performance Monitoring
