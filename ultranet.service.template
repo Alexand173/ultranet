@@ -5,6 +5,10 @@ After=network-online.target
 Wants=network-online.target
 Documentation=https://github.com/your-repo/UltraNet_Linux/blob/main/VALIDATOR_GUIDE.md
 
+# Prevent a persistent startup failure from consuming the host in a restart loop.
+StartLimitIntervalSec=5min
+StartLimitBurst=3
+
 [Service]
 Type=simple
 User=ultranet
@@ -14,11 +18,18 @@ EnvironmentFile=-/etc/ultranet/ultranet.env
 ExecStart=/opt/ultranet/target/release/UltraNet
 
 LimitNOFILE=65535
-MemoryMax=31G
+# This profile contains the node on the current 8 GiB VPS and leaves room for
+# the OS, Caddy, and the dashboard. Swap is emergency headroom, not capacity.
+MemoryAccounting=true
+MemoryHigh=6912M
+MemoryMax=7168M
+MemorySwapMax=4096M
 CPUWeight=100
 Restart=always
-RestartSec=5s
-StartLimitIntervalSec=0
+RestartSec=15s
+TimeoutStartSec=5min
+TimeoutStopSec=60s
+OOMPolicy=stop
 
 NoNewPrivileges=true
 PrivateTmp=true

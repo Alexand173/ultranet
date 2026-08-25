@@ -49,6 +49,7 @@ website/crypto/ultra-dilithium5/build/
 !release/windows/README-WINDOWS.txt
 *.sh
 !deploy/ultranet-dashboard-deploy.sh
+!deploy/ultranet-memory-monitor.sh
 !website/crypto/ultra-dilithium5/build.sh
 !website/crypto/ultra-dilithium5/NOTICE.txt
 !website/public/crypto/NOTICE-pqclean-dilithium5.txt

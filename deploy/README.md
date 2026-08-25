@@ -89,6 +89,47 @@ sudo systemctl enable --now ultranet
 curl --fail http://127.0.0.1:8081/api/stats
 ```
 
+### VPS memory safety
+
+The production validator service includes a containment profile for the current 8 GiB VPS: `MemoryHigh=6912M`, `MemoryMax=7168M`, and `MemorySwapMax=4096M`. The 7 GiB hard limit keeps a runaway node cgroup from consuming the whole host; 32 GB RAM remains the recommended capacity for sustained validator workloads. Swap is emergency headroom, not a replacement for adequate RAM.
+
+Install the 4 GiB persistent swap file and the systemd memory monitor once as root:
+
+```bash
+if ! sudo swapon --show=NAME --noheadings | grep -qx '/swapfile'; then
+  if [[ ! -e /swapfile ]]; then
+    sudo fallocate -l 4G /swapfile
+    sudo chmod 0600 /swapfile
+    sudo mkswap /swapfile
+  else
+    sudo chmod 0600 /swapfile
+    sudo swaplabel /swapfile >/dev/null
+  fi
+  sudo swapon /swapfile
+fi
+if ! grep -qE '^[[:space:]]*/swapfile[[:space:]]' /etc/fstab; then
+  printf '%s\n' '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+fi
+sudo install -o root -g root -m 0755 deploy/ultranet-memory-monitor.sh /usr/local/sbin/ultranet-memory-monitor
+sudo install -o root -g root -m 0644 deploy/ultranet-memory-monitor.service /etc/systemd/system/ultranet-memory-monitor.service
+sudo install -o root -g root -m 0644 deploy/ultranet-memory-monitor.timer /etc/systemd/system/ultranet-memory-monitor.timer
+sudo install -o root -g root -m 0644 deploy/ultranet-memory-sysctl.conf /etc/sysctl.d/99-ultranet-memory.conf
+sudo sysctl -p /etc/sysctl.d/99-ultranet-memory.conf
+sudo systemctl daemon-reload
+sudo systemctl enable --now ultranet-memory-monitor.timer
+sudo systemctl restart ultranet.service
+```
+
+The monitor records cgroup current/peak memory, swap usage, soft-limit events, and cgroup OOM counters once per minute in the journal:
+
+```bash
+journalctl -t ultranet-memory-monitor -f
+systemctl show ultranet.service -p MemoryCurrent -p MemoryPeak -p MemoryHigh -p MemoryMax -p MemorySwapMax -p NRestarts
+swapon --show
+```
+
+The validator uses a 15-second restart delay and a maximum of three starts in five minutes. This preserves automatic recovery for transient failures while stopping a persistent crash/configuration loop from repeatedly consuming CPU and memory.
+
 Expose TCP/UDP `9000` to peers. Keep TCP `8081` closed in the VPS firewall; the reverse proxy should connect to `127.0.0.1:8081`. If `ULTRANET_DB_PATH` is omitted outside systemd/Docker, the node selects the per-user data directory documented in [`../README.md`](../README.md); an explicit path remains authoritative.
 
 ## Windows desktop package

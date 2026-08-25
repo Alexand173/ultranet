@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodic UltraNet cgroup memory health check
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=15s
+Persistent=true
+Unit=ultranet-memory-monitor.service
+
+[Install]
+WantedBy=timers.target

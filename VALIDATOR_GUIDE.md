@@ -187,6 +187,8 @@ journalctl -u ultranet -f
 
 The root-level `ultranet.service.template` is kept in sync for existing workflows. See [`deploy/README.md`](./deploy/README.md) for binary installation, persistent storage, firewall, and reverse-proxy instructions.
 
+For the current 8 GiB VPS, install the 4 GiB persistent swap file and the systemd memory monitor described in [`deploy/README.md`](./deploy/README.md). The validator unit contains `MemoryHigh=6912M`, `MemoryMax=7168M`, and `MemorySwapMax=4096M` to contain a runaway process while leaving room for the OS, Caddy, and the dashboard. It also uses a 15-second restart delay and a three-starts-per-five-minutes limit. These are emergency containment settings; the 32 GB memory recommendation remains the target for sustained validator operation.
+
 ### 4.3 Validator Registration
 During the **Bootstrap Phase (v7.1)**, the validator set is managed by the 2-of-3 Sovereign Multi-Sig.
 1. **Identity Extraction**: Run `--export-validator-public-key` and keep the generated `DILITHIUM_PUB_KEY.hex` public file.

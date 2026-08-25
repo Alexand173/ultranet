@@ -1,0 +1,13 @@
+[Unit]
+Description=Record UltraNet cgroup memory health
+After=ultranet.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ultranet-memory-monitor
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

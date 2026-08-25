@@ -34,6 +34,9 @@ sudo cp -a public/. /opt/ultranet/public/
 sudo install -o root -g root -m 0644 deploy/ultranet.service /etc/systemd/system/ultranet.service
 sudo systemctl daemon-reload && sudo systemctl enable --now ultranet
 
+# On the current small VPS, apply the swap and memory-monitor setup from deploy/README.md.
+# The production unit contains a 7 GiB cgroup ceiling and 4 GiB emergency swap allowance.
+
 # or Docker Compose
 docker compose -f deploy/docker-compose.production.yml up -d --build
 ```
