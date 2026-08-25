@@ -1,0 +1,41 @@
+name: Verify release version consistency
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-release-version:
+    name: Verify published release version
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Resolve latest published release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name')"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Latest published release tag is invalid: ${tag}"
+            exit 1
+          }
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Checking repository references against ${tag}"
+
+      - name: Check website and documentation references
+        env:
+          EXPECTED_RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: node scripts/check-release-version.mjs "$EXPECTED_RELEASE_TAG"
