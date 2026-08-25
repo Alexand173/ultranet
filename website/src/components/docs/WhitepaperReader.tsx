@@ -4,6 +4,7 @@ import Link from "next/link";
 import { BookOpen, ChevronLeft, Download, ExternalLink, FileText } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
+import EducationalWalletCallout from "@/components/wallet/EducationalWalletCallout";
 
 const WHITEPAPER_HTML = "/docs/ultranet-whitepaper.html";
 const WHITEPAPER_PDF = "/docs/ultranet-whitepaper.pdf";
@@ -158,6 +159,10 @@ export default function WhitepaperReader() {
             />
           </div>
         </motion.section>
+
+        <div className="mt-8">
+          <EducationalWalletCallout variant="dark" placement="whitepaper" />
+        </div>
       </main>
     </div>
   );

@@ -3,6 +3,7 @@ import { ArrowRight, BookOpen, ExternalLink, ShieldCheck } from "lucide-react";
 import { LEARNING_TRACKS } from "@/lib/learn-content";
 import LearnIcon from "@/components/learn/LearnIcon";
 import LiveNetworkSnapshot from "@/components/learn/LiveNetworkSnapshot";
+import EducationalWalletCallout from "@/components/wallet/EducationalWalletCallout";
 
 export default function LearnHub() {
   return (
@@ -44,6 +45,10 @@ export default function LearnHub() {
             </div>
           </div>
         </div>
+      </section>
+
+      <section className="mx-auto max-w-6xl px-5 pb-20 sm:px-8">
+        <EducationalWalletCallout variant="light" placement="hub" />
       </section>
 
       <section className="mx-auto max-w-6xl px-5 pb-20 sm:px-8" aria-labelledby="learning-tracks-heading">

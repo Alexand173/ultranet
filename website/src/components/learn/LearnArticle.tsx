@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { LearnArticle as LearnArticleData } from "@/lib/learn-content";
 import { LEARNING_TRACKS } from "@/lib/learn-content";
 import LiveNetworkSnapshot from "@/components/learn/LiveNetworkSnapshot";
+import EducationalWalletCallout from "@/components/wallet/EducationalWalletCallout";
 
 function OnThisPage({ article }: { article: LearnArticleData }) {
   const [activeId, setActiveId] = useState(article.sections[0]?.id ?? "");
@@ -58,6 +59,10 @@ export default function LearnArticle({ article }: { article: LearnArticleData })
               <p className="mt-7 text-xl leading-relaxed text-learn-muted">{article.intro}</p>
               <p className="mt-5 text-sm font-medium text-learn-muted">{article.readTime} · Written for people meeting UltraNet for the first time</p>
             </header>
+
+            <div className="mt-10">
+              <EducationalWalletCallout variant="light" placement="article" />
+            </div>
 
             <div className="mt-12 space-y-14">
               {article.sections.map((section) => (

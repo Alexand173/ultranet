@@ -12,6 +12,10 @@ import {
   getUltraWalletProvider,
   isSignedValidatorProposal,
 } from "@/lib/ultra-wallet";
+import { normalizeProposalPublicKey, validateProposalPublicKey } from "@/lib/validator-signing";
+import { useWalletSession } from "@/components/wallet/WalletSessionProvider";
+import WalletConnectionStatus from "@/components/wallet/WalletConnectionStatus";
+import ProposalWalletPrerequisite from "@/components/wallet/ProposalWalletPrerequisite";
 
 type ProposalStatus = "idle" | "signing" | "success";
 
@@ -21,6 +25,7 @@ type FormErrors = {
 };
 
 export default function SwarmOnboarding() {
+  const { localProvider, sessionState } = useWalletSession();
   const [formState, setFormState] = useState({ alias: "", pubKey: "" });
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [proposalStatus, setProposalStatus] = useState<ProposalStatus>("idle");
@@ -61,7 +66,12 @@ export default function SwarmOnboarding() {
 
     const nextErrors: FormErrors = {};
     if (!formState.alias.trim()) nextErrors.alias = "Node alias is required.";
-    if (!formState.pubKey.trim()) nextErrors.pubKey = "Dilithium public key is required.";
+    if (!formState.pubKey.trim()) {
+      nextErrors.pubKey = "Dilithium public key is required.";
+    } else {
+      const publicKeyError = validateProposalPublicKey(formState.pubKey);
+      if (publicKeyError) nextErrors.pubKey = publicKeyError;
+    }
     setFormErrors(nextErrors);
 
     if (Object.keys(nextErrors).length > 0) {
@@ -70,10 +80,24 @@ export default function SwarmOnboarding() {
       return;
     }
 
-    const wallet = getUltraWalletProvider();
+    const wallet = localProvider ?? getUltraWalletProvider();
     if (!wallet) {
       setProposalStatus("idle");
-      setProposalMessage("Connect UltraWallet to sign this proposal locally. No unsigned payload was sent.");
+      setProposalMessage(
+        sessionState === "locked"
+          ? "Your local wallet is locked. Open /transact to unlock it. No unsigned payload was sent."
+          : "Create or unlock a wallet at /transact, or connect UltraWallet to sign this proposal locally. No unsigned payload was sent.",
+      );
+      return;
+    }
+
+    let proposalPublicKey: string;
+    try {
+      proposalPublicKey = normalizeProposalPublicKey(formState.pubKey);
+    } catch (error) {
+      setFormErrors((current) => ({ ...current, pubKey: error instanceof Error ? error.message : "The public key is invalid." }));
+      setProposalStatus("idle");
+      setProposalMessage("");
       return;
     }
 
@@ -84,7 +108,7 @@ export default function SwarmOnboarding() {
         method: ULTRA_WALLET_SIGN_VALIDATOR_PROPOSAL,
         params: {
           metadata: formState.alias.trim(),
-          proposalPublicKey: formState.pubKey.trim(),
+          proposalPublicKey,
           version: ULTRA_WALLET_SIGNING_ENVELOPE_VERSION,
         },
       });
@@ -191,7 +215,7 @@ export default function SwarmOnboarding() {
               </div>
               <div>
                 <dt className="uppercase tracking-[0.12em] text-platinum/75">DILITHIUM_PUB_KEY.hex</dt>
-                <dd>The public half of your Dilithium-5 validator keypair. Generate the pair with approved UltraNet offline tooling or wallet tooling, then paste the complete public-key hex here. Never paste the private key, secret key, or seed phrase.</dd>
+                <dd>The public half of your Dilithium-5 validator identity. Export it from the node computer with the approved UltraNet binary, then paste the complete 5,184-character hex line here. Never paste the private key, secret key, admin token, or seed phrase.</dd>
               </div>
             </dl>
             <div>
@@ -223,7 +247,10 @@ export default function SwarmOnboarding() {
         <div className="space-y-4">
           <p className="text-cyan-glow font-mono text-xs tracking-widest uppercase">Identity Verification</p>
           <h3 className="text-3xl font-bold uppercase">Node Registration</h3>
+          <WalletConnectionStatus variant="dark" />
         </div>
+
+        <ProposalWalletPrerequisite variant="dark" />
 
         {proposalMessage && (
           <div
@@ -272,7 +299,7 @@ export default function SwarmOnboarding() {
               id="dilithium-public-key"
               name="dilithiumPublicKey"
               rows={3}
-              placeholder="0x6c6dd0c8..."
+              placeholder="Paste the complete 5,184-character hex value"
               required
               aria-invalid={Boolean(formErrors.pubKey)}
               aria-describedby={formErrors.pubKey ? "dilithium-public-key-error" : undefined}

@@ -14,6 +14,9 @@ import {
 } from "lucide-react";
 import GenesisMultiaddr from "@/components/validator/GenesisMultiaddr";
 import ValidatorFaq from "@/components/validator/ValidatorFaq";
+import TwoKeyProposalExplainer from "@/components/validator/TwoKeyProposalExplainer";
+import ProposalWalletPrerequisite from "@/components/wallet/ProposalWalletPrerequisite";
+import WalletConnectionStatus from "@/components/wallet/WalletConnectionStatus";
 import {
   RELEASE_CHECKSUM_URL,
   RELEASE_TAG,
@@ -55,7 +58,7 @@ export default function ValidatorOnboardingPage() {
     <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay">
       <section className="relative mt-20 overflow-hidden border-b border-platinum/10 px-6 py-16 sm:px-10 lg:px-12 lg:py-24">
         <div className="pointer-events-none absolute right-0 top-0 h-full w-1/3 dot-grid opacity-20" aria-hidden="true" />
-        <div className="relative z-10 mx-auto grid max-w-7xl gap-12 lg:grid-cols-[1.2fr_0.8fr] lg:items-end lg:gap-20">
+        <div className="relative z-10 mx-auto grid max-w-7xl gap-12 lg:grid-cols-[0.85fr_1.15fr] lg:items-start lg:gap-16">
           <div>
             <p className="font-mono text-xs uppercase tracking-[0.24em] text-cyan-glow">VALIDATOR_ONBOARDING // {RELEASE_TAG}</p>
             <h1 className="mt-6 max-w-4xl font-space-grotesk text-5xl font-bold leading-[0.95] tracking-[-0.05em] text-platinum sm:text-7xl">
@@ -71,12 +74,15 @@ export default function ValidatorOnboardingPage() {
             </div>
           </div>
 
-          <div className="border-l border-cyan-glow/30 pl-5 font-mono text-xs leading-6 text-platinum/55">
-            <p className="text-cyan-glow">ENTRY_CHECK // PUBLIC</p>
-            <p className="mt-3">Node package: <span className="text-platinum/80">{RELEASE_TAG}</span></p>
-            <p>Network: <span className="text-platinum/80">ultranet-sovereign-mainnet</span></p>
-            <p>API access: <span className="text-amber-200">private / operator-controlled</span></p>
-            <p className="mt-4 border-t border-platinum/10 pt-4 text-platinum/40">A public onboarding page never asks for your private key, wallet backup, or admin token.</p>
+          <div className="space-y-8">
+            <div className="border-l border-cyan-glow/30 pl-5 font-mono text-xs leading-6 text-platinum/55">
+              <p className="text-cyan-glow">ENTRY_CHECK // PUBLIC</p>
+              <p className="mt-3">Node package: <span className="text-platinum/80">{RELEASE_TAG}</span></p>
+              <p>Network: <span className="text-platinum/80">ultranet-sovereign-mainnet</span></p>
+              <p>API access: <span className="text-amber-200">private / operator-controlled</span></p>
+              <p className="mt-4 border-t border-platinum/10 pt-4 text-platinum/40">A public onboarding page never asks for your private key, wallet backup, or admin token.</p>
+            </div>
+            <TwoKeyProposalExplainer />
           </div>
         </div>
       </section>
@@ -222,7 +228,9 @@ if ($actual -ne $expected) { throw "Checksum mismatch" }
             <h2 id="proposal-handoff-title" className="mt-3 font-space-grotesk text-2xl font-bold tracking-tight text-platinum sm:text-3xl">Your node is ready for governance review.</h2>
             <p className="mt-4 text-sm leading-7 text-platinum/55">Use the existing proposal flow to provide a node alias and public key. UltraWallet signs locally, the node receives only public transaction fields, and 2-of-3 Sovereign approval is required before activation.</p>
           </div>
-          <div className="flex shrink-0 flex-col items-start gap-4">
+          <div className="flex min-w-0 shrink-0 flex-col items-start gap-4 md:w-[22rem]">
+            <WalletConnectionStatus variant="dark" />
+            <ProposalWalletPrerequisite variant="dark" className="w-full" />
             <Link href="/#swarm" className="inline-flex min-h-11 items-center gap-3 bg-cyan-glow px-6 py-4 font-mono text-xs font-bold uppercase tracking-[0.16em] text-ink-black transition-colors hover:bg-platinum focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black">
               Submit your proposal <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </Link>

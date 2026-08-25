@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
+import EducationalWalletCallout from "@/components/wallet/EducationalWalletCallout";
 
 interface DocPageProps {
   title: string;
@@ -76,6 +77,10 @@ export default function DocPage({ title, subtitle, pillar, content, icon }: DocP
             </div>
           </div>
         </motion.div>
+
+        <div className="mt-16">
+          <EducationalWalletCallout variant="dark" placement="docs" />
+        </div>
 
         {/* Footer Navigation */}
         <div className="mt-32 pt-12 border-t border-platinum/10 flex flex-col md:flex-row gap-8 items-center justify-between font-mono">

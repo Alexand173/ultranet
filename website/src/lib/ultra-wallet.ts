@@ -152,6 +152,7 @@ export function isSignedValidatorProposal(
     isJsonByteArray(proposal.sender_public_key) &&
     proposal.sender_public_key.length === ULTRA_WALLET_PUBLIC_KEY_BYTES &&
     isJsonByteArray(proposal.proposal_public_key) &&
+    proposal.proposal_public_key.length === ULTRA_WALLET_PUBLIC_KEY_BYTES &&
     isSafeUint(proposal.nonce) &&
     isSafeUint(proposal.timestamp) &&
     isJsonByteArray(proposal.nullifier) &&
@@ -214,7 +215,14 @@ export function buildValidatorProposalRequest(
   metadata: string,
 ): ValidatorProposalRequest {
   return {
-    ...signedProposal,
+    sender: signedProposal.sender,
+    sender_public_key: [...signedProposal.sender_public_key],
+    proposal_public_key: [...signedProposal.proposal_public_key],
+    nonce: signedProposal.nonce,
+    timestamp: signedProposal.timestamp,
+    nullifier: [...signedProposal.nullifier],
+    signature: [...signedProposal.signature],
+    version: signedProposal.version,
     metadata: metadata.trim(),
   };
 }

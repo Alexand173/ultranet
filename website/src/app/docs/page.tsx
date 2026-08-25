@@ -5,6 +5,7 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { BookOpen, Search, ChevronRight, ExternalLink } from "lucide-react";
 import { CHAPTERS, getIcon, type Chapter } from "@/lib/constants";
+import EducationalWalletCallout from "@/components/wallet/EducationalWalletCallout";
 
 export default function DocsHub() {
   const [search, setSearch] = useState("");
@@ -117,6 +118,10 @@ export default function DocsHub() {
             </div>
           </div>
         </Link>
+      </section>
+
+      <section className="relative mx-auto max-w-7xl px-6 pt-8">
+        <EducationalWalletCallout variant="dark" placement="docs" />
       </section>
 
       {/* Chapter Grid */}

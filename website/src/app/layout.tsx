@@ -14,6 +14,7 @@ import SmoothScroll from "@/components/ui/SmoothScroll";
 import GlobalCoin from "@/components/ui/GlobalCoin";
 import VisualNoise from "@/components/ui/VisualNoise";
 import GlobalCommandSearch from "@/components/ui/GlobalCommandSearch";
+import WalletSessionProvider from "@/components/wallet/WalletSessionProvider";
 
 export default function RootLayout({
   children,
@@ -30,11 +31,13 @@ export default function RootLayout({
           <div className="absolute top-0 left-0 w-full h-[1px] bg-cyan-glow/50 animate-[scanline_10s_linear_infinite]" />
         </div>
         
-        <SmoothScroll>
-          <Navbar />
-          <GlobalCoin />
-          {children}
-        </SmoothScroll>
+        <WalletSessionProvider>
+          <SmoothScroll>
+            <Navbar />
+            <GlobalCoin />
+            {children}
+          </SmoothScroll>
+        </WalletSessionProvider>
       </body>
     </html>
   );

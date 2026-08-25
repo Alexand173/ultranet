@@ -15,10 +15,10 @@ import {
   decryptWalletSeed,
   deriveIdentityFromStoredSeed,
   storedPublicKeyToBytes,
-  clearLocalWalletKeyMaterial,
-  type LocalWalletKeyMaterial,
-  type StoredWallet,
 } from "@/lib/wallet-crypto";
+import { useWalletSession } from "@/components/wallet/WalletSessionProvider";
+import WalletConnectionStatus from "@/components/wallet/WalletConnectionStatus";
+import EducationalWalletCallout from "@/components/wallet/EducationalWalletCallout";
 import {
   buildTransactionRequest,
   isSignedTransaction,
@@ -27,8 +27,6 @@ import {
   type SignedTransaction,
 } from "@/lib/ultra-wallet";
 import { isUltraAddress, parseUltraAmount, toSafeNumber } from "@/lib/transaction-format";
-import { loadStoredWallet } from "@/lib/wallet-storage";
-import { createLocalTransactionProvider } from "@/lib/transaction-signing";
 import WalletSetup from "@/components/transactions/WalletSetup";
 import WalletLocked from "@/components/transactions/WalletLocked";
 import WalletLedger from "@/components/transactions/WalletLedger";
@@ -36,7 +34,8 @@ import SendTransaction from "@/components/transactions/SendTransaction";
 import TransactionHistory from "@/components/transactions/TransactionHistory";
 import TransactionReview from "@/components/transactions/TransactionReview";
 import TransactionResult from "@/components/transactions/TransactionResult";
-import type { TransferDraft, TransferState, WalletLifecycle } from "@/components/transactions/transaction.types";
+import type { TransferDraft, TransferState } from "@/components/transactions/transaction.types";
+import type { LocalWalletKeyMaterial, StoredWallet } from "@/lib/wallet-crypto";
 
 const EMPTY_DRAFT: TransferDraft = {
   recipient: "",
@@ -49,8 +48,7 @@ const EMPTY_DRAFT: TransferDraft = {
 type NetworkState = "loading" | "connected" | "delayed" | "unavailable";
 
 export default function TransactionPage() {
-  const [lifecycle, setLifecycle] = useState<WalletLifecycle>("checking");
-  const [storedWallet, setStoredWallet] = useState<StoredWallet | null>(null);
+  const { sessionState, storedWallet, walletAddress, storageError, localProvider, unlock, lock } = useWalletSession();
   const [account, setAccount] = useState<AccountSnapshot | null>(null);
   const [history, setHistory] = useState<TransactionRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -62,19 +60,12 @@ export default function TransactionPage() {
   const [transferError, setTransferError] = useState("");
   const [pageError, setPageError] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const materialRef = useRef<LocalWalletKeyMaterial | null>(null);
   const signedTransactionRef = useRef<SignedTransaction | null>(null);
   const accountRequestRef = useRef<AbortController | null>(null);
   const reviewHeadingRef = useRef<HTMLHeadingElement>(null);
   const resultHeadingRef = useRef<HTMLHeadingElement>(null);
   const accountRef = useRef<AccountSnapshot | null>(null);
 
-  const clearMaterial = useCallback(() => {
-    if (materialRef.current) {
-      clearLocalWalletKeyMaterial(materialRef.current);
-      materialRef.current = null;
-    }
-  }, []);
 
   const loadAccountData = useCallback(async (address: string) => {
     accountRequestRef.current?.abort();
@@ -111,52 +102,17 @@ export default function TransactionPage() {
     setIsRefreshing(false);
   }, []);
 
-  useEffect(() => {
-    let active = true;
-    void loadStoredWallet()
-      .then((wallet) => {
-        if (!active) return;
-        setStoredWallet(wallet);
-        setLifecycle(wallet ? "locked" : "no-wallet");
-      })
-      .catch((error) => {
-        if (!active) return;
-        setLifecycle("error");
-        setPageError(error instanceof Error ? error.message : "Unable to read local wallet storage.");
-      });
-
-    return () => {
-      active = false;
-      accountRequestRef.current?.abort();
-      clearMaterial();
-    };
-  }, [clearMaterial, loadAccountData]);
+  useEffect(() => () => {
+    accountRequestRef.current?.abort();
+  }, []);
 
   useEffect(() => {
-    if (lifecycle !== "unlocked" || !storedWallet) return;
-    const timeout = window.setTimeout(() => {
-      clearMaterial();
-      setDraft(EMPTY_DRAFT);
-      setTransferState("idle");
-      setResult(null);
-      setLifecycle("locked");
-    }, 15 * 60 * 1000);
-    const lockWhenHidden = () => {
-      if (document.visibilityState === "hidden") {
-        clearMaterial();
-        setDraft(EMPTY_DRAFT);
-        setTransferState("idle");
-        setResult(null);
-        setLifecycle("locked");
-      }
-    };
-    document.addEventListener("visibilitychange", lockWhenHidden);
-    return () => {
-      window.clearTimeout(timeout);
-      document.removeEventListener("visibilitychange", lockWhenHidden);
-    };
-  }, [clearMaterial, lifecycle, storedWallet]);
-
+    if (sessionState !== "unlocked" || !walletAddress || account?.address === walletAddress) return;
+    setAccount(null);
+    setHistory([]);
+    setHistoryError("");
+    void loadAccountData(walletAddress);
+  }, [account?.address, loadAccountData, sessionState, walletAddress]);
 
   useEffect(() => {
     if (transferState === "reviewing" || transferState === "signing" || transferState === "submitting") {
@@ -168,7 +124,7 @@ export default function TransactionPage() {
   }, [transferState]);
 
   useEffect(() => {
-    if (lifecycle !== "unlocked" || !account || transferState === "reviewing" || transferState === "signing" || transferState === "submitting" || transferState === "pending" || transferState === "success" || transferState === "failed" || transferState === "unknown") return;
+    if (sessionState !== "unlocked" || !account || transferState === "reviewing" || transferState === "signing" || transferState === "submitting" || transferState === "pending" || transferState === "success" || transferState === "failed" || transferState === "unknown") return;
     const parsed = parseUltraAmount(draft.amountInput);
     if (!isUltraAddress(draft.recipient) || parsed.value === null) {
       setDraft((current) => current.feeEstimate || current.estimateError ? { ...current, feeEstimate: null, estimateError: "" } : current);
@@ -196,32 +152,32 @@ export default function TransactionPage() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [account, draft.amountInput, draft.recipient, lifecycle, transferState]);
+  }, [account, draft.amountInput, draft.recipient, sessionState, transferState]);
 
-  const handleUnlock = async (material: LocalWalletKeyMaterial) => {
-    clearMaterial();
-    materialRef.current = material;
+  const handleUnlock = (material: LocalWalletKeyMaterial) => {
+    unlock(material);
     setPageError("");
-    setLifecycle("unlocked");
     setAccount(null);
     setHistory([]);
     setHistoryError("");
-    await loadAccountData(material.address);
   };
 
   const handleCreated = async (wallet: StoredWallet, password: string) => {
     const seed = await decryptWalletSeed(wallet.encryptedSeed, password);
     try {
       const material = await deriveIdentityFromStoredSeed(seed, storedPublicKeyToBytes(wallet), wallet.address, wallet.createdAt);
-      setStoredWallet(wallet);
-      await handleUnlock(material);
+      unlock(material, wallet);
+      setPageError("");
+      setAccount(null);
+      setHistory([]);
+      setHistoryError("");
     } finally {
       seed.fill(0);
     }
   };
 
   const handleRefresh = () => {
-    if (storedWallet) void loadAccountData(storedWallet.address);
+    if (walletAddress) void loadAccountData(walletAddress);
   };
 
   const updateDraft = (updates: Partial<TransferDraft>) => {
@@ -261,7 +217,7 @@ export default function TransactionPage() {
   };
 
   const handleConfirm = async () => {
-    if (!account || draft.amountBaseUnits === null || !draft.feeEstimate || !materialRef.current || transferState !== "reviewing") return;
+    if (!account || draft.amountBaseUnits === null || !draft.feeEstimate || transferState !== "reviewing") return;
     setTransferError("");
     signedTransactionRef.current = null;
     setTransferState("signing");
@@ -278,22 +234,24 @@ export default function TransactionPage() {
       chainId: 0 as const,
       version: ULTRA_WALLET_TRANSACTION_VERSION,
     };
+    const provider = localProvider;
+    if (!provider) {
+      nullifier.fill(0);
+      setTransferError("The local wallet is locked. Unlock it before signing the transfer.");
+      setTransferState("failed");
+      return;
+    }
 
-    const material = materialRef.current;
-    materialRef.current = null;
     try {
-      const provider = createLocalTransactionProvider(material);
       const response = await provider.request({ method: ULTRA_WALLET_SIGN_TRANSACTION, params: signedParams });
       if (!isSignedTransaction(response)) throw new Error("The local wallet returned an incomplete transaction signature.");
       const signed = buildTransactionRequest(response);
       signedTransactionRef.current = signed;
       await submitSignedTransfer(signed);
     } catch (error) {
-      clearLocalWalletKeyMaterial(material);
       setTransferError(error instanceof Error ? error.message : "Unable to sign the transfer locally.");
       setTransferState("failed");
     } finally {
-      clearLocalWalletKeyMaterial(material);
       nullifier.fill(0);
     }
   };
@@ -341,11 +299,11 @@ export default function TransactionPage() {
     setTransferError("");
     signedTransactionRef.current = null;
     setTransferState("idle");
-    if (storedWallet) void loadAccountData(storedWallet.address);
+    if (walletAddress) void loadAccountData(walletAddress);
   };
 
   const handleLock = () => {
-    clearMaterial();
+    lock();
     accountRequestRef.current?.abort();
     setDraft(EMPTY_DRAFT);
     setResult(null);
@@ -354,26 +312,25 @@ export default function TransactionPage() {
     setAccount(null);
     setHistory([]);
     setTransferState("idle");
-    setLifecycle("locked");
   };
 
-  if (lifecycle === "checking") {
+  if (sessionState === "checking") {
     return <main className="relative min-h-screen bg-ink-black px-6 pb-24 pt-36 sm:px-10 lg:px-12"><div className="mx-auto max-w-7xl border-y border-platinum/15 py-16"><p className="font-mono text-xs uppercase tracking-[0.2em] text-cyan-glow">WALLET_STATUS / READING_LOCAL_STORAGE</p><p className="mt-4 text-sm text-platinum/50">Checking this device for a protected UltraNet wallet…</p></div></main>;
   }
 
-  if (lifecycle === "error") {
-    return <main className="relative min-h-screen bg-ink-black px-6 pb-24 pt-36 sm:px-10 lg:px-12"><div className="mx-auto max-w-3xl border border-red-300/40 bg-red-300/10 p-6 sm:p-8" role="alert"><AlertTriangle className="h-6 w-6 text-red-300" aria-hidden="true" /><h1 className="mt-5 font-space-grotesk text-2xl font-bold uppercase text-red-200">Local wallet unavailable</h1><p className="mt-3 text-sm leading-7 text-red-100/80">{pageError || "This browser could not read secure wallet storage."}</p></div></main>;
+  if (storageError) {
+    return <main className="relative min-h-screen bg-ink-black px-6 pb-24 pt-36 sm:px-10 lg:px-12"><div className="mx-auto max-w-3xl border border-red-300/40 bg-red-300/10 p-6 sm:p-8" role="alert"><AlertTriangle className="h-6 w-6 text-red-300" aria-hidden="true" /><h1 className="mt-5 font-space-grotesk text-2xl font-bold uppercase text-red-200">Local wallet unavailable</h1><p className="mt-3 text-sm leading-7 text-red-100/80">{pageError || storageError}</p></div></main>;
   }
 
-  if (lifecycle === "no-wallet" || lifecycle === "setup") {
-    return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><WalletSetup onCreated={handleCreated} /></main>;
+  if (sessionState === "none") {
+    return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-7xl px-6 pt-28 sm:px-10 lg:px-12"><EducationalWalletCallout variant="dark" placement="transact" /></div><WalletSetup onCreated={handleCreated} /></main>;
   }
 
-  if (lifecycle === "locked" && storedWallet) {
-    return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><WalletLocked wallet={storedWallet} onUnlocked={handleUnlock} /></main>;
+  if (sessionState === "locked" && storedWallet) {
+    return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-7xl px-6 pt-28 sm:px-10 lg:px-12"><EducationalWalletCallout variant="dark" placement="transact" /></div><WalletLocked wallet={storedWallet} onUnlocked={handleUnlock} /></main>;
   }
 
-  if (!account || !storedWallet) {
+  if (!account || !walletAddress || !storedWallet) {
     return <main className="relative min-h-screen bg-ink-black px-6 pb-24 pt-36 sm:px-10 lg:px-12"><div className="mx-auto max-w-3xl border-y border-platinum/15 py-16"><p className="font-mono text-xs uppercase tracking-[0.2em] text-cyan-glow">WALLET_STATUS / WAITING_FOR_ACCOUNT</p><p className="mt-4 text-sm text-platinum/50">Unlock the wallet to read its account.</p></div></main>;
   }
 
@@ -382,7 +339,8 @@ export default function TransactionPage() {
   const busy = transferState === "signing" || transferState === "submitting";
 
   return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay pb-24">
-    <section className="relative mt-20 border-b border-platinum/10 px-6 py-12 sm:px-10 lg:px-12 lg:py-16"><div className="pointer-events-none absolute right-0 top-0 h-full w-1/3 dot-grid opacity-15" aria-hidden="true" /><div className="relative z-10 mx-auto flex max-w-7xl flex-col justify-between gap-6 md:flex-row md:items-end"><div><p className="font-mono text-xs uppercase tracking-[0.24em] text-cyan-glow">WALLET // PHASE_0 // LOCAL</p><h1 className="mt-4 font-space-grotesk text-4xl font-bold uppercase tracking-tight text-platinum sm:text-6xl">Use $ULTRA</h1><p className="mt-4 max-w-2xl text-sm leading-7 text-platinum/55">Your wallet signs transfers on this device. Review every amount and address before anything is sent to the network.</p></div><div className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.14em] text-emerald-300"><Check className="h-4 w-4" aria-hidden="true" /> Protected locally</div></div></section>
+    <section className="relative mt-20 border-b border-platinum/10 px-6 py-12 sm:px-10 lg:px-12 lg:py-16"><div className="pointer-events-none absolute right-0 top-0 h-full w-1/3 dot-grid opacity-15" aria-hidden="true" /><div className="relative z-10 mx-auto flex max-w-7xl flex-col justify-between gap-6 md:flex-row md:items-end"><div><p className="font-mono text-xs uppercase tracking-[0.24em] text-cyan-glow">WALLET // PHASE_0 // LOCAL</p><h1 className="mt-4 font-space-grotesk text-4xl font-bold uppercase tracking-tight text-platinum sm:text-6xl">Use $ULTRA</h1><p className="mt-4 max-w-2xl text-sm leading-7 text-platinum/55">Your wallet signs transfers on this device. Review every amount and address before anything is sent to the network.</p></div><div className="flex flex-col items-start gap-3 md:items-end"><WalletConnectionStatus variant="dark" /><div className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.14em] text-emerald-300"><Check className="h-4 w-4" aria-hidden="true" /> Protected locally</div></div></div></section>
+    <div className="relative z-10 mx-auto max-w-7xl px-6 pt-8 sm:px-10 lg:px-12"><EducationalWalletCallout variant="dark" placement="transact" /></div>
     <WalletLedger account={account} networkState={networkState} onRefresh={handleRefresh} onLock={handleLock} />
     {pageError && <div className="relative z-10 mx-auto mt-6 max-w-7xl px-6 sm:px-10 lg:px-12"><div role="alert" className="border border-amber-300/30 bg-amber-300/10 px-4 py-3 font-mono text-xs leading-6 text-amber-100">{pageError}</div></div>}
     <div className="relative z-10 mx-auto grid max-w-7xl gap-12 px-6 py-12 sm:px-10 lg:grid-cols-[7fr_5fr] lg:gap-10 lg:px-12 lg:py-16">

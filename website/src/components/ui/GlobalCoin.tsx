@@ -40,10 +40,12 @@ export default function GlobalCoin() {
     return () => window.removeEventListener("mousemove", handleMouseMove);
   }, [mouseX, mouseY]);
 
-  // The Command Center home page and focused auth/operator surfaces already have
-  // their own visual hierarchy, so the persistent corner coin stays hidden there.
+  // The Command Center home page and focused educational/auth/operator surfaces
+  // already have their own visual hierarchy, so the persistent corner coin stays
+  // hidden there instead of covering the content's primary visual.
   if (
     pathname === "/" ||
+    pathname === "/validator" ||
     pathname === "/docs/whitepaper" ||
     pathname === "/login" ||
     pathname.startsWith("/operator")
