@@ -5,6 +5,10 @@ owner1_key.json
 owner1_key*.json
 wallet*.json
 
+# Generated validator identity material - public output is exportable, secret stays local
+DILITHIUM_PUB_KEY.hex
+validator_dilithium5_key.json
+
 # Local environment files and secrets - NEVER commit
 *.env
 .env.*

@@ -38,6 +38,7 @@ pub mod zk_circuit;
 pub use zk_circuit::*;
 pub mod p2p;
 pub mod runtime_config;
+pub mod validator_identity;
 pub mod zk_verifier;
 pub use p2p::P2PNode;
 pub mod storage;
@@ -3721,6 +3722,9 @@ pub async fn run_node() -> Result<(), String> {
 
     // 1. Validate configuration before opening storage or running cryptographic setup.
     let runtime_config = runtime_config::prepare()?;
+    let validator_address = validator_identity::ensure(&runtime_config.db_path)?;
+    println!("🔑 Validator Dilithium-5 identity ready: address={validator_address}");
+    println!("   Export the public key with --export-validator-public-key");
     let db_path = runtime_config.db_path.to_string_lossy().into_owned();
     let shared = SharedStorage::new(&db_path).map_err(|error| {
         format!(

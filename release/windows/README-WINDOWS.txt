@@ -113,7 +113,25 @@ Set ULTRANET_PAUSE_ON_ERROR=false in that terminal when you do not want a
 failure pause. Do not enable the pause for services, containers, CI, or other
 non-interactive launches.
 
-5. Networking and firewall
+5. Export the validator public key
+---------------------------------
+
+The first-run console's Peer ID is the public libp2p networking identity. It is
+not the Dilithium public key required by the validator proposal form. After the
+node configuration and startup checks succeed, run this command from the folder
+containing UltraNetNode.exe:
+
+  .\\UltraNetNode.exe --export-validator-public-key .\\DILITHIUM_PUB_KEY.hex
+
+The command creates one stable Dilithium-5 identity in the private node data
+directory and writes only its public half to DILITHIUM_PUB_KEY.hex. Copy the
+complete line from that file into the proposal form. Keep
+validator_dilithium5_key.json private; it contains the corresponding secret key.
+The command refuses to overwrite an existing output file and never submits a
+proposal. Do not copy the Peer ID, admin token, wallet address, or an online-
+generated random value into the public-key field.
+
+6. Networking and firewall
 --------------------------
 
 The local API defaults to 127.0.0.1:8081. Keep that port private unless you
@@ -126,7 +144,7 @@ allow inbound TCP and UDP 9000 in Windows Defender Firewall only for the
 network profile and scope you intend to use. Do not expose the API port to the
 public internet just to make P2P work.
 
-6. Logs and troubleshooting
+7. Logs and troubleshooting
 ---------------------------
 
 Keep the console window open while reproducing a launch problem. Copy the
