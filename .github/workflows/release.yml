@@ -264,6 +264,40 @@ jobs:
           }
           Remove-Item -Recurse -Force $env:ULTRANET_DB_PATH
 
+      - name: Verify Windows validator public-key export
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $binary = "target/x86_64-pc-windows-gnu/release/UltraNet.exe"
+          $dbPath = Join-Path $env:RUNNER_TEMP "ultranet-validator-export-check"
+          $exportRoot = Join-Path $env:RUNNER_TEMP "ultranet-validator-export-output"
+          $outputPath = Join-Path $exportRoot "DILITHIUM_PUB_KEY.hex"
+          $env:ULTRANET_DB_PATH = $dbPath
+          $env:ULTRANET_ADMIN_TOKEN = "a" * 64
+          $env:ULTRANET_PAUSE_ON_ERROR = "false"
+          New-Item -ItemType Directory -Force -Path $exportRoot | Out-Null
+          & $binary "--export-validator-public-key" $outputPath
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows validator public-key export failed with exit code $LASTEXITCODE"
+          }
+          if (!(Test-Path -LiteralPath $outputPath)) {
+            throw "Windows validator public-key export did not create DILITHIUM_PUB_KEY.hex"
+          }
+          $publicKey = (Get-Content -Raw -LiteralPath $outputPath).Trim()
+          if ($publicKey.Length -ne 5184 -or $publicKey -cnotmatch '^[0-9a-f]{5184}$') {
+            throw "Exported validator public key must be exactly 5,184 lowercase hexadecimal characters"
+          }
+          $firstHash = (Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash
+          & $binary "--export-validator-public-key" $outputPath
+          if ($LASTEXITCODE -eq 0) {
+            throw "Windows validator public-key export unexpectedly overwrote an existing output file"
+          }
+          $secondHash = (Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash
+          if ($firstHash -ne $secondHash) {
+            throw "Windows validator public-key output changed after overwrite rejection"
+          }
+          Remove-Item -Recurse -Force -LiteralPath @($dbPath, $exportRoot)
+
       - name: Package Windows archive
         shell: pwsh
         run: |
