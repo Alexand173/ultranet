@@ -5,3 +5,12 @@ export const EXPLORER_URL =
 
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? DEFAULT_API_BASE_URL;
+
+export const SEND_ULTRA_PATH = "/send-ultra" as const;
+export const VALIDATOR_PROPOSAL_PATH = "/#swarm" as const;
+
+export function getSendUltraHref(returnTo?: string): string {
+  if (!returnTo) return SEND_ULTRA_PATH;
+  const search = new URLSearchParams({ returnTo });
+  return `${SEND_ULTRA_PATH}?${search.toString()}`;
+}

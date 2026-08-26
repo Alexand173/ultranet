@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, Blocks, BookOpen, ShieldCheck } from "lucide-react";
+import { SEND_ULTRA_PATH } from "@/lib/links";
 
 const PATHS = [
   {
@@ -53,9 +54,14 @@ export default function HomeLearningIntro({ className }: { className?: string })
           ))}
         </div>
 
-        <Link href="/learn" className="mt-8 inline-flex items-center gap-2 font-mono text-xs uppercase tracking-[0.18em] text-cyan-glow hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black">
-          Open the learning hub <ArrowRight className="h-4 w-4" aria-hidden="true" />
-        </Link>
+        <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
+          <Link href="/learn" className="inline-flex min-h-11 items-center gap-2 font-mono text-xs uppercase tracking-[0.18em] text-cyan-glow hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black">
+            Open the learning hub <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          </Link>
+          <Link href={SEND_ULTRA_PATH} className="inline-flex min-h-11 items-center gap-2 bg-cyan-glow px-4 py-3 font-mono text-xs font-bold uppercase tracking-[0.16em] text-ink-black transition-colors hover:bg-platinum focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black">
+            Send Ultra <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          </Link>
+        </div>
       </div>
     </section>
   );

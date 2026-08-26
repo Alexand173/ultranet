@@ -22,7 +22,7 @@ export default function WalletConnectionStatus({
     : sessionState === "unlocked"
       ? { label: "Ready to sign locally", detail: "Local wallet unlocked in this browser", tone: "ready" as const }
       : sessionState === "locked"
-        ? { label: "Wallet locked", detail: "Unlock it at /transact before signing", tone: "locked" as const }
+        ? { label: "Wallet locked", detail: "Open Send Ultra to unlock before signing", tone: "locked" as const }
         : externalWalletStatus === "detected"
           ? { label: "UltraWallet detected", detail: "The provider may still require unlock", tone: "detected" as const }
           : externalWalletStatus === "checking"

@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { Menu, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { EXPLORER_URL } from "@/lib/links";
+import { EXPLORER_URL, SEND_ULTRA_PATH } from "@/lib/links";
 
 const NAV_LINKS = [
   { name: "LEARN", href: "/learn" },
@@ -14,7 +14,7 @@ const NAV_LINKS = [
   { name: "WHITEPAPER", href: "/docs/whitepaper" },
   { name: "DOWNLOAD_NODE", href: "/download" },
   { name: "VALIDATOR", href: "/validator" },
-  { name: "SEND_ULTRA", href: "/transact" },
+  { name: "SEND ULTRA", href: SEND_ULTRA_PATH },
   { name: "JOIN_SWARM", href: "/#swarm" },
 ];
 

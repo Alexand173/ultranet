@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowRight, Check, CircleAlert, LockKeyhole, WalletCards } from "lucide-react";
 import { useWalletSession } from "@/components/wallet/WalletSessionProvider";
 import type { WalletStatusVariant } from "@/components/wallet/wallet.types";
+import { getSendUltraHref, VALIDATOR_PROPOSAL_PATH } from "@/lib/links";
 
 interface ProposalWalletPrerequisiteProps {
   variant?: WalletStatusVariant;
@@ -44,7 +45,7 @@ export default function ProposalWalletPrerequisite({ variant = "dark", className
           </p>
           {!localReady && (
             <Link
-              href="/transact"
+              href={getSendUltraHref(VALIDATOR_PROPOSAL_PATH)}
               className={`mt-4 inline-flex min-h-11 items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] focus:outline-hidden focus:ring-2 focus:ring-offset-2 ${dark ? "text-cyan-glow hover:text-white focus:ring-cyan-glow focus:ring-offset-ink-black" : "text-learn-violet hover:text-learn-ink focus:ring-learn-violet focus:ring-offset-learn-canvas"}`}
             >
               {actionText} <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />

@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { ArrowRight, Box, ChevronRight, Download, GitBranch, Key, Terminal } from "lucide-react";
-import { API_BASE_URL } from "@/lib/links";
+import { API_BASE_URL, getSendUltraHref, VALIDATOR_PROPOSAL_PATH } from "@/lib/links";
 import {
   ULTRA_WALLET_SIGN_VALIDATOR_PROPOSAL,
   ULTRA_WALLET_SIGNING_ENVELOPE_VERSION,
@@ -85,8 +85,8 @@ export default function SwarmOnboarding() {
       setProposalStatus("idle");
       setProposalMessage(
         sessionState === "locked"
-          ? "Your local wallet is locked. Open /transact to unlock it. No unsigned payload was sent."
-          : "Create or unlock a wallet at /transact, or connect UltraWallet to sign this proposal locally. No unsigned payload was sent.",
+          ? "Your local wallet is locked. Open Send Ultra to unlock it. No unsigned payload was sent."
+          : "Open Send Ultra to create or unlock a wallet, or connect UltraWallet to sign this proposal locally. No unsigned payload was sent.",
       );
       return;
     }
@@ -262,7 +262,15 @@ export default function SwarmOnboarding() {
                 : "border-red-300/40 bg-red-300/10 text-red-200"
             }`}
           >
-            {proposalMessage}
+            <p>{proposalMessage}</p>
+            {proposalStatus === "idle" && !localProvider && !getUltraWalletProvider() && (
+              <Link
+                href={getSendUltraHref(VALIDATOR_PROPOSAL_PATH)}
+                className="mt-2 inline-flex items-center gap-1 text-red-100 underline decoration-red-300/50 hover:text-white focus:outline-none focus:ring-1 focus:ring-red-200"
+              >
+                Open Send Ultra to unlock your wallet <ArrowRight className="h-3 w-3" aria-hidden="true" />
+              </Link>
+            )}
           </div>
         )}
 

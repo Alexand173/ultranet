@@ -1,7 +1,9 @@
 "use client";
 
-import { AlertTriangle, Check } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, ArrowLeft, Check } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   fetchAccount,
   fetchAddressTransactions,
@@ -47,7 +49,8 @@ const EMPTY_DRAFT: TransferDraft = {
 
 type NetworkState = "loading" | "connected" | "delayed" | "unavailable";
 
-export default function TransactionPage() {
+export default function TransactionPage({ returnTo }: { returnTo?: string }) {
+  const router = useRouter();
   const { sessionState, storedWallet, walletAddress, storageError, localProvider, unlock, lock } = useWalletSession();
   const [account, setAccount] = useState<AccountSnapshot | null>(null);
   const [history, setHistory] = useState<TransactionRecord[]>([]);
@@ -154,12 +157,17 @@ export default function TransactionPage() {
     };
   }, [account, draft.amountInput, draft.recipient, sessionState, transferState]);
 
+  const continueToReturnPath = useCallback(() => {
+    if (returnTo) router.push(returnTo);
+  }, [returnTo, router]);
+
   const handleUnlock = (material: LocalWalletKeyMaterial) => {
     unlock(material);
     setPageError("");
     setAccount(null);
     setHistory([]);
     setHistoryError("");
+    continueToReturnPath();
   };
 
   const handleCreated = async (wallet: StoredWallet, password: string) => {
@@ -171,6 +179,7 @@ export default function TransactionPage() {
       setAccount(null);
       setHistory([]);
       setHistoryError("");
+      continueToReturnPath();
     } finally {
       seed.fill(0);
     }
@@ -323,11 +332,11 @@ export default function TransactionPage() {
   }
 
   if (sessionState === "none") {
-    return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-7xl px-6 pt-28 sm:px-10 lg:px-12"><EducationalWalletCallout variant="dark" placement="transact" /></div><WalletSetup onCreated={handleCreated} /></main>;
+    return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-[1680px] px-6 pt-28 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} /><EducationalWalletCallout variant="dark" placement="send-ultra" /></div><WalletSetup onCreated={handleCreated} /></main>;
   }
 
   if (sessionState === "locked" && storedWallet) {
-    return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-7xl px-6 pt-28 sm:px-10 lg:px-12"><EducationalWalletCallout variant="dark" placement="transact" /></div><WalletLocked wallet={storedWallet} onUnlocked={handleUnlock} /></main>;
+    return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-[1680px] px-6 pt-28 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} /><EducationalWalletCallout variant="dark" placement="send-ultra" /></div><WalletLocked wallet={storedWallet} onUnlocked={handleUnlock} /></main>;
   }
 
   if (!account || !walletAddress || !storedWallet) {
@@ -339,14 +348,27 @@ export default function TransactionPage() {
   const busy = transferState === "signing" || transferState === "submitting";
 
   return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay pb-24">
-    <section className="relative mt-20 border-b border-platinum/10 px-6 py-12 sm:px-10 lg:px-12 lg:py-16"><div className="pointer-events-none absolute right-0 top-0 h-full w-1/3 dot-grid opacity-15" aria-hidden="true" /><div className="relative z-10 mx-auto flex max-w-7xl flex-col justify-between gap-6 md:flex-row md:items-end"><div><p className="font-mono text-xs uppercase tracking-[0.24em] text-cyan-glow">WALLET // PHASE_0 // LOCAL</p><h1 className="mt-4 font-space-grotesk text-4xl font-bold uppercase tracking-tight text-platinum sm:text-6xl">Use $ULTRA</h1><p className="mt-4 max-w-2xl text-sm leading-7 text-platinum/55">Your wallet signs transfers on this device. Review every amount and address before anything is sent to the network.</p></div><div className="flex flex-col items-start gap-3 md:items-end"><WalletConnectionStatus variant="dark" /><div className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.14em] text-emerald-300"><Check className="h-4 w-4" aria-hidden="true" /> Protected locally</div></div></div></section>
-    <div className="relative z-10 mx-auto max-w-7xl px-6 pt-8 sm:px-10 lg:px-12"><EducationalWalletCallout variant="dark" placement="transact" /></div>
+    <section className="relative mt-20 border-b border-platinum/10 px-6 py-12 sm:px-10 lg:px-12 lg:py-16"><div className="pointer-events-none absolute right-0 top-0 h-full w-1/3 dot-grid opacity-15" aria-hidden="true" /><div className="relative z-10 mx-auto flex max-w-[1680px] flex-col justify-between gap-6 md:flex-row md:items-end"><div><p className="font-mono text-xs uppercase tracking-[0.24em] text-cyan-glow">WALLET // SEND ULTRA // LOCAL</p><h1 className="mt-4 font-space-grotesk text-4xl font-bold uppercase tracking-tight text-platinum sm:text-6xl">Send Ultra</h1><p className="mt-4 max-w-2xl text-sm leading-7 text-platinum/55">Create or unlock your local wallet, review every amount and address, and sign a $ULTRA transfer on this device.</p></div><div className="flex flex-col items-start gap-3 md:items-end"><WalletConnectionStatus variant="dark" /><div className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.14em] text-emerald-300"><Check className="h-4 w-4" aria-hidden="true" /> Protected locally</div></div></div></section>
+    <div className="relative z-10 mx-auto max-w-[1680px] px-6 pt-8 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} /><EducationalWalletCallout variant="dark" placement="send-ultra" /></div>
     <WalletLedger account={account} networkState={networkState} onRefresh={handleRefresh} onLock={handleLock} />
-    {pageError && <div className="relative z-10 mx-auto mt-6 max-w-7xl px-6 sm:px-10 lg:px-12"><div role="alert" className="border border-amber-300/30 bg-amber-300/10 px-4 py-3 font-mono text-xs leading-6 text-amber-100">{pageError}</div></div>}
-    <div className="relative z-10 mx-auto grid max-w-7xl gap-12 px-6 py-12 sm:px-10 lg:grid-cols-[7fr_5fr] lg:gap-10 lg:px-12 lg:py-16">
+    {pageError && <div className="relative z-10 mx-auto mt-6 max-w-[1680px] px-6 sm:px-10 lg:px-12"><div role="alert" className="border border-amber-300/30 bg-amber-300/10 px-4 py-3 font-mono text-xs leading-6 text-amber-100">{pageError}</div></div>}
+    <div className="relative z-10 mx-auto grid max-w-[1680px] gap-12 px-6 py-12 sm:px-10 lg:grid-cols-[7fr_5fr] lg:gap-10 lg:px-12 lg:py-16">
       <div className="min-w-0">{inReview && draft.amountBaseUnits !== null && draft.feeEstimate ? <TransactionReview account={account} recipient={draft.recipient} amount={draft.amountBaseUnits} estimate={draft.feeEstimate} busy={busy} onConfirm={handleConfirm} onEdit={handleEdit} headingRef={reviewHeadingRef} /> : resultState ? <TransactionResult state={resultState} result={result} error={transferError} onSendAnother={handleSendAnother} onTryAgain={handleTryAgain} onEdit={handleEdit} onCheckStatus={handleCheckStatus} headingRef={resultHeadingRef} /> : <SendTransaction account={account} recipient={draft.recipient} amountInput={draft.amountInput} estimate={draft.feeEstimate} estimateError={draft.estimateError} estimating={transferState === "estimating-fee"} submitError={transferError} onRecipientChange={(value) => updateDraft({ recipient: value })} onAmountChange={(value) => updateDraft({ amountInput: value })} onReview={handleReview} />}</div>
       <div className="min-w-0 border-l-0 border-platinum/10 lg:border-l lg:pl-10"><TransactionHistory address={account.address} transactions={history} loading={historyLoading || isRefreshing} error={historyError} /></div>
     </div>
     <div className="sr-only" aria-live="polite">{networkState === "connected" ? "Account data updated." : networkState === "delayed" ? "Balance update delayed." : ""}</div>
   </main>;
+}
+
+function SendUltraReturnBanner({ returnTo }: { returnTo?: string }) {
+  if (!returnTo) return null;
+
+  return (
+    <div className="mb-5 flex flex-col gap-3 border border-cyan-glow/25 bg-cyan-glow/[0.04] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+      <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-cyan-glow/80">Validator proposal paused // unlock this wallet, then return to signing</p>
+      <Link href={returnTo} className="inline-flex min-h-11 shrink-0 items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-glow hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black">
+        <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" /> Return to proposal
+      </Link>
+    </div>
+  );
 }

@@ -51,7 +51,7 @@ const FAQ_ITEMS: FaqItem[] = [
 
 export default function ValidatorFaq() {
   return (
-    <section aria-labelledby="validator-faq-title" className="relative z-10 mx-auto max-w-7xl px-6 pb-24 sm:px-10 lg:px-12">
+    <section aria-labelledby="validator-faq-title" className="relative z-10 mx-auto max-w-[1680px] px-6 pb-24 sm:px-10 lg:px-12">
       <div className="grid gap-10 border-t border-platinum/10 pt-12 lg:grid-cols-[0.75fr_1.25fr] lg:gap-20">
         <div>
           <div className="flex items-center gap-3 text-cyan-glow">

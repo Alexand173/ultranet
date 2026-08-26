@@ -1,15 +1,16 @@
 import Link from "next/link";
 import { ArrowRight, KeyRound, Server, WalletCards } from "lucide-react";
 import type { WalletStatusVariant } from "@/components/wallet/wallet.types";
+import { SEND_ULTRA_PATH } from "@/lib/links";
 
 interface EducationalWalletCalloutProps {
   variant: WalletStatusVariant;
-  placement: "hub" | "article" | "docs" | "whitepaper" | "transact";
+  placement: "hub" | "article" | "docs" | "whitepaper" | "send-ultra";
 }
 
 export default function EducationalWalletCallout({ variant, placement }: EducationalWalletCalloutProps) {
   const dark = variant === "dark";
-  const compact = placement === "article" || placement === "docs" || placement === "whitepaper" || placement === "transact";
+  const compact = placement === "article" || placement === "docs" || placement === "whitepaper" || placement === "send-ultra";
 
   return (
     <section
@@ -26,7 +27,7 @@ export default function EducationalWalletCallout({ variant, placement }: Educati
             The node key identifies the computer. Your wallet authorizes it.
           </h2>
           <p className={`mt-4 text-sm leading-7 ${dark ? "text-platinum/65" : "text-learn-muted"}`}>
-            First export the public <code className={dark ? "text-platinum/90" : "text-learn-ink"}>DILITHIUM_PUB_KEY.hex</code> from the computer running <code className={dark ? "text-platinum/90" : "text-learn-ink"}>UltraNetNode.exe</code>. Then create or unlock your personal wallet at <code className={dark ? "text-platinum/90" : "text-learn-ink"}>/transact</code>. UltraWallet signs the proposal locally so the network knows you authorized that node identity.
+            First export the public <code className={dark ? "text-platinum/90" : "text-learn-ink"}>DILITHIUM_PUB_KEY.hex</code> from the computer running <code className={dark ? "text-platinum/90" : "text-learn-ink"}>UltraNetNode.exe</code>. Then create or unlock your personal wallet on <strong className={dark ? "text-platinum/90" : "text-learn-ink"}>Send Ultra</strong>. UltraWallet signs the proposal locally so the network knows you authorized that node identity.
           </p>
           <p className={`mt-3 text-xs leading-6 ${dark ? "text-platinum/45" : "text-learn-muted"}`}>
             The private node JSON, wallet secret, recovery phrase, and wallet password stay local. The website never stores your password and cannot bypass the wallet&apos;s security prompts. A same-site local session can remain unlocked in memory; reload, lock, timeout, or wallet policy can require unlock again.
@@ -44,8 +45,8 @@ export default function EducationalWalletCallout({ variant, placement }: Educati
         </div>
       </div>
       <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2">
-        <Link href="/transact" className={`inline-flex min-h-11 items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] focus:outline-hidden focus:ring-2 focus:ring-offset-2 ${dark ? "text-cyan-glow hover:text-white focus:ring-cyan-glow focus:ring-offset-ink-black" : "text-learn-violet hover:text-learn-ink focus:ring-learn-violet focus:ring-offset-learn-canvas"}`}>
-          Create or unlock wallet <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+        <Link href={SEND_ULTRA_PATH} className={`inline-flex min-h-11 items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] focus:outline-hidden focus:ring-2 focus:ring-offset-2 ${dark ? "text-cyan-glow hover:text-white focus:ring-cyan-glow focus:ring-offset-ink-black" : "text-learn-violet hover:text-learn-ink focus:ring-learn-violet focus:ring-offset-learn-canvas"}`}>
+          Open Send Ultra <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
         </Link>
         <Link href="/validator" className={`inline-flex min-h-11 items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] focus:outline-hidden focus:ring-2 focus:ring-offset-2 ${dark ? "text-platinum/55 hover:text-cyan-glow focus:ring-cyan-glow focus:ring-offset-ink-black" : "text-learn-muted hover:text-learn-violet focus:ring-learn-violet focus:ring-offset-learn-canvas"}`}>
           Read validator steps <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />

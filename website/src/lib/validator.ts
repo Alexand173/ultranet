@@ -14,6 +14,8 @@ export const GENESIS_P2P_PORT = 9000 as const;
 export const GENESIS_API_PORT = 8081 as const;
 export const GENESIS_TRANSPORTS = ["TCP", "UDP"] as const;
 
+export const WINDOWS_VALIDATOR_PRIVATE_KEY_PATH = String.raw`C:\Users\YourName\AppData\Local\UltraNet\data\validator_dilithium5_key.json`;
+
 const windowsReleaseAsset = RELEASE_ASSETS.find((asset) => asset.platform === "windows");
 
 if (!windowsReleaseAsset) {
