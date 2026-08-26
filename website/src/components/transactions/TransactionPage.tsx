@@ -336,7 +336,7 @@ export default function TransactionPage({ returnTo }: { returnTo?: string }) {
   }
 
   if (sessionState === "locked" && storedWallet) {
-    return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-[1680px] px-6 pt-28 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} /><EducationalWalletCallout variant="dark" placement="send-ultra" /></div><WalletLocked wallet={storedWallet} onUnlocked={handleUnlock} /></main>;
+    return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-[1680px] px-6 pt-28 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} /><EducationalWalletCallout variant="dark" placement="send-ultra" /></div><WalletLocked wallet={storedWallet} onUnlocked={handleUnlock} onCreated={handleCreated} /></main>;
   }
 
   if (!account || !walletAddress || !storedWallet) {

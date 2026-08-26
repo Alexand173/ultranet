@@ -1,8 +1,9 @@
 "use client";
 
-import { AlertTriangle, Check, Eye, EyeOff, KeyRound, RotateCcw } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, Eye, EyeOff, KeyRound, RotateCcw } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
 import {
+  bytesToHex,
   clearLocalWalletKeyMaterial,
   createLocalWalletFromPhrase,
   createRecoveryPhrase,
@@ -18,6 +19,11 @@ import { saveStoredWallet } from "@/lib/wallet-storage";
 
 interface WalletSetupProps {
   onCreated: (wallet: StoredWallet, password: string) => Promise<void> | void;
+  initialMode?: SetupMode;
+  allowModeToggle?: boolean;
+  onCancel?: () => void;
+  replacement?: boolean;
+  restoreTarget?: Pick<StoredWallet, "address" | "publicKey">;
 }
 
 type SetupMode = "create" | "restore";
@@ -30,8 +36,15 @@ function makeCheckPositions(): [number, number] {
   return [first, second === first ? (second % 12) + 1 : second];
 }
 
-export default function WalletSetup({ onCreated }: WalletSetupProps) {
-  const [mode, setMode] = useState<SetupMode>("create");
+export default function WalletSetup({
+  onCreated,
+  initialMode = "create",
+  allowModeToggle = true,
+  onCancel,
+  replacement = false,
+  restoreTarget,
+}: WalletSetupProps) {
+  const [mode, setMode] = useState<SetupMode>(initialMode);
   const [step, setStep] = useState<SetupStep>("password");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -45,6 +58,9 @@ export default function WalletSetup({ onCreated }: WalletSetupProps) {
   const [busy, setBusy] = useState(false);
 
   const words = useMemo(() => splitRecoveryPhrase(phrase), [phrase]);
+  const title = mode === "restore"
+    ? replacement ? "Restore this wallet" : "Restore a wallet"
+    : replacement ? "Create a new wallet" : "Create a wallet";
 
   const reset = () => {
     setStep("password");
@@ -62,6 +78,11 @@ export default function WalletSetup({ onCreated }: WalletSetupProps) {
   const toggleMode = () => {
     reset();
     setMode((current) => current === "create" ? "restore" : "create");
+  };
+
+  const handleCancel = () => {
+    reset();
+    onCancel?.();
   };
 
   const validatePassword = (): boolean => {
@@ -102,6 +123,12 @@ export default function WalletSetup({ onCreated }: WalletSetupProps) {
     let material: LocalWalletKeyMaterial | null = null;
     try {
       material = await createLocalWalletFromPhrase(recoveryPhrase);
+      if (restoreTarget) {
+        const expectedPublicKey = restoreTarget.publicKey.trim().replace(/^0x/i, "").toLowerCase();
+        if (material.address !== restoreTarget.address || bytesToHex(material.publicKey) !== expectedPublicKey) {
+          throw new Error("That recovery phrase belongs to a different wallet. To replace the locked wallet, cancel and explicitly choose Create a brand-new wallet.");
+        }
+      }
       const encryptedSeed = await encryptWalletSeed(material.seed, password);
       const storedWallet = keyMaterialToStoredWallet(material, encryptedSeed);
       await saveStoredWallet(storedWallet);
@@ -151,12 +178,21 @@ export default function WalletSetup({ onCreated }: WalletSetupProps) {
       <div className="mb-8 flex flex-col gap-5 border-b border-platinum/15 pb-8 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="font-mono text-xs uppercase tracking-[0.24em] text-cyan-glow">WALLET // PHASE_0</p>
-          <h1 id="wallet-setup-title" className="mt-4 font-space-grotesk text-3xl font-bold uppercase tracking-tight text-platinum sm:text-5xl">{mode === "create" ? "Create a wallet" : "Restore a wallet"}</h1>
+          <h1 id="wallet-setup-title" className="mt-4 font-space-grotesk text-3xl font-bold uppercase tracking-tight text-platinum sm:text-5xl">{title}</h1>
           <p className="mt-4 max-w-2xl text-sm leading-7 text-platinum/60">Your keys stay on this device. UltraNet never receives your private key, password, or recovery phrase.</p>
         </div>
-        <button type="button" onClick={toggleMode} className="inline-flex min-h-11 items-center gap-2 self-start font-mono text-[10px] uppercase tracking-[0.14em] text-platinum/55 underline decoration-platinum/30 underline-offset-4 transition-colors hover:text-cyan-glow focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black sm:self-auto">
-          <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /> {mode === "create" ? "Restore wallet" : "Create new wallet"}
-        </button>
+        <div className="flex flex-wrap items-center gap-4 self-start sm:self-auto">
+          {onCancel && (
+            <button type="button" onClick={handleCancel} disabled={busy} className="inline-flex min-h-11 items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum/55 underline decoration-platinum/30 underline-offset-4 transition-colors hover:text-cyan-glow focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black disabled:cursor-wait disabled:opacity-50">
+              <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" /> Back to locked wallet
+            </button>
+          )}
+          {allowModeToggle && (
+            <button type="button" onClick={toggleMode} className="inline-flex min-h-11 items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum/55 underline decoration-platinum/30 underline-offset-4 transition-colors hover:text-cyan-glow focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black">
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /> {mode === "create" ? "Restore wallet" : "Create new wallet"}
+            </button>
+          )}
+        </div>
       </div>
 
       <ol className="mb-8 grid gap-px border border-platinum/10 bg-platinum/10 sm:grid-cols-3">
@@ -171,6 +207,12 @@ export default function WalletSetup({ onCreated }: WalletSetupProps) {
 
       {mode === "restore" && (
         <form className="max-w-2xl space-y-6" onSubmit={handlePasswordSubmit} noValidate aria-busy={busy}>
+          {replacement && (
+            <div className="border border-cyan-glow/25 bg-cyan-glow/[0.04] p-5 text-sm leading-7 text-platinum/65">
+              <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-cyan-glow">Recover the existing wallet</p>
+              <p className="mt-3">Use the original 12 words to keep this wallet&apos;s existing address and funds. The phrase must derive the same wallet identity before the encrypted record can be replaced.</p>
+            </div>
+          )}
           <div className="space-y-2">
             <label htmlFor="restore-recovery-phrase" className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/60">Recovery phrase</label>
             <textarea id="restore-recovery-phrase" value={restorePhrase} onChange={(event) => setRestorePhrase(event.target.value)} rows={4} autoComplete="off" spellCheck={false} placeholder="Enter your 12 words in order" className="w-full resize-y border border-platinum/15 bg-platinum/[0.03] p-4 font-mono text-sm leading-7 text-platinum outline-hidden focus:border-cyan-glow focus:ring-1 focus:ring-cyan-glow/40" />
@@ -183,6 +225,12 @@ export default function WalletSetup({ onCreated }: WalletSetupProps) {
 
       {mode === "create" && step === "password" && (
         <form className="max-w-2xl space-y-6" onSubmit={handlePasswordSubmit} noValidate>
+          {replacement && (
+            <div className="border border-amber-300/30 bg-amber-300/10 p-5 text-sm leading-7 text-amber-100/85">
+              <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-amber-200">New wallet replacement</p>
+              <p className="mt-3">This creates a separate wallet with a new address and recovery phrase. The old wallet remains untouched until the new encrypted record is successfully saved.</p>
+            </div>
+          )}
           <div className="flex items-start gap-4 border border-cyan-glow/20 bg-cyan-glow/[0.03] p-5"><KeyRound className="mt-0.5 h-5 w-5 shrink-0 text-cyan-glow" aria-hidden="true" /><p className="text-sm leading-7 text-platinum/60">Use this password to unlock the wallet on this device. It cannot replace your recovery phrase.</p></div>
           <PasswordFields password={password} confirmPassword={confirmPassword} setPassword={setPassword} setConfirmPassword={setConfirmPassword} />
           <button type="submit" className="inline-flex min-h-11 items-center justify-center bg-cyan-glow px-6 py-4 font-mono text-xs font-black uppercase tracking-[0.16em] text-ink-black hover:bg-platinum focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black">Create wallet</button>
@@ -204,13 +252,13 @@ export default function WalletSetup({ onCreated }: WalletSetupProps) {
         <form className="max-w-2xl space-y-6" onSubmit={handleVerifySubmit}>
           <div><p className="font-mono text-xs uppercase tracking-[0.18em] text-cyan-glow">Backup verification</p><h2 className="mt-3 font-space-grotesk text-2xl font-bold uppercase tracking-tight text-platinum">Check your backup</h2><p className="mt-3 text-sm leading-7 text-platinum/60">Enter the two requested words exactly as you wrote them. The phrase stays hidden while you check.</p></div>
           <div className="grid gap-5 sm:grid-cols-2">{checkPositions.map((position, index) => <div key={position} className="space-y-2"><label htmlFor={`recovery-word-${position}`} className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/60">Word {position}</label><input id={`recovery-word-${position}`} type="text" autoComplete="off" spellCheck={false} value={checkWords[index]} onChange={(event) => { const next = [...checkWords] as [string, string]; next[index] = event.target.value; setCheckWords(next); }} className="h-14 w-full border border-platinum/15 bg-platinum/[0.03] px-4 font-mono text-sm text-platinum outline-hidden focus:border-cyan-glow focus:ring-1 focus:ring-cyan-glow/40" /></div>)}</div>
-          <button type="submit" disabled={busy} className="inline-flex min-h-11 items-center justify-center bg-cyan-glow px-6 py-4 font-mono text-xs font-black uppercase tracking-[0.16em] text-ink-black hover:bg-platinum focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black disabled:cursor-wait disabled:opacity-50">{busy ? "Creating wallet…" : "Check your backup"}</button>
+          <button type="submit" disabled={busy} className="inline-flex min-h-11 items-center justify-center bg-cyan-glow px-6 py-4 font-mono text-xs font-black uppercase tracking-[0.16em] text-ink-black hover:bg-platinum focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-[#0A0A1A] disabled:cursor-wait disabled:opacity-50">{busy ? "Creating wallet…" : "Check your backup"}</button>
         </form>
       )}
 
-      {mode === "create" && step === "created" && <div className="border border-emerald-300/30 bg-emerald-300/[0.06] p-6 font-mono text-sm leading-7 text-emerald-200"><p className="flex items-center gap-3 font-space-grotesk text-xl font-bold uppercase text-emerald-200"><Check className="h-5 w-5" aria-hidden="true" /> Wallet created</p><p className="mt-3">Your wallet is protected on this device.</p></div>}
+      {step === "created" && <div className="border border-emerald-300/30 bg-emerald-300/[0.06] p-6 font-mono text-sm leading-7 text-emerald-200"><p className="flex items-center gap-3 font-space-grotesk text-xl font-bold uppercase text-emerald-200"><Check className="h-5 w-5" aria-hidden="true" /> {mode === "restore" ? "Wallet restored" : replacement ? "New wallet created" : "Wallet created"}</p><p className="mt-3">{mode === "restore" ? "The original wallet address is protected by your new local password." : replacement ? "The old wallet was replaced only after the new encrypted wallet was successfully saved." : "Your wallet is protected on this device."}</p></div>}
 
-      {mode === "create" && step === "phrase" && <p className="mt-6 flex items-start gap-3 max-w-3xl font-mono text-[10px] leading-6 text-platinum/40"><AlertTriangle className="mt-1 h-3.5 w-3.5 shrink-0 text-amber-200" aria-hidden="true" /> UltraNet support will never ask for your recovery phrase. Write it down offline; do not screenshot or send it.</p>}
+      {mode === "create" && step === "phrase" && <p className="mt-6 flex max-w-3xl items-start gap-3 font-mono text-[10px] leading-6 text-platinum/40"><AlertTriangle className="mt-1 h-3.5 w-3.5 shrink-0 text-amber-200" aria-hidden="true" /> UltraNet support will never ask for your recovery phrase. Write it down offline; do not screenshot or send it.</p>}
     </section>
   );
 }
