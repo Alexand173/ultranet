@@ -58,7 +58,16 @@ export default function WalletLocked({ wallet, onUnlocked, onCreated }: WalletLo
     }
   };
 
+  const openRecoveryView = (nextView: Exclude<WalletLockedView, "locked">) => {
+    setPassword("");
+    setStatus("idle");
+    setError("");
+    setView(nextView);
+  };
+
   const returnToLocked = () => {
+    setPassword("");
+    setStatus("idle");
     setView("locked");
     setReplacementAcknowledged(false);
     setError("");
@@ -176,7 +185,7 @@ export default function WalletLocked({ wallet, onUnlocked, onCreated }: WalletLo
             <KeyRound className="h-5 w-5 text-cyan-glow" aria-hidden="true" />
             <h3 className="mt-4 font-space-grotesk text-xl font-bold uppercase tracking-tight text-platinum">Restore this wallet</h3>
             <p className="mt-3 text-sm leading-6 text-platinum/60">Enter the original 12 words and choose a new password. The same wallet address and funds remain available after the restore.</p>
-            <button type="button" onClick={() => setView("restore")} className="mt-5 inline-flex min-h-11 items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-glow transition-colors hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black">
+            <button type="button" onClick={() => openRecoveryView("restore")} className="mt-5 inline-flex min-h-11 items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-glow transition-colors hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black">
               Restore with recovery phrase <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           </article>
@@ -185,7 +194,7 @@ export default function WalletLocked({ wallet, onUnlocked, onCreated }: WalletLo
             <AlertTriangle className="h-5 w-5 text-amber-200" aria-hidden="true" />
             <h3 className="mt-4 font-space-grotesk text-xl font-bold uppercase tracking-tight text-platinum">Lost both password and phrase?</h3>
             <p className="mt-3 text-sm leading-6 text-platinum/60">The old wallet cannot be recovered. Create a new key and recovery phrase, then explicitly confirm the old address and funds will not be restored.</p>
-            <button type="button" onClick={() => { setReplacementAcknowledged(false); setView("replace-confirm"); }} className="mt-5 inline-flex min-h-11 items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-amber-200 transition-colors hover:text-white focus:outline-none focus:ring-2 focus:ring-amber-200 focus:ring-offset-2 focus:ring-offset-ink-black">
+            <button type="button" onClick={() => { setReplacementAcknowledged(false); openRecoveryView("replace-confirm"); }} className="mt-5 inline-flex min-h-11 items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-amber-200 transition-colors hover:text-white focus:outline-none focus:ring-2 focus:ring-amber-200 focus:ring-offset-2 focus:ring-offset-ink-black">
               Create a brand-new wallet <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           </article>
