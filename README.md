@@ -162,6 +162,7 @@ Users can send `$ULTRA` through the public [**Send $ULTRA wallet flow**](https:/
 - [**`VALIDATOR_GUIDE.md`**](./VALIDATOR_GUIDE.md): Setup, staking, and maintenance.
 - [**`ULTRAWALLET_INTEGRATION.md`**](./ULTRAWALLET_INTEGRATION.md): Browser wallet provider and validator proposal contract.
 - [**`CLI_AUTH_SIGNING.md`**](./CLI_AUTH_SIGNING.md): Offline CLI authentication signing, API login, and browser import workflow.
+- [**`OFFLINE_APPROVAL_SIGNING.md`**](./OFFLINE_APPROVAL_SIGNING.md): Offline 2-of-3 validator approval signing and submission.
 - [**`TECHNICAL_MANIFEST.md`**](./TECHNICAL_MANIFEST.md): In-depth protocol constraints.
 - [**`GENESIS_REPORT.md`**](./GENESIS_REPORT.md): Initial supply and allocation audit.
 

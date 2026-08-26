@@ -230,7 +230,7 @@ SHA3-256(
 )
 ```
 
-`proposal_hash` is the 32-byte hash returned by `GET /api/governance/proposals`. An approval signature cannot be replayed against a different proposal hash without failing sovereign signature verification. This is a sovereign operator transaction, not a browser `UltraWalletProvider` method: the injected browser wallet contract covers applicant proposal signing, while the 2-of-3 approval requires the protected sovereign owner signing clients. The approval request is submitted to:
+`proposal_hash` is the 32-byte hash returned by `GET /api/governance/proposals`. An approval signature cannot be replayed against a different proposal hash without failing sovereign signature verification. This is a sovereign operator transaction, not a browser `UltraWalletProvider` method: the injected browser wallet contract covers applicant proposal signing, while the 2-of-3 approval requires the protected sovereign owner signing clients. The repository includes the offline `ultranet-approve` workflow in [`OFFLINE_APPROVAL_SIGNING.md`](./OFFLINE_APPROVAL_SIGNING.md). The approval request is submitted to:
 
 ```text
 POST <API_BASE_URL>/api/governance/approve
