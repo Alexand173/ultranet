@@ -6,6 +6,7 @@ use sha3::Digest;
 use sled::{Batch, Db, Tree};
 use std::collections::HashMap;
 
+use crate::appchain::{AnchoredState, AppChainConfig};
 use crate::bls_aggregation::ValidatorInfo;
 use crate::dag_mysticeti::{MysticetiVertex, ValidatorStats};
 use crate::{Transaction, UltraBlock, ValidatorApprovalRecord, ValidatorJoinProposalData};
@@ -28,6 +29,8 @@ pub struct Storage {
     pub approval_journal_index: Tree,
     pub auth_challenges: Tree,
     pub auth_sessions: Tree,
+    pub appchain_configs: Tree,
+    pub appchain_anchors: Tree,
     pub move_modules: Tree,
     pub move_resources: Tree,
     pub fhe_keys: Tree,
@@ -63,6 +66,8 @@ impl Storage {
             approval_journal_index: db.open_tree("approval_journal_index")?,
             auth_challenges: db.open_tree("auth_challenges")?,
             auth_sessions: db.open_tree("auth_sessions")?,
+            appchain_configs: db.open_tree("appchain_configs")?,
+            appchain_anchors: db.open_tree("appchain_anchors")?,
             move_modules: db.open_tree("move_modules")?,
             move_resources: db.open_tree("move_resources")?,
             fhe_keys: db.open_tree("fhe_keys")?,
@@ -330,6 +335,77 @@ impl Storage {
             }
         }
         map
+    }
+
+    pub fn save_appchain_config(&self, config: &AppChainConfig) -> Result<(), sled::Error> {
+        let value = bincode::serialize(config)
+            .map_err(|_| sled::Error::Unsupported("serialize appchain config failed".into()))?;
+        self.appchain_configs
+            .insert(config.id.to_be_bytes(), value)?;
+        self.db.flush()?;
+        Ok(())
+    }
+
+    pub fn delete_appchain_config(&self, chain_id: u32) -> Result<(), sled::Error> {
+        self.appchain_configs.remove(chain_id.to_be_bytes())?;
+        self.db.flush()?;
+        Ok(())
+    }
+
+    pub fn get_all_appchain_configs(&self) -> Result<Vec<AppChainConfig>, String> {
+        let mut configs = Vec::new();
+        for item in self.appchain_configs.iter() {
+            let (key, value) = item.map_err(|error| error.to_string())?;
+            let id_bytes: [u8; 4] = key
+                .as_ref()
+                .try_into()
+                .map_err(|_| "AppChain config key must be exactly 4 bytes".to_string())?;
+            let config = bincode::deserialize::<AppChainConfig>(&value)
+                .map_err(|error| format!("invalid AppChain config: {error}"))?;
+            if config.id != u32::from_be_bytes(id_bytes) {
+                return Err(format!(
+                    "AppChain config key does not match AppChain #{}",
+                    config.id
+                ));
+            }
+            configs.push(config);
+        }
+        configs.sort_by_key(|config| config.id);
+        Ok(configs)
+    }
+
+    fn appchain_anchor_storage_key(anchor: &AnchoredState) -> Result<[u8; 32], sled::Error> {
+        let value = bincode::serialize(anchor)
+            .map_err(|_| sled::Error::Unsupported("serialize AppChain anchor key failed".into()))?;
+        Ok(sha3::Sha3_256::digest(value).into())
+    }
+
+    pub fn save_appchain_anchor(&self, anchor: &AnchoredState) -> Result<(), sled::Error> {
+        let value = bincode::serialize(anchor)
+            .map_err(|_| sled::Error::Unsupported("serialize AppChain anchor failed".into()))?;
+        let key: [u8; 32] = sha3::Sha3_256::digest(&value).into();
+        self.appchain_anchors.insert(key, value)?;
+        self.db.flush()?;
+        Ok(())
+    }
+
+    pub fn delete_appchain_anchor(&self, anchor: &AnchoredState) -> Result<(), sled::Error> {
+        let key = Self::appchain_anchor_storage_key(anchor)?;
+        self.appchain_anchors.remove(key)?;
+        self.db.flush()?;
+        Ok(())
+    }
+
+    pub fn get_all_appchain_anchors(&self) -> Result<Vec<AnchoredState>, String> {
+        let mut anchors = Vec::new();
+        for item in self.appchain_anchors.iter() {
+            let (_key, value) = item.map_err(|error| error.to_string())?;
+            let anchor = bincode::deserialize::<AnchoredState>(&value)
+                .map_err(|error| format!("invalid AppChain anchor: {error}"))?;
+            anchors.push(anchor);
+        }
+        anchors.sort_by_key(|anchor| (anchor.timestamp, anchor.chain_id, anchor.anchor_number));
+        Ok(anchors)
     }
 
     pub fn save_transaction(&self, tx: &Transaction) -> Result<(), sled::Error> {
@@ -641,6 +717,8 @@ impl Storage {
         self.approval_journal_index.clear()?;
         self.auth_challenges.clear()?;
         self.auth_sessions.clear()?;
+        self.appchain_configs.clear()?;
+        self.appchain_anchors.clear()?;
         Ok(())
     }
 
@@ -668,6 +746,8 @@ impl Clone for Storage {
             approval_journal_index: self.approval_journal_index.clone(),
             auth_challenges: self.auth_challenges.clone(),
             auth_sessions: self.auth_sessions.clone(),
+            appchain_configs: self.appchain_configs.clone(),
+            appchain_anchors: self.appchain_anchors.clone(),
             move_modules: self.move_modules.clone(),
             move_resources: self.move_resources.clone(),
             fhe_keys: self.fhe_keys.clone(),
@@ -770,6 +850,43 @@ mod tests {
             },
             recorded_at,
         }
+    }
+
+    #[test]
+    fn appchain_registry_records_round_trip_through_storage() {
+        let path = format!("test_db_storage_appchain_{}", std::process::id());
+        let _ = fs::remove_dir_all(&path);
+        let config = AppChainConfig {
+            id: 7,
+            name: "Test AppChain".to_string(),
+            owner: "Test Owner".to_string(),
+            account_address: crate::appchain::derive_appchain_treasury_address(7),
+            genesis_root: [1u8; 32],
+            anchor_fee: 1_000,
+            anchor_spend: 1_000,
+            anchor_count: 1,
+            latest_anchor_at: Some(42),
+            latest_state_root: Some("a".repeat(64)),
+        };
+        let anchor = AnchoredState {
+            chain_id: 7,
+            anchor_number: 1,
+            state_root: "a".repeat(64),
+            proof: "test-fixture".to_string(),
+            timestamp: 42,
+            fee_charged: 1_000,
+            is_test: true,
+        };
+        {
+            let storage = Storage::new(&path).expect("storage should open");
+            storage.save_appchain_config(&config).unwrap();
+            storage.save_appchain_anchor(&anchor).unwrap();
+        }
+        let storage = Storage::new(&path).expect("storage should reopen");
+        assert_eq!(storage.get_all_appchain_configs().unwrap(), vec![config]);
+        assert_eq!(storage.get_all_appchain_anchors().unwrap(), vec![anchor]);
+        drop(storage);
+        let _ = fs::remove_dir_all(&path);
     }
 
     #[test]

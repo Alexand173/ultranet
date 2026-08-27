@@ -22,7 +22,7 @@ export default function Navbar() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
 
-  if (pathname === "/login" || pathname.startsWith("/operator")) return null;
+  if (pathname === "/login" || pathname.startsWith("/operator") || pathname.startsWith("/appchains")) return null;
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-ink-black/80 backdrop-blur-md border-b border-platinum/10">

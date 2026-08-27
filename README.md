@@ -110,6 +110,14 @@ verification.
 
 Do not extract or run an archive if its checksum does not match. For non-x86_64 systems, or when you need a source build, follow the compilation instructions in [`VALIDATOR_GUIDE.md`](./VALIDATOR_GUIDE.md).
 
+### AppChain management and test anchoring
+
+AppChain creation and anchoring are authenticated operator operations. The `/api/appchain/overview` endpoint exposes registry metadata, the dedicated L1 treasury address, live treasury balance, and cumulative protocol debits. `POST /api/appchain/create` creates a durable registry record and derives a unique treasury address; the treasury starts at zero and must be funded through a normal L1 transfer.
+
+`POST /api/appchain/{chain_id}/anchor` snapshots the server-side L3 state, derives a deterministic SHA3-256 state root, creates and verifies a versioned proof envelope, then records the anchor fee debit against that AppChain treasury. The current proof scheme is a server-verified state commitment; a recursive ZK proof circuit can replace the envelope in a later protocol version without changing the treasury contract.
+
+For local fixture testing only, set `ULTRANET_ENABLE_TEST_ANCHORING=true` on a debug build. This enables `POST /api/appchain/{chain_id}/anchor/test`, which runs the same server-side snapshot/proof/debit path but labels the result as a test anchor. Leave this setting unset or false in production.
+
 ### What is `ULTRANET_ADMIN_TOKEN`?
 
 Every node API requires `ULTRANET_ADMIN_TOKEN` to protect state-changing administrator operations such as mining, pruning, and AppChain management. It is a private bearer token for the node operator; it is **not** your wallet key, public node identifier, `DILITHIUM_PUB_KEY`, or a value that ordinary website users should share.

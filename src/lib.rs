@@ -71,7 +71,7 @@ pub use zk_snarks::{ProofType, ZKProof};
 mod block_stm;
 mod multi_version_memory; // ← OVAKO! (isti naziv kao fajl) // ← OVAKO!
 use block_stm::BlockSTM; // ← OVAKO!
-mod appchain;
+pub mod appchain;
 use appchain::AppChainRegistry;
 mod move_vm;
 use move_core_types::account_address::AccountAddress;
@@ -1390,7 +1390,16 @@ impl UltraBlockchain {
         let stark_engine_instance = Arc::new(UltraStarkEngine::new(128)); // 128 bits of security
         let ai_governor_instance = Arc::new(RwLock::new(AIGovernor::new()));
         let cross_shard_instance = Arc::new(RwLock::new(CrossShardMessenger::new()));
-        let appchain_registry_instance = Arc::new(RwLock::new(AppChainRegistry::new()));
+        let persisted_appchains = storage
+            .get_all_appchain_configs()
+            .unwrap_or_else(|error| panic!("Failed to load AppChain configs: {error}"));
+        let persisted_appchain_anchors = storage
+            .get_all_appchain_anchors()
+            .unwrap_or_else(|error| panic!("Failed to load AppChain anchors: {error}"));
+        let appchain_registry_instance = Arc::new(RwLock::new(AppChainRegistry::from_persisted(
+            persisted_appchains,
+            persisted_appchain_anchors,
+        )));
 
         // Poveži Move VM sa Trie-om i FHE motorom
         {
@@ -3554,41 +3563,45 @@ impl UltraBlockchain {
         all_txs
     }
 
-    // ✅ DODAJ OVDE get_balance FUNKCIJU:
-    pub fn get_balance(&self, address: &str) -> u64 {
+    fn get_unadjusted_balance(&self, address: &str) -> u64 {
         // 1. Proveri legacy state (za kompatibilnost)
         let state = self.state.read();
         let legacy_balance = *state.get(address).unwrap_or(&0);
         if legacy_balance > 0 {
             return legacy_balance;
         }
+        drop(state);
 
         // 2. Proveri Move VM Resource (UltraCoin)
-        // Adresa može biti u formatu "0x..." ili čist hex
-        let clean_addr = if address.starts_with("0x") {
-            &address[2..]
-        } else {
-            address
-        };
-
+        let clean_addr = address.strip_prefix("0x").unwrap_or(address);
         let vm = self.move_vm.read();
-        // Tražimo resurs pod ključem "{owner}:Coin"
         let res_key = format!("{}:Coin", clean_addr);
-
         if let Some(val) = vm.storage.move_resources.get(&res_key).ok().flatten() {
-            // Podaci su bincode-serialized MoveResourceInfo
-            // Prvih 8 bajtova MoveResourceInfo::data polja su balans
-            // Ali bincode dodaje overhead. Najsigurnije je koristiti get_persistent_balance ako je dostupno,
-            // ili manuelno deserializovati.
             if let Ok(info) = bincode::deserialize::<crate::move_vm::MoveResourceInfo>(&val) {
                 if info.data.len() >= 8 {
-                    let mut b = [0u8; 8];
-                    b.copy_from_slice(&info.data[0..8]);
-                    return u64::from_le_bytes(b);
+                    let mut balance = [0u8; 8];
+                    balance.copy_from_slice(&info.data[0..8]);
+                    return u64::from_le_bytes(balance);
                 }
             }
         }
         0
+    }
+
+    pub fn get_balance(&self, address: &str) -> u64 {
+        let balance = self.get_unadjusted_balance(address);
+        let registry = self.appchain_registry.read();
+        registry
+            .active_chains
+            .values()
+            .find(|chain| chain.account_address == address)
+            .map(|chain| balance.saturating_sub(chain.anchor_spend))
+            .unwrap_or(balance)
+    }
+
+    pub fn get_appchain_treasury_balance(&self, chain: &crate::appchain::AppChainConfig) -> u64 {
+        self.get_unadjusted_balance(&chain.account_address)
+            .saturating_sub(chain.anchor_spend)
     }
     // ============================================================
     // 8.12 ČIŠĆENJE STARIH PODATAKA

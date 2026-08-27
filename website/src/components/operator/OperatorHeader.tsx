@@ -27,12 +27,20 @@ export default function OperatorHeader({ session, isLoggingOut, onLogout }: Oper
     <header className="border-b border-platinum/10 pb-6">
       <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-5">
-          <Link
-            href="/"
-            className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-platinum/40 transition-colors hover:text-cyan-glow focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-cyan-glow"
-          >
-            <span aria-hidden="true">←</span> Public_Nexus
-          </Link>
+          <div className="flex flex-wrap items-center gap-4">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-platinum/40 transition-colors hover:text-cyan-glow focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-cyan-glow"
+            >
+              <span aria-hidden="true">←</span> Public_Nexus
+            </Link>
+            <Link
+              href="/appchains"
+              className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-cyan-glow/70 transition-colors hover:text-cyan-glow focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-cyan-glow"
+            >
+              AppChain_Registry <span aria-hidden="true">→</span>
+            </Link>
+          </div>
           <div className="flex items-start gap-4">
             <div className="mt-1 flex h-11 w-11 shrink-0 items-center justify-center border border-cyan-glow/40 bg-cyan-glow/10 text-cyan-glow shadow-[0_0_20px_rgba(15,255,255,0.1)]">
               <ShieldCheck className="h-5 w-5" aria-hidden="true" />

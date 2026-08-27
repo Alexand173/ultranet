@@ -75,6 +75,34 @@ cargo build --release --locked --bin ultranet-auth
 
 The CLI keeps the Dilithium private key local, requests a fresh challenge, and writes the public `POST /api/auth/login` JSON payload. It accepts both the generated hex-encoded `sovereign_keys.json` format and the local owner backup format with byte-array `public_key` and `private_key` fields. Submit that payload with a private cookie jar or import it through the `CLI_SIGNED_PAYLOAD` mode on the browser `/login` page, as documented in [`../CLI_AUTH_SIGNING.md`](../CLI_AUTH_SIGNING.md). Do not copy the key file or the CLI signing binary to the VPS. The browser import accepts only the public login fields, keeps the pasted payload in memory, and clears it after a successful session.
 
+## AppChain registry migration
+
+The first AppChain prototype stored four-field configs and anchors without a treasury, fee, anchor number, or proof metadata. Run the migrator once before starting the production binary against an existing database. It refuses to run while `ultranet.service` or an `UltraNet` process is active, writes raw `appchain_configs` and `appchain_anchors` records first, and is a dry run unless `--apply` is supplied.
+
+Build the node and migration utility from the same source revision, install both binaries, stop the service, take a complete database archive, then apply the registry migration:
+
+```bash
+cargo build --release --locked --bin UltraNet --bin ultranet-appchain-migrate
+sudo install -o root -g root -m 0755 target/release/UltraNet /opt/ultranet/target/release/UltraNet
+sudo install -o root -g root -m 0755 target/release/ultranet-appchain-migrate /opt/ultranet/target/release/ultranet-appchain-migrate
+sudo systemctl stop ultranet.service
+
+BACKUP_ROOT="/var/backups/ultranet/appchain-$(date -u +%Y%m%dT%H%M%SZ)"
+sudo install -d -o root -g root -m 0700 "$BACKUP_ROOT"
+sudo tar --xattrs --acls --numeric-owner -C /var/lib -czf "$BACKUP_ROOT/ultranet-db.tar.gz" ultranet
+sudo /opt/ultranet/target/release/ultranet-appchain-migrate \
+  --db-path /var/lib/ultranet \
+  --backup-dir "$BACKUP_ROOT/registry" \
+  --apply
+
+sudo systemctl daemon-reload
+sudo systemctl restart ultranet.service
+sudo systemctl --no-pager --full status ultranet.service
+curl --fail http://127.0.0.1:8081/api/stats
+```
+
+The raw registry backup contains `manifest.json` plus JSONL records with the exact original Sled key/value bytes. Legacy anchors are retained as `is_test=true` with `fee_charged=0`; the old schema had no treasury debit contract, so the migration never invents historical production spend. Keep both the raw registry backup and full database archive until post-restart verification is complete. The checked-in wrapper [`../scripts/migrate_appchain_registry.sh`](../scripts/migrate_appchain_registry.sh) invokes the installed release migrator and supports the same dry-run/`--apply` flow.
+
 ## systemd
 
 Install the release binary under `/opt/ultranet/target/release/UltraNet`, copy `public/` to `/opt/ultranet/public`, and run it as a dedicated `ultranet` user.

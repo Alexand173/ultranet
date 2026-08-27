@@ -1128,9 +1128,85 @@ async fn manual_prune(state: web::Data<AppState>) -> impl Responder {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateAppChainRequest {
     pub name: String,
+    /// A display owner address or alias. The node derives a separate treasury
+    /// address and never accepts a caller-selected treasury account.
     pub owner: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AppChainView {
+    pub id: u32,
+    pub name: String,
+    pub owner: String,
+    /// Dedicated real L1 treasury address. Fund it using a standard transfer.
+    pub account_address: String,
+    pub genesis_root: String,
+    pub anchor_fee: String,
+    pub balance: String,
+    pub anchor_spend: String,
+    pub anchor_count: u64,
+    pub latest_anchor_at: Option<u64>,
+    pub latest_state_root: Option<String>,
+    pub anchor_availability: &'static str,
+    pub proof_scheme: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AppChainOverviewTotals {
+    pub anchor_count: u64,
+    pub anchor_spend: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AppChainOverviewResponse {
+    pub success: bool,
+    pub chains: Vec<AppChainView>,
+    pub totals: AppChainOverviewTotals,
+    pub anchor_availability: &'static str,
+    pub proof_scheme: &'static str,
+    pub updated_at: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AppChainListResponse {
+    pub success: bool,
+    pub chains: Vec<AppChainView>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateAppChainResponse {
+    pub success: bool,
+    pub message: String,
+    pub chain_id: u32,
+    pub chain: AppChainView,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AppChainAnchorResponse {
+    pub success: bool,
+    pub message: String,
+    pub chain_id: u32,
+    pub anchor_number: u64,
+    pub state_root: String,
+    pub timestamp: u64,
+    pub anchor_count: u64,
+    pub charged_base_units: String,
+    pub balance: String,
+    pub account_address: String,
+    pub proof_scheme: &'static str,
+    pub is_test: bool,
+}
+
+/// JSON body retained only for the legacy client-supplied anchor route.
+/// The route rejects this body; production anchoring is server-generated.
+#[derive(Debug, Deserialize)]
+pub struct AppChainAnchorRequest {
+    pub chain_id: u32,
+    pub state_root: String,
+    pub proof: String,
 }
 
 /// JSON body submitted by the UltraWallet-backed validator onboarding portal.
@@ -1191,87 +1267,314 @@ async fn get_manifest() -> impl Responder {
     })
 }
 
+fn validate_appchain_name(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("AppChain name is required".to_string());
+    }
+    if name.len() > 80 {
+        return Err("AppChain name must be 80 characters or fewer".to_string());
+    }
+    if !name
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || " -_".contains(character))
+    {
+        return Err(
+            "AppChain name may contain only letters, numbers, spaces, hyphens, and underscores"
+                .to_string(),
+        );
+    }
+    Ok(name.to_string())
+}
+
 // Create AppChain
 async fn create_appchain(
     state: web::Data<AppState>,
     req: web::Json<CreateAppChainRequest>,
 ) -> impl Responder {
-    let blockchain = state.blockchain.read();
-    let mut registry = blockchain.appchain_registry.write();
-
-    let chain_id = (registry.active_chains.len() + 1) as u32;
-    let config = crate::appchain::AppChainConfig {
-        id: chain_id,
-        name: req.name.clone(),
-        owner: req.owner.clone(),
-        genesis_root: [0u8; 32],
+    let name = match validate_appchain_name(&req.name) {
+        Ok(name) => name,
+        Err(message) => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "success": false,
+                "message": message,
+            }))
+        }
     };
-
-    registry.register_chain(config);
-
-    // Keep AppChain state under the same durable root as the node.
-    let db_path = std::env::var("ULTRANET_DB_PATH").unwrap_or_else(|_| "ultranet_db".to_string());
-    let _runtime = crate::appchain::AppChainRuntime::new(chain_id, &db_path);
-
-    HttpResponse::Ok().json(serde_json::json!({
-        "success": true,
-        "message": format!("AppChain #{} ('{}') created successfully!", chain_id, req.name),
-        "chain_id": chain_id
-    }))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AppChainAnchorRequest {
-    pub chain_id: u32,
-    pub state_root: String,
-    pub proof: String,
-}
-
-// Anchor AppChain state
-async fn anchor_appchain(
-    state: web::Data<AppState>,
-    req: web::Json<AppChainAnchorRequest>,
-) -> impl Responder {
-    let blockchain = state.blockchain.read();
-
-    // 1. Verifikuj ZK-FHE dokaz (Phase 4)
-    if req.proof.is_empty() {
+    let owner = req.owner.trim();
+    if owner.is_empty() || owner.len() > 120 {
         return HttpResponse::BadRequest().json(serde_json::json!({
             "success": false,
-            "message": "ZK-FHE Proof missing!"
+            "message": "AppChain owner is required and must be 120 characters or fewer",
+        }));
+    }
+    let blockchain = state.blockchain.read();
+    let mut registry = blockchain.appchain_registry.write();
+    let chain_id = match registry.next_chain_id() {
+        Ok(chain_id) => chain_id,
+        Err(message) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "success": false,
+                "message": message,
+            }))
+        }
+    };
+    let config = crate::appchain::AppChainConfig {
+        id: chain_id,
+        name,
+        owner: owner.to_string(),
+        account_address: crate::appchain::derive_appchain_treasury_address(chain_id),
+        genesis_root: [0u8; 32],
+        anchor_fee: crate::appchain::DEFAULT_APPCHAIN_ANCHOR_FEE,
+        anchor_spend: 0,
+        anchor_count: 0,
+        latest_anchor_at: None,
+        latest_state_root: None,
+    };
+
+    if let Err(message) = blockchain.storage.save_appchain_config(&config) {
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "message": format!("Unable to persist AppChain config: {message}"),
+        }));
+    }
+    if let Err(message) = registry.register_chain(config.clone()) {
+        let _ = blockchain.storage.delete_appchain_config(chain_id);
+        return HttpResponse::Conflict().json(serde_json::json!({
+            "success": false,
+            "message": message,
+        }));
+    }
+    drop(registry);
+
+    // Keep AppChain state under the same durable root as the node. If the
+    // isolated runtime cannot open, roll back the registry record instead of
+    // panicking after the config has been persisted.
+    let db_path = std::env::var("ULTRANET_DB_PATH").unwrap_or_else(|_| "ultranet_db".to_string());
+    if let Err(error) = crate::appchain::AppChainRuntime::try_new(chain_id, &db_path) {
+        let _ = blockchain.storage.delete_appchain_config(chain_id);
+        blockchain
+            .appchain_registry
+            .write()
+            .active_chains
+            .remove(&chain_id);
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "message": format!("Unable to open AppChain runtime: {error}"),
         }));
     }
 
-    println!(
-        "⚓ L1: Anchoring AppChain #{} with state root {}...",
-        req.chain_id, req.state_root
-    );
+    HttpResponse::Ok().json(CreateAppChainResponse {
+        success: true,
+        message: format!(
+            "AppChain #{} ('{}') created successfully!",
+            config.id, config.name
+        ),
+        chain_id,
+        chain: appchain_view(&blockchain, &config),
+    })
+}
 
-    // 2. STARK Verifikacija
-    let stark = &blockchain.stark_engine;
-    let dummy_proof = crate::stark_engine::StarkProof {
-        root: [0; 32],
-        evaluations: vec![],
-        authentication_paths: vec![],
-        trace_commitment: [0; 32],
+fn test_anchoring_enabled() -> bool {
+    cfg!(debug_assertions)
+        && matches!(
+            env::var("ULTRANET_ENABLE_TEST_ANCHORING").as_deref(),
+            Ok("1") | Ok("true") | Ok("TRUE") | Ok("yes") | Ok("YES")
+        )
+}
+
+const APPCHAIN_PROOF_SCHEME: &str = "SHA3-256 server state commitment v1";
+
+fn appchain_anchor_availability() -> &'static str {
+    "production"
+}
+
+fn appchain_view(
+    blockchain: &UltraBlockchain,
+    config: &crate::appchain::AppChainConfig,
+) -> AppChainView {
+    AppChainView {
+        id: config.id,
+        name: config.name.clone(),
+        owner: config.owner.clone(),
+        account_address: config.account_address.clone(),
+        genesis_root: hex::encode(config.genesis_root),
+        anchor_fee: config.anchor_fee.to_string(),
+        balance: blockchain.get_appchain_treasury_balance(config).to_string(),
+        anchor_spend: config.anchor_spend.to_string(),
+        anchor_count: config.anchor_count,
+        latest_anchor_at: config.latest_anchor_at,
+        latest_state_root: config.latest_state_root.clone(),
+        anchor_availability: appchain_anchor_availability(),
+        proof_scheme: APPCHAIN_PROOF_SCHEME,
+    }
+}
+
+fn appchain_views(
+    blockchain: &UltraBlockchain,
+    registry: &crate::appchain::AppChainRegistry,
+) -> Vec<AppChainView> {
+    let mut chains = registry.active_chains.values().collect::<Vec<_>>();
+    chains.sort_by_key(|config| config.id);
+    chains
+        .into_iter()
+        .map(|config| appchain_view(blockchain, config))
+        .collect()
+}
+
+fn now_seconds() -> u64 {
+    chrono::Utc::now().timestamp().max(0) as u64
+}
+
+async fn anchor_appchain(state: web::Data<AppState>, path: web::Path<u32>) -> impl Responder {
+    run_appchain_anchor(state, path.into_inner(), false).await
+}
+
+async fn legacy_anchor_appchain(
+    _state: web::Data<AppState>,
+    _req: web::Json<AppChainAnchorRequest>,
+) -> impl Responder {
+    HttpResponse::NotImplemented().json(serde_json::json!({
+        "success": false,
+        "message": "Use POST /api/appchain/{chain_id}/anchor; client-supplied roots and proofs are not accepted."
+    }))
+}
+
+// Development-only compatibility path. It uses the same server-side state and
+// proof pipeline, but is labelled as a test result for local UI QA.
+async fn anchor_appchain_test(state: web::Data<AppState>, path: web::Path<u32>) -> impl Responder {
+    if !test_anchoring_enabled() {
+        return HttpResponse::NotImplemented().json(serde_json::json!({
+            "success": false,
+            "message": "Test-only AppChain anchoring is disabled. Set ULTRANET_ENABLE_TEST_ANCHORING=true for development only."
+        }));
+    }
+    run_appchain_anchor(state, path.into_inner(), true).await
+}
+
+async fn run_appchain_anchor(
+    state: web::Data<AppState>,
+    chain_id: u32,
+    is_test: bool,
+) -> HttpResponse {
+    let blockchain = state.blockchain.read();
+    let mut registry = blockchain.appchain_registry.write();
+    let Some(previous_config) = registry.get_chain(chain_id).cloned() else {
+        return HttpResponse::NotFound().json(serde_json::json!({
+            "success": false,
+            "message": format!("AppChain #{chain_id} was not found"),
+        }));
+    };
+    let db_path = env::var("ULTRANET_DB_PATH").unwrap_or_else(|_| "ultranet_db".to_string());
+    let runtime = match crate::appchain::AppChainRuntime::try_new(chain_id, &db_path) {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "success": false,
+                "message": format!("Unable to open AppChain runtime: {error}"),
+            }))
+        }
+    };
+    let snapshot = match runtime.snapshot_state() {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "success": false,
+                "message": format!("Unable to snapshot AppChain state: {error}"),
+            }))
+        }
+    };
+    let timestamp = now_seconds();
+    let anchor_number = match previous_config.anchor_count.checked_add(1) {
+        Some(anchor_number) => anchor_number,
+        None => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "success": false,
+                "message": format!("AppChain #{chain_id} anchor count overflowed"),
+            }))
+        }
+    };
+    let proof = runtime.create_anchor_proof(
+        &snapshot,
+        anchor_number,
+        &previous_config.account_address,
+        previous_config.anchor_fee,
+        timestamp,
+    );
+    if let Err(error) = runtime.verify_anchor_proof(&snapshot, &proof) {
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "message": format!("Server-generated AppChain proof failed verification: {error}"),
+        }));
+    }
+    let proof_json = match serde_json::to_string(&proof) {
+        Ok(proof) => proof,
+        Err(error) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "success": false,
+                "message": format!("Unable to encode AppChain proof: {error}"),
+            }))
+        }
+    };
+    let treasury_balance = blockchain.get_appchain_treasury_balance(&previous_config);
+    let (updated_config, anchor) = match registry.preview_anchor(
+        chain_id,
+        treasury_balance,
+        hex::encode(snapshot.state_root),
+        proof_json,
+        timestamp,
+        is_test,
+    ) {
+        Ok(result) => result,
+        Err(message) => {
+            return HttpResponse::PaymentRequired().json(serde_json::json!({
+                "success": false,
+                "message": message,
+            }))
+        }
     };
 
-    if stark.verify_low_degree(&dummy_proof) {
-        println!("✅ L1: AppChain ZK-FHE transition verified!");
-
-        let mut registry = blockchain.appchain_registry.write();
-        registry.record_anchor(crate::appchain::factory::AnchoredState {
-            chain_id: req.chain_id,
-            state_root: req.state_root.clone(),
-            proof: req.proof.clone(),
-            timestamp: chrono::Utc::now().timestamp() as u64,
-        });
+    if let Err(error) = blockchain.storage.save_appchain_config(&updated_config) {
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "message": format!("Unable to persist AppChain treasury debit: {error}"),
+        }));
+    }
+    if let Err(error) = blockchain.storage.save_appchain_anchor(&anchor) {
+        let _ = blockchain.storage.save_appchain_config(&previous_config);
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "message": format!("Unable to persist AppChain anchor: {error}"),
+        }));
+    }
+    if let Err(message) = registry.apply_anchor(updated_config.clone(), anchor.clone()) {
+        let _ = blockchain.storage.save_appchain_config(&previous_config);
+        let _ = blockchain.storage.delete_appchain_anchor(&anchor);
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "message": format!("Unable to apply AppChain anchor: {message}"),
+        }));
     }
 
-    HttpResponse::Ok().json(serde_json::json!({
-        "success": true,
-        "message": format!("AppChain #{} state anchored to L1 with ZK-FHE verification!", req.chain_id)
-    }))
+    let balance = blockchain.get_appchain_treasury_balance(&updated_config);
+    HttpResponse::Ok().json(AppChainAnchorResponse {
+        success: true,
+        message: if is_test {
+            format!("AppChain #{chain_id} test anchor completed.")
+        } else {
+            format!("AppChain #{chain_id} anchored with server-verified state proof.")
+        },
+        chain_id,
+        anchor_number: anchor.anchor_number,
+        state_root: anchor.state_root,
+        timestamp: anchor.timestamp,
+        anchor_count: updated_config.anchor_count,
+        charged_base_units: anchor.fee_charged.to_string(),
+        balance: balance.to_string(),
+        account_address: updated_config.account_address,
+        proof_scheme: APPCHAIN_PROOF_SCHEME,
+        is_test,
+    })
 }
 
 // Get anchoring history
@@ -1569,17 +1872,48 @@ pub async fn list_approval_journal(
     }))
 }
 
+fn appchain_overview_totals(
+    blockchain: &UltraBlockchain,
+    registry: &crate::appchain::AppChainRegistry,
+) -> AppChainOverviewTotals {
+    let chains = appchain_views(blockchain, registry);
+    AppChainOverviewTotals {
+        anchor_count: chains
+            .iter()
+            .map(|chain| chain.anchor_count)
+            .fold(0, u64::saturating_add),
+        anchor_spend: chains
+            .iter()
+            .filter_map(|chain| chain.anchor_spend.parse::<u64>().ok())
+            .fold(0, u64::saturating_add)
+            .to_string(),
+    }
+}
+
 // Get AppChain list
 async fn list_appchains(state: web::Data<AppState>) -> impl Responder {
     let blockchain = state.blockchain.read();
     let registry = blockchain.appchain_registry.read();
 
-    let chains: Vec<_> = registry.active_chains.values().collect();
+    HttpResponse::Ok().json(AppChainListResponse {
+        success: true,
+        chains: appchain_views(&blockchain, &registry),
+    })
+}
 
-    HttpResponse::Ok().json(serde_json::json!({
-        "success": true,
-        "chains": chains
-    }))
+// Get AppChain registry data used by the operator dashboard.
+async fn appchain_overview(state: web::Data<AppState>) -> impl Responder {
+    let blockchain = state.blockchain.read();
+    let registry = blockchain.appchain_registry.read();
+
+    HttpResponse::Ok().json(AppChainOverviewResponse {
+        success: true,
+        chains: appchain_views(&blockchain, &registry),
+        totals: appchain_overview_totals(&blockchain, &registry),
+        anchor_availability: appchain_anchor_availability(),
+        proof_scheme: APPCHAIN_PROOF_SCHEME,
+        updated_at: now_seconds(),
+    })
 }
 
 // Get AI Governance history
@@ -1878,7 +2212,17 @@ fn configure_admin_routes(cfg: &mut web::ServiceConfig) {
     .service(
         web::resource("/api/appchain/anchor")
             .wrap(from_fn(require_admin_token))
+            .route(web::post().to(legacy_anchor_appchain)),
+    )
+    .service(
+        web::resource("/api/appchain/{chain_id}/anchor")
+            .wrap(from_fn(require_admin_token))
             .route(web::post().to(anchor_appchain)),
+    )
+    .service(
+        web::resource("/api/appchain/{chain_id}/anchor/test")
+            .wrap(from_fn(require_admin_token))
+            .route(web::post().to(anchor_appchain_test)),
     );
 }
 
@@ -1912,7 +2256,9 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
     println!("   GET  /api/recursive/verify - Verify chain");
     println!("   GET  /api/stm/stats - Block-STM statistics");
     println!("   GET  /api/fhe/pk - FHE Public Key");
-    println!("   POST /api/appchain/create - Create L3 AppChain");
+    println!("   POST /api/appchain/create - Create L3 AppChain with dedicated treasury");
+    println!("   POST /api/appchain/{{chain_id}}/anchor - Server-verified AppChain anchor");
+    println!("   POST /api/appchain/{{chain_id}}/anchor/test - Development-only fixture anchor");
     println!("   POST /api/governance/propose - Submit validator proposal");
     println!("   POST /api/governance/approve - Submit version-3 sovereign approval");
     println!("   GET  /api/governance/proposals - List pending proposals");
@@ -1972,6 +2318,7 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
             .route("/api/fhe/stats", web::get().to(get_fhe_stats))
             .route("/api/state/size", web::get().to(get_state_size))
             .route("/api/appchain/list", web::get().to(list_appchains))
+            .route("/api/appchain/overview", web::get().to(appchain_overview))
             .route("/api/appchain/anchors", web::get().to(list_anchors))
             .route(
                 "/api/transactions/latest",
@@ -2164,6 +2511,7 @@ mod configuration_tests {
             "/api/state/prune",
             "/api/appchain/create",
             "/api/appchain/anchor",
+            "/api/appchain/1/anchor/test",
         ];
 
         for route in protected_routes {
