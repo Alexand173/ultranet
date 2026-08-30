@@ -8,7 +8,7 @@
 - **Release Version**: 7.1 "Sovereign"
 - **Native Token**: **$ULTRA**
 - **Genesis Block Height**: 1
-- **Genesis Allocation**: 1,000,000 $ULTRA (Move Module `UltraCoin`)
+- **Genesis Allocation**: 1,000,000.000000 $ULTRA = 1,000,000,000,000 `microULTRA` base units (Move Module `UltraCoin`; `decimals = 6`)
 - **Longevity Philosophy**: 100-Year "Century Curve" Protocol Stability.
 
 > **Source of Truth:** `genesis.json` is the definitive source for UltraNet sovereign genesis configuration, including the sovereign address, network parameters, and initial token allocations.
@@ -55,7 +55,7 @@ The AI-Governor manages the network's health autonomously to ensure century-long
 
 ### 4.1 AI Monetary Policy
 - **Halving Cycle**: Every **31,557,600 blocks** (~10 years).
-- **Base Reward**: 50 $ULTRA.
+- **Base Reward**: 50 protocol base units (`0.000050 $ULTRA` at six decimals); the existing runtime value is unchanged.
 - **Inflation Control**: Dynamic reward adjustments based on transaction density and sustainability scoring.
 
 ### 4.2 Move VM Integration

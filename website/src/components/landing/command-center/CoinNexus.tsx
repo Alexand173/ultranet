@@ -6,6 +6,8 @@ import { Sparkles } from "lucide-react";
 import { clsx } from "clsx";
 import Image from "next/image";
 import Link from "next/link";
+import { formatUltraAmount } from "@/lib/transaction-format";
+import { GENESIS_ALLOCATION_BASE_UNITS } from "@/lib/wallet-crypto";
 
 const SCRAMBLE_CHARS = "01$!@#%^&*()_+{}:<>?[]";
 const COIN_IMAGE = "/images/ultra-coin.png";
@@ -267,7 +269,7 @@ export default function CoinNexus({ className }: { className?: string }) {
       <div className="flex gap-14 font-mono z-10">
         <div className="text-center">
           <div className="text-xs lg:text-sm uppercase text-platinum/40 mb-1">Genesis Supply</div>
-          <div className="text-xl md:text-2xl lg:text-3xl font-medium text-cyan-glow">1.00B $ULTRA</div>
+          <div className="text-xl md:text-2xl lg:text-3xl font-medium text-cyan-glow">{formatUltraAmount(GENESIS_ALLOCATION_BASE_UNITS)} $ULTRA</div>
         </div>
         <div className="text-center">
           <div className="text-xs lg:text-sm uppercase text-platinum/40 mb-1">Staked</div>

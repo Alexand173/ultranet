@@ -35,6 +35,10 @@
   "allocation": {
     "sovereign_address": "3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c",
     "amount_ultra": 1000000,
+    "amount_base_units": 1000000000000,
+    "amount_display": "1,000,000.000000 $ULTRA",
+    "decimals": 6,
+    "base_unit_name": "microULTRA",
     "asset": "ULTRA",
     "initial_modules": [
       "UltraCoin",
@@ -42,7 +46,8 @@
     ]
   },
   "economics": {
-    "base_block_reward_ultra": 50,
+    "base_block_reward_base_units": 50,
+    "base_block_reward_display": "0.000050 $ULTRA",
     "halving_interval_blocks": 31557600,
     "target_block_time_seconds": 10,
     "initial_difficulty": 4,

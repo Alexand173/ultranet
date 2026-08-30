@@ -28,7 +28,7 @@ export default function TransactionReview({ account, recipient, amount, estimate
         <div className="grid gap-1 border-b border-cyan-glow/10 py-3 sm:grid-cols-[150px_1fr]"><dt className="text-platinum/45">Amount</dt><dd className="text-platinum/80">{formatUltraAmount(amount)} ULTRA</dd></div>
         <div className="grid gap-1 border-b border-cyan-glow/10 py-3 sm:grid-cols-[150px_1fr]"><dt className="text-platinum/45">Network fee</dt><dd className="text-platinum/80">{formatUltraAmount(BigInt(estimate.fee))} ULTRA</dd></div>
         <div className="grid gap-1 py-3 font-bold sm:grid-cols-[150px_1fr]"><dt className="text-platinum/70">Total deducted</dt><dd className="text-platinum">{formatUltraAmount(BigInt(estimate.total))} ULTRA</dd></div>
-        <div className="grid gap-1 py-1 sm:grid-cols-[150px_1fr]"><dt className="text-platinum/45">Balance after</dt><dd className="text-platinum/80">{formatUltraAmount(BigInt(account.balance) - BigInt(estimate.total))} ULTRA</dd></div>
+        <div className="grid gap-1 py-1 sm:grid-cols-[150px_1fr]"><dt className="text-platinum/45">Balance after</dt><dd className="text-platinum/80">{formatUltraAmount(BigInt(account.balanceBaseUnits) - BigInt(estimate.total))} ULTRA</dd></div>
       </dl>
 
       <div className="mt-6 flex items-start gap-3 border border-amber-300/30 bg-amber-300/10 p-4 text-xs leading-6 text-amber-100"><AlertTriangle className="mt-1 h-4 w-4 shrink-0" aria-hidden="true" /><p>Transfers cannot be reversed. Check the address and amount before sending.</p></div>

@@ -210,7 +210,7 @@ When the operator clicks **`Manual Mine`** (or `POST /api/mine` is called):
 6. **ZK/FHE Finalization:** Where private transfers or FHE operations occurred, proofs are attached (`last_fhe_proof`, Groth16 proof bytes).
 7. **DAG Vertex Creation:** The new block becomes a vertex in the **Mysticeti DAG**, referencing prior vertices per the Bullshark consensus rule.
 8. **Recursive Proof Update:** A new recursive SNARK is generated, cryptographically anchoring this block on top of the entire prior proof chain (`RecursiveZKEngine::create_recursive_proof`).
-9. **Reward Distribution:** `GENESIS_REWARD` (50.0 $ULTRA) is minted to the miner's address; all transaction fees in the block are also credited to the miner.
+9. **Reward Distribution:** `GENESIS_REWARD` (50 protocol base units = `0.000050 $ULTRA` at six decimals) is minted to the miner's address; all transaction fees in the block are also credited to the miner.
 
 ### 4.4 Step Four — Persistence & Broadcast
 
@@ -597,7 +597,7 @@ sequenceDiagram
 
 Rather than requiring a hard-fork vote every time network conditions shift, UltraNet's **AI Governor** continuously monitors chain telemetry and adjusts two levers within pre-approved bounds:
 
-* **Block reward** (baseline: `GENESIS_REWARD = 50.0 $ULTRA`).
+* **Block reward** (baseline: `GENESIS_REWARD = 50` base units = `0.000050 $ULTRA`).
 * **Difficulty / target block time**, in response to observed TPS and Block-STM conflict rates.
 
 ### 17.2 Sustainability Score
@@ -751,12 +751,18 @@ Base URL: `http://<host>:8081`
     "version": "7.1 Sovereign",
     "ticker": "$ULTRA",
     "genesis_allocation": 1000000,
+    "genesis_allocation_ultra": 1000000,
+    "genesis_allocation_base_units": 1000000000000,
+    "genesis_allocation_display": "1,000,000.000000 $ULTRA",
+    "decimals": 6,
     "sovereign_address": "3b8ef...",
     "multi_sig_threshold": "2-of-3",
     "signature_scheme": "Dilithium-5 (Lattice-based)",
     "signature_size": 4627,
     "halving_interval": 31557600,
     "base_reward": 50,
+    "base_reward_base_units": 50,
+    "base_reward_ultra": "0.000050",
     "consensus_protocol": "Bullshark / Mysticeti DAG",
     "verified_latency": "27.79µs / vertex"
   }
@@ -771,8 +777,8 @@ Base URL: `http://<host>:8081`
 
 |Parameter|Value|
 |-|-|
-|Genesis Allocation (Sovereign Vault)|1,000,000 $ULTRA|
-|Base Block Reward|50.0 $ULTRA|
+|Genesis Allocation (Sovereign Vault)|1,000,000.000000 $ULTRA (1,000,000,000,000 base units)|
+|Base Block Reward|50 base units = 0.000050 $ULTRA|
 |Halving Interval|31,557,600 seconds (≈ 1 Julian year)|
 |Multi-Sig Threshold|2-of-3|
 
@@ -807,7 +813,7 @@ There are exactly two independent revenue streams for a validator:
 
 ### 22.1 Stream 1 — Block Rewards
 
-Every block a validator successfully mines mints **50.0 $ULTRA** (subject to halving and AI Governor adjustment) directly to that validator's address.
+Every block a validator successfully mines mints **50 base units (`0.000050 $ULTRA`)** (subject to halving and AI Governor adjustment) directly to that validator's address.
 
 ### 22.2 Stream 2 — Transaction Fees
 
@@ -989,8 +995,8 @@ A: The anchoring transaction itself is subject to standard fee rules; the AppCha
 **Q: What happens if Block-STM detects a conflict?**
 A: The conflicting transaction(s) are automatically re-executed sequentially against the up-to-date state — no manual intervention is required, and the final state is identical to strict sequential execution.
 
-**Q: Is my Sovereign vault balance (1,000,000 $ULTRA) inflationary or fixed?**
-A: It is a one-time Genesis allocation. All subsequent supply growth comes exclusively from block rewards distributed to miners/validators, not from the Sovereign allocation.
+**Q: Is my Sovereign vault balance (1,000,000.000000 $ULTRA) inflationary or fixed?**
+A: It is a one-time Genesis allocation, represented on-chain as 1,000,000,000,000 base units. All subsequent supply growth comes exclusively from block rewards distributed to miners/validators, not from the Sovereign allocation.
 
 **Q: How do I know my node is externally reachable?**
 A: Run an external port-check tool (from outside your LAN) against your public IP on ports 8081 and 9000, as was verified during this deployment's setup.
@@ -1002,8 +1008,10 @@ A: Run an external port-check tool (from outside your LAN) against your public I
 ```text
 SOVEREIGN_ADDR         = 3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c
 SOVEREIGN_THRESHOLD    = 2                     (of 3 total owners)
-GENESIS_REWARD         = 50.0 $ULTRA
-GENESIS_ALLOCATION     = 1,000,000 $ULTRA
+ULTRA_DECIMALS         = 6
+ULTRA_BASE_UNITS       = 1,000,000 per whole $ULTRA
+GENESIS_REWARD         = 50 base units = 0.000050 $ULTRA
+GENESIS_ALLOCATION     = 1,000,000.000000 $ULTRA = 1,000,000,000,000 base units
 VERSION                = 1  (protocol tag "7.1 Sovereign")
 HALVING_INTERVAL       = 31,557,600 seconds
 SIGNATURE_SCHEME       = Dilithium-5

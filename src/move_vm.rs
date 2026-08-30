@@ -293,8 +293,10 @@ impl MoveVM {
             let to_addr = hex::encode(&args[1]);
 
             // Pročitaj iz Sled-a
-            let mut balance = self.get_persistent_balance(&to_addr);
-            balance += amount;
+            let balance = self
+                .get_persistent_balance(&to_addr)
+                .checked_add(amount)
+                .ok_or_else(|| "UltraCoin balance overflow".to_string())?;
 
             // Upiši u Sled
             self.save_persistent_resource(
@@ -322,8 +324,12 @@ impl MoveVM {
 
             let mut to_bal = self.get_persistent_balance(&to_addr);
 
-            from_bal -= amount;
-            to_bal += amount;
+            from_bal = from_bal
+                .checked_sub(amount)
+                .ok_or_else(|| "Insufficient persistent balance".to_string())?;
+            to_bal = to_bal
+                .checked_add(amount)
+                .ok_or_else(|| "UltraCoin balance overflow".to_string())?;
 
             self.save_persistent_resource(
                 &from_addr,
@@ -362,6 +368,28 @@ impl MoveVM {
         0
     }
 
+    /// Read the canonical persistent UltraCoin balance for an account.
+    ///
+    /// The value is stored as an unsigned little-endian u64 in the Move Coin
+    /// resource. Validation mode also sees the current candidate write set.
+    pub fn persistent_coin_balance(&self, owner: &str) -> u64 {
+        self.get_persistent_balance(owner)
+    }
+
+    /// Set a persistent UltraCoin balance for a protocol state transition.
+    ///
+    /// In validation mode this writes only to `write_set`; normal execution
+    /// persists the resource and updates the `move:` trie through the existing
+    /// resource writer. Callers must validate the transition before invoking it.
+    pub fn set_persistent_coin_balance(&mut self, owner: &str, balance: u64) -> Result<(), String> {
+        self.save_persistent_resource(
+            owner,
+            "Coin",
+            balance.to_le_bytes().to_vec(),
+            ResourceType::Coin,
+        )
+    }
+
     fn save_persistent_resource(
         &mut self,
         owner: &str,
@@ -391,7 +419,7 @@ impl MoveVM {
                 let mut trie = trie_lock.write();
                 let trie_key = format!("move:{}", key);
                 let shard_id = self.storage.storage.get_shard_id(trie_key.as_bytes());
-                let _ = trie.insert(shard_id, trie_key.as_bytes(), val.as_slice());
+                trie.insert(shard_id, trie_key.as_bytes(), val.as_slice())?;
             }
         }
         Ok(())

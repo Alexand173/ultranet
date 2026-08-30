@@ -24,7 +24,7 @@ export default function WalletLedger({ account, networkState, onRefresh, onLock 
         <div>
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-platinum/45">Available balance</p>
           <p className="mt-3 font-space-grotesk text-4xl font-bold tabular-nums tracking-tight text-platinum sm:text-5xl">
-            {account ? formatUltraAmount(BigInt(account.balance)) : "—"} <span className="font-mono text-base text-cyan-glow sm:text-lg">$ULTRA</span>
+            {account ? formatUltraAmount(BigInt(account.balanceBaseUnits)) : "—"} <span className="font-mono text-base text-cyan-glow sm:text-lg">$ULTRA</span>
           </p>
           <p className={`mt-3 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] ${networkState === "delayed" || networkState === "unavailable" ? "text-amber-200" : "text-platinum/45"}`}>
             <span className={`h-1.5 w-1.5 ${networkState === "connected" ? "bg-cyan-glow" : "bg-amber-200"}`} aria-hidden="true" />

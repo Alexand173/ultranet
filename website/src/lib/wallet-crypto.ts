@@ -12,6 +12,10 @@ export const WALLET_KDF_ITERATIONS = 310_000 as const;
 export const WALLET_KDF_SALT_BYTES = 16 as const;
 export const WALLET_AES_IV_BYTES = 12 as const;
 export const ULTRA_DECIMALS = 6 as const;
+export const ULTRA_BASE_UNITS_PER_ULTRA = 1_000_000 as const;
+export const GENESIS_ALLOCATION_ULTRA = 1_000_000 as const;
+export const GENESIS_ALLOCATION_BASE_UNITS =
+  GENESIS_ALLOCATION_ULTRA * ULTRA_BASE_UNITS_PER_ULTRA;
 
 const KEY_DERIVATION_DOMAIN = new TextEncoder().encode("UltraNet/Dilithium5/keygen/v1");
 

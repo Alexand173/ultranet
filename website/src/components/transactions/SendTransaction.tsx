@@ -25,7 +25,7 @@ export default function SendTransaction({ account, recipient, amountInput, estim
   const recipientError = touched.recipient && recipient.trim() && !isUltraAddress(recipient) ? "Enter a valid UltraNet address." : "";
   const amountError = touched.amount ? parsedAmount.error ?? "" : "";
   const totalCost = estimate ? BigInt(estimate.total) : null;
-  const balance = BigInt(account.balance);
+  const balance = BigInt(account.balanceBaseUnits);
   const insufficient = totalCost !== null && totalCost > balance;
   const canReview = Boolean(isUltraAddress(recipient) && parsedAmount.value !== null && estimate && !estimateError && !insufficient);
 

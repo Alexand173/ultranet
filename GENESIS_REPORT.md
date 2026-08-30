@@ -10,7 +10,8 @@
 The network has been successfully initialized with a **Multi-Sig Threshold Security** protocol.
 
 *   **Sovereign Address:** `0x3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c`
-*   **Genesis Supply:** `1,000,000.00 $ULTRA`
+*   **Genesis Supply:** `1,000,000.000000 $ULTRA`
+*   **Genesis Base Units:** `1,000,000,000,000 microULTRA` (`decimals = 6`)
 *   **Security Model:** **2-of-3 Multi-Signature** (Dilithium-5 Quantum-Secure).
 *   **Status:** Immutable & Multi-Sig Protected.
 
@@ -28,7 +29,7 @@ The `AIGovernor` is now managing the protocol with a century-long security horiz
 *   **Longevity Projection:** Secure through **July 2126**.
 *   **Economic Strategy:** Dynamic AI-driven emission (EMA-based difficulty and reward adjustments).
 *   **Current Difficulty:** `4`
-*   **Block Reward (Era 0):** `50 $ULTRA`
+*   **Block Reward (Era 0):** `50 base units` (`0.000050 $ULTRA` at six decimals); the runtime constant is intentionally unchanged.
 
 ---
 

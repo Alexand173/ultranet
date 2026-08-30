@@ -196,7 +196,7 @@ export default function TransactionPage({ returnTo }: { returnTo?: string }) {
 
   const handleReview = () => {
     if (!account || draft.amountBaseUnits === null || !draft.feeEstimate) return;
-    if (BigInt(draft.feeEstimate.total) > BigInt(account.balance)) {
+    if (BigInt(draft.feeEstimate.total) > BigInt(account.balanceBaseUnits)) {
       setTransferError("The amount and fee exceed your available balance.");
       return;
     }

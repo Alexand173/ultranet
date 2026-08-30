@@ -9,7 +9,9 @@ use std::collections::HashMap;
 use crate::appchain::{AnchoredState, AppChainConfig};
 use crate::bls_aggregation::ValidatorInfo;
 use crate::dag_mysticeti::{MysticetiVertex, ValidatorStats};
-use crate::{Transaction, UltraBlock, ValidatorApprovalRecord, ValidatorJoinProposalData};
+use crate::{
+    Transaction, TransactionPayload, UltraBlock, ValidatorApprovalRecord, ValidatorJoinProposalData,
+};
 
 pub const INITIAL_SHARD_COUNT: u8 = 16;
 
@@ -31,6 +33,7 @@ pub struct Storage {
     pub auth_sessions: Tree,
     pub appchain_configs: Tree,
     pub appchain_anchors: Tree,
+    pub supply_corrections: Tree,
     pub move_modules: Tree,
     pub move_resources: Tree,
     pub fhe_keys: Tree,
@@ -68,6 +71,7 @@ impl Storage {
             auth_sessions: db.open_tree("auth_sessions")?,
             appchain_configs: db.open_tree("appchain_configs")?,
             appchain_anchors: db.open_tree("appchain_anchors")?,
+            supply_corrections: db.open_tree("supply_corrections")?,
             move_modules: db.open_tree("move_modules")?,
             move_resources: db.open_tree("move_resources")?,
             fhe_keys: db.open_tree("fhe_keys")?,
@@ -81,6 +85,9 @@ impl Storage {
                 .rebuild_approval_journal_index()
                 .map_err(sled::Error::Unsupported)?;
         }
+        storage
+            .reconcile_supply_correction_markers()
+            .map_err(sled::Error::Unsupported)?;
         Ok(storage)
     }
 
@@ -96,6 +103,22 @@ impl Storage {
     }
 
     pub fn save_block(&self, block: &UltraBlock) -> Result<(), sled::Error> {
+        // Validate/reserve correction-marker ownership before writing any
+        // block data. This keeps a conflicting one-time correction from being
+        // persisted under a different transaction identity and also makes a
+        // remote block self-describing after restart.
+        for tx in &block.transactions {
+            if let TransactionPayload::SovereignSupplyCorrection { correction_id, .. } = &tx.payload
+            {
+                let tx_hash = tx.get_hash();
+                if !self.supply_correction_matches_or_reserve(correction_id, &tx_hash)? {
+                    return Err(sled::Error::Unsupported(
+                        "supply correction marker is bound to another transaction".into(),
+                    ));
+                }
+            }
+        }
+
         let key = block.index.to_be_bytes();
         let value = bincode::serialize(block).unwrap();
         self.blocks.insert(key, value)?;
@@ -242,6 +265,101 @@ impl Storage {
             .and_then(|value| value.as_ref().try_into().ok())
     }
 
+    fn reconcile_supply_correction_markers(&self) -> Result<(), String> {
+        let markers = self
+            .supply_corrections
+            .iter()
+            .map(|item| item.map_err(|error| error.to_string()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut removed_orphans = false;
+        for (correction_id, transaction_hash) in markers {
+            let correction_id: [u8; 32] = correction_id
+                .as_ref()
+                .try_into()
+                .map_err(|_| "supply correction ID must be exactly 32 bytes".to_string())?;
+            let transaction_hash: [u8; 32] =
+                transaction_hash.as_ref().try_into().map_err(|_| {
+                    "supply correction transaction hash must be exactly 32 bytes".to_string()
+                })?;
+            let is_live = self
+                .get_transaction(&transaction_hash)
+                .is_some_and(|transaction| {
+                    matches!(
+                        transaction.payload,
+                        TransactionPayload::SovereignSupplyCorrection {
+                            correction_id: transaction_id,
+                            ..
+                        } if transaction_id == correction_id
+                    )
+                });
+            if !is_live {
+                self.supply_corrections
+                    .remove(correction_id)
+                    .map_err(|error| error.to_string())?;
+                removed_orphans = true;
+            }
+        }
+        if removed_orphans {
+            self.db.flush().map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub fn has_supply_correction(&self, correction_id: &[u8; 32]) -> bool {
+        self.supply_corrections
+            .contains_key(correction_id)
+            .unwrap_or(false)
+    }
+
+    pub fn reserve_supply_correction(
+        &self,
+        correction_id: &[u8; 32],
+        transaction_hash: &[u8; 32],
+    ) -> Result<bool, sled::Error> {
+        match self.supply_corrections.compare_and_swap(
+            correction_id,
+            None as Option<&[u8]>,
+            Some(transaction_hash.as_slice()),
+        )? {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    pub fn supply_correction_matches_or_reserve(
+        &self,
+        correction_id: &[u8; 32],
+        transaction_hash: &[u8; 32],
+    ) -> Result<bool, sled::Error> {
+        if let Some(existing) = self.get_supply_correction_hash(correction_id) {
+            return Ok(existing == *transaction_hash);
+        }
+        self.reserve_supply_correction(correction_id, transaction_hash)
+    }
+
+    pub fn delete_supply_correction_if_matches(
+        &self,
+        correction_id: &[u8; 32],
+        transaction_hash: &[u8; 32],
+    ) -> Result<bool, sled::Error> {
+        match self.supply_corrections.compare_and_swap(
+            correction_id,
+            Some(transaction_hash.as_slice()),
+            None as Option<&[u8]>,
+        )? {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    pub fn get_supply_correction_hash(&self, correction_id: &[u8; 32]) -> Option<[u8; 32]> {
+        self.supply_corrections
+            .get(correction_id)
+            .ok()
+            .flatten()
+            .and_then(|value| value.as_ref().try_into().ok())
+    }
+
     pub fn reserve_nullifier(
         &self,
         nullifier: &[u8; 32],
@@ -314,8 +432,7 @@ impl Storage {
         let key = address.as_bytes();
         let shard_id = self.get_shard_id(key);
         if let Some(value) = self.state_shards[shard_id as usize].get(key).ok().flatten() {
-            let mut bytes = [0u8; 8];
-            bytes.copy_from_slice(&value[0..8]);
+            let bytes: [u8; 8] = value.as_ref().try_into().ok()?;
             return Some(u64::from_be_bytes(bytes));
         }
         None
@@ -719,6 +836,9 @@ impl Storage {
         self.auth_sessions.clear()?;
         self.appchain_configs.clear()?;
         self.appchain_anchors.clear()?;
+        self.supply_corrections.clear()?;
+        self.move_modules.clear()?;
+        self.move_resources.clear()?;
         Ok(())
     }
 
@@ -748,6 +868,7 @@ impl Clone for Storage {
             auth_sessions: self.auth_sessions.clone(),
             appchain_configs: self.appchain_configs.clone(),
             appchain_anchors: self.appchain_anchors.clone(),
+            supply_corrections: self.supply_corrections.clone(),
             move_modules: self.move_modules.clone(),
             move_resources: self.move_resources.clone(),
             fhe_keys: self.fhe_keys.clone(),

@@ -110,8 +110,17 @@ impl BlockSTM {
                 writes.push(tx.sender.clone());
 
                 let recipient_balance = self.memory.read(&tx.recipient, version).unwrap_or(0);
-                self.memory
-                    .write(&tx.recipient, recipient_balance + tx.amount);
+                let Some(new_recipient_balance) = recipient_balance.checked_add(tx.amount) else {
+                    return ExecutionResult {
+                        tx_hash: tx.get_hash(),
+                        success: false,
+                        gas_used: 0,
+                        reads,
+                        writes,
+                        version: self.memory.current_version(),
+                    };
+                };
+                self.memory.write(&tx.recipient, new_recipient_balance);
                 writes.push(tx.recipient.clone());
 
                 ExecutionResult {

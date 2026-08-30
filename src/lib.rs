@@ -58,6 +58,7 @@ pub use ai_governor::{AIGovernor, ChainMetrics};
 pub mod recursive_zk;
 pub use recursive_zk::RecursiveZKEngine;
 pub mod dag_mysticeti;
+pub mod supply_correction;
 pub use dag_mysticeti::{MysticetiDAG, MysticetiVertex, ValidatorStats};
 pub mod dag_bullshark;
 pub use dag_bullshark::BullsharkDAG;
@@ -614,7 +615,7 @@ pub mod zk_snarks {
         pub proof_type: ProofType,
     }
 
-    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
     pub enum ProofType {
         Transaction,
         Balance,
@@ -884,7 +885,7 @@ pub mod encrypted_mempool {
 // ============================================================
 // 6. GLAVNE STRUKTURE
 // ============================================================
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TransactionPayload {
     StandardTransfer,
     MoveCall {
@@ -904,9 +905,16 @@ pub enum TransactionPayload {
     ValidatorApproval {
         proposal_hash: [u8; 32],
     },
+    /// One-time, payload-bound correction of the genesis sovereign allocation.
+    SovereignSupplyCorrection {
+        correction_id: [u8; 32],
+        target_address: String,
+        expected_balance: u64,
+        target_balance: u64,
+    },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Transaction {
     pub sender: String,
     pub sender_public_key: Vec<u8>,
@@ -937,6 +945,38 @@ impl Transaction {
     }
 
     pub fn get_hash(&self) -> [u8; 32] {
+        // The correction digest is already a complete, domain-separated
+        // transaction identity. Keeping the hash and signature preimage equal
+        // prevents a signed correction from being indexed under a different
+        // canonical payload than the one validators verify.
+        if let TransactionPayload::SovereignSupplyCorrection {
+            correction_id,
+            target_address,
+            expected_balance,
+            target_balance,
+        } = &self.payload
+        {
+            return supply_correction::canonical_message(
+                &self.sender,
+                &self.recipient,
+                self.amount,
+                self.fee,
+                self.timestamp,
+                &self.nullifier,
+                self.nonce,
+                self.gas_limit,
+                self.gas_price,
+                self.chain_id,
+                self.version,
+                correction_id,
+                target_address,
+                *expected_balance,
+                *target_balance,
+            )
+            .try_into()
+            .expect("supply correction digest must be exactly 32 bytes");
+        }
+
         let mut hasher = Sha3_256::new();
         hasher.update(self.sender.as_bytes());
         hasher.update(self.recipient.as_bytes());
@@ -1301,8 +1341,53 @@ impl std::fmt::Display for UltraWallet {
 // 8. IMPLEMENTACIJA BLOCKCHAIN-A
 // ============================================================
 impl UltraBlockchain {
-    pub const GENESIS_REWARD: u64 = 50;
+    /// Number of decimal places used when rendering whole $ULTRA amounts.
     pub const ULTRA_DECIMALS: u8 = 6;
+    /// Number of protocol base units in one whole $ULTRA.
+    pub const ULTRA_BASE_UNITS_PER_ULTRA: u64 = 1_000_000;
+    /// Human-readable name for one integer protocol unit.
+    pub const ULTRA_BASE_UNIT_NAME: &str = "microULTRA";
+    /// Existing block reward value in protocol base units, preserved for
+    /// compatibility. It is not multiplied by the denomination factor here.
+    pub const GENESIS_REWARD: u64 = 50;
+    /// Intended human-readable one-time sovereign genesis allocation.
+    pub const GENESIS_ALLOCATION_ULTRA: u64 = 1_000_000;
+    /// Intended genesis allocation represented in protocol base units.
+    pub const GENESIS_ALLOCATION_BASE_UNITS: u64 =
+        Self::GENESIS_ALLOCATION_ULTRA * Self::ULTRA_BASE_UNITS_PER_ULTRA;
+
+    /// Convert a whole-token amount to integer protocol base units without
+    /// allowing a `u64` overflow.
+    pub fn whole_ultra_to_base_units(amount_ultra: u64) -> Result<u64, String> {
+        amount_ultra
+            .checked_mul(Self::ULTRA_BASE_UNITS_PER_ULTRA)
+            .ok_or_else(|| "whole $ULTRA amount exceeds the base-unit range".to_string())
+    }
+
+    /// Format integer protocol units as a fixed six-decimal $ULTRA amount.
+    /// This deliberately avoids floating-point conversion in API responses and
+    /// operator output.
+    pub fn format_base_units(balance_base_units: u64) -> String {
+        let whole = balance_base_units / Self::ULTRA_BASE_UNITS_PER_ULTRA;
+        let fraction = balance_base_units % Self::ULTRA_BASE_UNITS_PER_ULTRA;
+        let grouped_whole = whole
+            .to_string()
+            .chars()
+            .rev()
+            .collect::<Vec<_>>()
+            .chunks(3)
+            .map(|chunk| chunk.iter().collect::<String>())
+            .collect::<Vec<_>>()
+            .join(",")
+            .chars()
+            .rev()
+            .collect::<String>();
+        format!(
+            "{grouped_whole}.{:0>width$}",
+            fraction,
+            width = Self::ULTRA_DECIMALS as usize
+        )
+    }
     pub const DEFAULT_GAS_LIMIT: u64 = 10_000_000;
     pub const MAX_TRANSFER_AMOUNT: u64 = 1_000_000_000;
     pub const MAX_TRANSACTIONS_PER_BLOCK: usize = 1000;
@@ -1311,6 +1396,8 @@ impl UltraBlockchain {
     pub const LEGACY_TRANSACTION_VERSION: u32 = 1;
     pub const PAYLOAD_BOUND_TRANSACTION_VERSION: u32 = 2;
     pub const APPROVAL_BOUND_TRANSACTION_VERSION: u32 = 3;
+    pub const SUPPLY_CORRECTION_TRANSACTION_VERSION: u32 =
+        crate::supply_correction::SUPPLY_CORRECTION_TRANSACTION_VERSION;
     pub const L1_CHAIN_ID: u32 = 0;
 
     pub fn is_valid_address(address: &str) -> bool {
@@ -1331,6 +1418,7 @@ impl UltraBlockchain {
     pub const SOVEREIGN_ADDR: &str =
         "3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c";
     pub const SOVEREIGN_THRESHOLD: usize = 2;
+    pub const SOVEREIGN_SIGNATURE_BYTES: usize = 4_627;
 
     pub fn new(db_path: &str) -> Self {
         let storage = Arc::new(Storage::new(db_path).expect("Failed to open database"));
@@ -1375,7 +1463,11 @@ impl UltraBlockchain {
             vec![[0u8; 32]; 16],
         )));
 
-        if let Some(last_block) = storage.get_last_block() {
+        let has_existing_blocks = storage.get_last_block().is_some();
+        if has_existing_blocks {
+            let last_block = storage
+                .get_last_block()
+                .expect("last block must exist after presence check");
             let mut trie = state_trie_instance.write();
             for (i, root) in last_block.shard_roots.iter().enumerate() {
                 if i < trie.shards.len() {
@@ -1409,10 +1501,7 @@ impl UltraBlockchain {
             move_vm.set_stark(stark_engine_instance.clone());
         }
 
-        let mut trie_needs_rebuild = true;
-        if storage.get_last_block().is_some() {
-            trie_needs_rebuild = false;
-        }
+        let trie_needs_rebuild = !has_existing_blocks;
 
         let mut move_vm_guard = move_vm_instance.write();
         let sovereign_addr =
@@ -1428,8 +1517,11 @@ impl UltraBlockchain {
                 .deploy_module("UltraNFT", vec![0xDE, 0xAD, 0xBE, 0xEF], sovereign_addr)
                 .expect("Failed to deploy UltraNFT");
 
-            // Sovereignty: 1,000,000 $ULTRA for the Engineer
-            let mint_args = vec![1000000u64.to_le_bytes().to_vec(), sovereign_addr.to_vec()];
+            // Sovereignty: 1,000,000.000000 $ULTRA, represented in base units.
+            let mint_args = vec![
+                Self::GENESIS_ALLOCATION_BASE_UNITS.to_le_bytes().to_vec(),
+                sovereign_addr.to_vec(),
+            ];
             let _ = move_vm_guard.execute_function(sovereign_addr, "UltraCoin", "mint", mint_args);
         } else {
             println!(
@@ -1575,6 +1667,37 @@ impl UltraBlockchain {
 
         let chain: Vec<UltraBlock> = if existing_blocks.is_empty() {
             println!("💾 No existing blocks found, creating genesis block...");
+
+            // The Move bootstrap above is part of the initial account state. Make
+            // that state visible in the genesis roots before any block can be
+            // mined; otherwise historical block re-execution may read a current
+            // Move resource as the pre-state of the first transfer. Any durable
+            // account records staged before genesis (used by isolated migrations
+            // and tests) are included in the same canonical snapshot.
+            storage
+                .save_state(Self::SOVEREIGN_ADDR, Self::GENESIS_ALLOCATION_BASE_UNITS)
+                .expect("Failed to persist the genesis sovereign account state");
+            let genesis_state = storage.get_all_state();
+            for (address, balance) in &genesis_state {
+                let account_key = format!("acc:{address}");
+                let account_shard = storage.get_shard_id(account_key.as_bytes());
+                state_trie_instance
+                    .write()
+                    .insert(
+                        account_shard,
+                        account_key.as_bytes(),
+                        &balance.to_le_bytes(),
+                    )
+                    .expect("Failed to materialize a genesis account root");
+            }
+            let genesis_shard_roots = state_trie_instance
+                .read()
+                .shards
+                .iter()
+                .map(|shard| shard.root_hash)
+                .collect::<Vec<_>>();
+            let genesis_state_root = state_trie_instance.read().root_hash();
+
             let genesis = UltraBlock {
                 index: 0,
                 timestamp: genesis_time,
@@ -1583,8 +1706,8 @@ impl UltraBlockchain {
                 nonce: 0,
                 transactions: vec![],
                 merkle_root: [0; 32],
-                state_root: [0; 32],
-                shard_roots: vec![[0u8; 32]; 16],
+                state_root: genesis_state_root,
+                shard_roots: genesis_shard_roots,
                 aggregated_signature: None,
                 validator_set: validators_vec,
                 epoch: 0,
@@ -1612,6 +1735,28 @@ impl UltraBlockchain {
         // pri svakom restartu, iako su transakcije već izvršene ranije.
         let mut rebuilt_state: HashMap<String, u64> = HashMap::new();
         let mut rebuilt_merkle_tree = MerkleTree::new(256);
+        if trie_needs_rebuild {
+            // A database without blocks has no historical state to replay. The
+            // account shard is therefore the canonical pre-state for genesis.
+            for (address, balance) in storage.get_all_state() {
+                rebuilt_state.insert(address.clone(), balance);
+                rebuilt_merkle_tree.insert(address.as_bytes(), &balance.to_le_bytes());
+            }
+        } else if let Some(genesis) = chain.first() {
+            // For an existing chain, only read the account snapshot represented
+            // by the stored genesis roots; current state shards may be newer.
+            let genesis_account_key = format!("acc:{}", Self::SOVEREIGN_ADDR);
+            let genesis_trie =
+                ShardedStateTrie::new(storage.trie_shards.clone(), genesis.shard_roots.clone());
+            let genesis_shard = storage.get_shard_id(genesis_account_key.as_bytes());
+            if let Some(balance) = genesis_trie
+                .get(genesis_shard, genesis_account_key.as_bytes())
+                .and_then(|bytes| bytes.try_into().ok().map(u64::from_le_bytes))
+            {
+                rebuilt_state.insert(Self::SOVEREIGN_ADDR.to_string(), balance);
+                rebuilt_merkle_tree.insert(Self::SOVEREIGN_ADDR.as_bytes(), &balance.to_le_bytes());
+            }
+        }
         let mut rebuilt_history: Vec<[u8; 32]> = Vec::new();
         let mut rebuilt_nonces: HashMap<String, u64> = HashMap::new();
         let mut total_tx_count: u64 = 0;
@@ -1620,39 +1765,64 @@ impl UltraBlockchain {
 
         for block in &chain {
             for tx in &block.transactions {
-                let new_sender_balance = {
-                    let bal = rebuilt_state.entry(tx.sender.clone()).or_insert(1000);
-                    *bal = bal.saturating_sub(tx.amount + tx.fee);
-                    *bal
-                };
-                let new_recipient_balance = {
-                    let bal = rebuilt_state.entry(tx.recipient.clone()).or_insert(1000);
-                    *bal = bal.saturating_add(tx.amount);
-                    *bal
-                };
-                rebuilt_merkle_tree.insert(tx.sender.as_bytes(), &new_sender_balance.to_le_bytes());
-                rebuilt_merkle_tree.insert(
-                    tx.recipient.as_bytes(),
-                    &new_recipient_balance.to_le_bytes(),
-                );
+                if let TransactionPayload::SovereignSupplyCorrection {
+                    target_address,
+                    target_balance,
+                    ..
+                } = &tx.payload
+                {
+                    // A correction is not a transfer to `0x0`. Replaying it
+                    // as a zero-value transfer would materialize fake 1000-unit
+                    // accounts and lose the corrected sovereign balance.
+                    rebuilt_state.insert(target_address.clone(), *target_balance);
+                    rebuilt_merkle_tree
+                        .insert(target_address.as_bytes(), &target_balance.to_le_bytes());
 
-                // ✅ AŽURIRAJ MPT TRIE (samo ako je potreban rebuild)
-                if trie_needs_rebuild {
-                    let s_key = format!("acc:{}", tx.sender);
-                    let r_key = format!("acc:{}", tx.recipient);
-                    let s_shard = storage.get_shard_id(s_key.as_bytes());
-                    let r_shard = storage.get_shard_id(r_key.as_bytes());
-
-                    let _ = state_trie_instance.write().insert(
-                        s_shard,
-                        s_key.as_bytes(),
-                        &new_sender_balance.to_le_bytes(),
-                    );
-                    let _ = state_trie_instance.write().insert(
-                        r_shard,
-                        r_key.as_bytes(),
+                    if trie_needs_rebuild {
+                        let key = format!("acc:{target_address}");
+                        let shard = storage.get_shard_id(key.as_bytes());
+                        let _ = state_trie_instance.write().insert(
+                            shard,
+                            key.as_bytes(),
+                            &target_balance.to_le_bytes(),
+                        );
+                    }
+                } else {
+                    let new_sender_balance = {
+                        let bal = rebuilt_state.entry(tx.sender.clone()).or_insert(1000);
+                        *bal = bal.saturating_sub(tx.amount + tx.fee);
+                        *bal
+                    };
+                    let new_recipient_balance = {
+                        let bal = rebuilt_state.entry(tx.recipient.clone()).or_insert(1000);
+                        *bal = bal.saturating_add(tx.amount);
+                        *bal
+                    };
+                    rebuilt_merkle_tree
+                        .insert(tx.sender.as_bytes(), &new_sender_balance.to_le_bytes());
+                    rebuilt_merkle_tree.insert(
+                        tx.recipient.as_bytes(),
                         &new_recipient_balance.to_le_bytes(),
                     );
+
+                    // ✅ AŽURIRAJ MPT TRIE (samo ako je potreban rebuild)
+                    if trie_needs_rebuild {
+                        let s_key = format!("acc:{}", tx.sender);
+                        let r_key = format!("acc:{}", tx.recipient);
+                        let s_shard = storage.get_shard_id(s_key.as_bytes());
+                        let r_shard = storage.get_shard_id(r_key.as_bytes());
+
+                        let _ = state_trie_instance.write().insert(
+                            s_shard,
+                            s_key.as_bytes(),
+                            &new_sender_balance.to_le_bytes(),
+                        );
+                        let _ = state_trie_instance.write().insert(
+                            r_shard,
+                            r_key.as_bytes(),
+                            &new_recipient_balance.to_le_bytes(),
+                        );
+                    }
                 }
 
                 let next_nonce = tx.nonce.saturating_add(1);
@@ -1794,17 +1964,17 @@ impl UltraBlockchain {
         // Admission is serialized so two browser submissions cannot reserve the
         // same sender nonce or nullifier between validation and persistence.
         let _admission_guard = self.admission_lock.lock();
+        let is_supply_correction = matches!(
+            &tx.payload,
+            TransactionPayload::SovereignSupplyCorrection { .. }
+        );
 
         if let Some(existing) = self.storage.get_transaction_by_nullifier(&tx.nullifier) {
-            if existing.sender == tx.sender
-                && existing.sender_public_key == tx.sender_public_key
-                && existing.recipient == tx.recipient
-                && existing.amount == tx.amount
-                && existing.fee == tx.fee
-                && existing.nonce == tx.nonce
-                && existing.signature == tx.signature
-            {
+            if existing == tx && !is_supply_correction {
                 return Ok(());
+            }
+            if existing == tx && is_supply_correction {
+                return Err("Supply correction is already pending or confirmed".to_string());
             }
             return Err("Transaction nullifier is already bound to different fields".to_string());
         }
@@ -1874,11 +2044,31 @@ impl UltraBlockchain {
         }
 
         let tx_hash = tx.get_hash();
+        let supply_correction_id = match &tx.payload {
+            TransactionPayload::SovereignSupplyCorrection { correction_id, .. } => {
+                Some(*correction_id)
+            }
+            _ => None,
+        };
+        if let Some(correction_id) = supply_correction_id {
+            if !self
+                .storage
+                .reserve_supply_correction(&correction_id, &tx_hash)
+                .map_err(|error| format!("Failed to reserve supply correction: {error}"))?
+            {
+                return Err("Supply correction is already pending or confirmed".to_string());
+            }
+        }
         if !self
             .storage
             .reserve_nullifier(&tx.nullifier, &tx_hash)
             .map_err(|error| format!("Failed to reserve transaction nullifier: {error}"))?
         {
+            if let Some(correction_id) = supply_correction_id {
+                let _ = self
+                    .storage
+                    .delete_supply_correction_if_matches(&correction_id, &tx_hash);
+            }
             return Err("Transaction nullifier is already pending or confirmed".to_string());
         }
 
@@ -1894,6 +2084,11 @@ impl UltraBlockchain {
                 let _ = self
                     .storage
                     .delete_nullifier_if_matches(&tx.nullifier, &tx_hash);
+                if let Some(correction_id) = supply_correction_id {
+                    let _ = self
+                        .storage
+                        .delete_supply_correction_if_matches(&correction_id, &tx_hash);
+                }
                 return Err(error);
             }
         }
@@ -1979,6 +2174,11 @@ impl UltraBlockchain {
         let _ = self
             .storage
             .delete_nullifier_if_matches(&tx.nullifier, &hash);
+        if let TransactionPayload::SovereignSupplyCorrection { correction_id, .. } = &tx.payload {
+            let _ = self
+                .storage
+                .delete_supply_correction_if_matches(correction_id, &hash);
+        }
         let mut pending_nonces = self.pending_nonces.write();
         if let Some(nonces) = pending_nonces.get_mut(&tx.sender) {
             nonces.remove(&tx.nonce);
@@ -2004,63 +2204,70 @@ impl UltraBlockchain {
         let is_payload_bound_validator_approval = tx.version
             == Self::APPROVAL_BOUND_TRANSACTION_VERSION
             && matches!(&tx.payload, TransactionPayload::ValidatorApproval { .. });
+        let is_supply_correction = tx.version == Self::SUPPLY_CORRECTION_TRANSACTION_VERSION
+            && supply_correction::is_supply_correction(&tx.payload);
 
         if tx.version != Self::LEGACY_TRANSACTION_VERSION
             && !is_payload_bound_validator_proposal
             && !is_payload_bound_validator_approval
+            && !is_supply_correction
         {
             return Err(format!("Unsupported transaction version! {}", tx.version));
+        }
+        if supply_correction::is_supply_correction(&tx.payload) && !is_supply_correction {
+            return Err("Sovereign supply correction requires transaction version 4".to_string());
         }
         if tx.version == Self::LEGACY_TRANSACTION_VERSION && tx.chain_id != Self::L1_CHAIN_ID {
             return Err("Legacy version 1 transactions require L1 chain_id 0".to_string());
         }
-
-        if tx.sender == Self::SOVEREIGN_ADDR {
-            let msg = self.create_transaction_message(tx);
-            let sig_size = 4627; // Dilithium-5
-
-            let mut valid_signatures = 0;
-            let mut used_keys = std::collections::HashSet::new();
-
-            for chunk in tx.signature.chunks(sig_size) {
-                if chunk.len() != sig_size {
-                    continue;
-                }
-                for (idx, pk) in self.sovereign_owners.iter().enumerate() {
-                    if !used_keys.contains(&idx) && QuantumKeyPair::verify(pk, &msg, chunk) {
-                        valid_signatures += 1;
-                        used_keys.insert(idx);
-                        break;
-                    }
-                }
+        if is_supply_correction {
+            supply_correction::validate_payload(&tx.payload)?;
+            if tx.sender != Self::SOVEREIGN_ADDR {
+                return Err("Sovereign supply correction sender is invalid".to_string());
             }
-
-            if valid_signatures < Self::SOVEREIGN_THRESHOLD {
-                return Err(format!(
-                "🛡️ Sovereign Security Triggered: Insufficient signatures! (Valid: {}, Required: {})", 
-                valid_signatures, Self::SOVEREIGN_THRESHOLD
-            ));
-            }
-            println!(
-                "✅ Sovereign Multi-Sig verified (Threshold: {}/{})",
-                valid_signatures,
-                self.sovereign_owners.len()
-            );
-        } else {
-            // 1. Provera da li se prijavljeni sender poklapa sa priloženim javnim ključem.
-            let expected_sender = QuantumKeyPair::address_from_public_key(&tx.sender_public_key);
-            if expected_sender != tx.sender {
+            if tx.chain_id != Self::L1_CHAIN_ID
+                || tx.recipient != supply_correction::SUPPLY_CORRECTION_RECIPIENT
+                || tx.amount != 0
+                || tx.fee != 0
+                || !tx.sender_public_key.is_empty()
+                || !tx.zk_proof.is_empty()
+                || tx.proof_type != ProofType::Ownership
+                || tx.gas_limit != supply_correction::SUPPLY_CORRECTION_GAS_LIMIT
+                || tx.gas_price != supply_correction::SUPPLY_CORRECTION_GAS_PRICE
+            {
                 return Err(
-                    "Sender address does not match the public key (identity spoofing)!".to_string(),
+                    "Sovereign supply correction must use the fixed zero-value L1 envelope"
+                        .to_string(),
                 );
             }
-
-            // 2. Verifikacija Dilithium potpisa (Quantum-Secure)
-            let msg = self.create_transaction_message(tx);
-            if !QuantumKeyPair::verify(&tx.sender_public_key, &msg, &tx.signature) {
-                return Err("Invalid Dilithium signature!".to_string());
+            if let TransactionPayload::SovereignSupplyCorrection {
+                expected_balance, ..
+            } = &tx.payload
+            {
+                let current_balance = self.get_unadjusted_balance(Self::SOVEREIGN_ADDR);
+                if current_balance != *expected_balance {
+                    return Err(format!(
+                        "Sovereign supply correction expected {} base units, found {}",
+                        expected_balance, current_balance
+                    ));
+                }
             }
         }
+        if matches!(
+            &tx.payload,
+            TransactionPayload::MoveCall {
+                module_name,
+                function_name,
+                ..
+            } if module_name == "UltraCoin" && function_name == "mint"
+        ) {
+            return Err(
+                "UltraCoin mint is restricted to genesis bootstrap and the versioned supply correction transaction"
+                    .to_string(),
+            );
+        }
+
+        self.verify_transaction_signature(tx)?;
 
         // 2. Verifikacija ZK Dokaza
         match &tx.payload {
@@ -2088,8 +2295,9 @@ impl UltraBlockchain {
                 }
             }
             TransactionPayload::ValidatorJoinProposal { .. }
-            | TransactionPayload::ValidatorApproval { .. } => {
-                // Governance transactions skip ZK-SNARKs (Identity is verified via Dilithium)
+            | TransactionPayload::ValidatorApproval { .. }
+            | TransactionPayload::SovereignSupplyCorrection { .. } => {
+                // Governance transactions skip ZK-SNARKs (identity is verified via Dilithium).
             }
         }
         // NAPOMENA: Nullifier se NE registruje ovde! `validate_transaction` se poziva
@@ -2110,9 +2318,8 @@ impl UltraBlockchain {
             .amount
             .checked_add(tx.fee)
             .ok_or_else(|| "Transaction total exceeds the maximum integer value".to_string())?;
-        let state = self.state.read();
-        let sender_balance = state.get(&tx.sender).unwrap_or(&0);
-        if total_cost > *sender_balance {
+        let sender_balance = self.get_unadjusted_balance(&tx.sender);
+        if total_cost > sender_balance {
             return Err(format!(
                 "Insufficient balance! Current: {}, required: {}",
                 sender_balance, total_cost
@@ -2172,6 +2379,125 @@ impl UltraBlockchain {
         }
 
         Ok(())
+    }
+
+    /// Verify transaction authorization without consulting mutable account
+    /// balances. Block validation calls this for every inbound transaction so a
+    /// remote block cannot bypass sovereign signature policy.
+    fn verify_transaction_signature(&self, tx: &Transaction) -> Result<(), String> {
+        if tx.sender == Self::SOVEREIGN_ADDR {
+            let message = self.create_transaction_message(tx);
+            let signature_size = Self::SOVEREIGN_SIGNATURE_BYTES;
+            if tx.signature.is_empty() || tx.signature.len() % signature_size != 0 {
+                return Err(format!(
+                    "🛡️ Sovereign Security Triggered: signature must contain complete {}-byte Dilithium-5 signatures",
+                    signature_size
+                ));
+            }
+
+            let mut valid_signatures = 0;
+            let mut used_owner_indexes = HashSet::new();
+            let mut unique_owner_keys = HashSet::new();
+            for public_key in &self.sovereign_owners {
+                if !unique_owner_keys.insert(public_key) {
+                    return Err("Sovereign owner set contains duplicate public keys".to_string());
+                }
+            }
+
+            for signature in tx.signature.chunks(signature_size) {
+                for (index, public_key) in self.sovereign_owners.iter().enumerate() {
+                    if !used_owner_indexes.contains(&index)
+                        && QuantumKeyPair::verify(public_key, &message, signature)
+                    {
+                        valid_signatures += 1;
+                        used_owner_indexes.insert(index);
+                        break;
+                    }
+                }
+            }
+
+            if valid_signatures < self.sovereign_threshold {
+                return Err(format!(
+                    "🛡️ Sovereign Security Triggered: Insufficient signatures! (Valid: {}, Required: {})",
+                    valid_signatures, self.sovereign_threshold
+                ));
+            }
+            println!(
+                "✅ Sovereign Multi-Sig verified (Threshold: {}/{})",
+                valid_signatures,
+                self.sovereign_owners.len()
+            );
+            return Ok(());
+        }
+
+        let expected_sender = QuantumKeyPair::address_from_public_key(&tx.sender_public_key);
+        if expected_sender != tx.sender {
+            return Err(
+                "Sender address does not match the public key (identity spoofing)!".to_string(),
+            );
+        }
+        let message = self.create_transaction_message(tx);
+        if !QuantumKeyPair::verify(&tx.sender_public_key, &message, &tx.signature) {
+            return Err("Invalid Dilithium signature!".to_string());
+        }
+        Ok(())
+    }
+
+    fn validate_block_transaction_authorization(&self, tx: &Transaction) -> Result<(), String> {
+        let is_payload_bound_validator_proposal = tx.version
+            == Self::PAYLOAD_BOUND_TRANSACTION_VERSION
+            && matches!(
+                &tx.payload,
+                TransactionPayload::ValidatorJoinProposal { .. }
+            );
+        let is_payload_bound_validator_approval = tx.version
+            == Self::APPROVAL_BOUND_TRANSACTION_VERSION
+            && matches!(&tx.payload, TransactionPayload::ValidatorApproval { .. });
+        let is_supply_correction = tx.version == Self::SUPPLY_CORRECTION_TRANSACTION_VERSION
+            && supply_correction::is_supply_correction(&tx.payload);
+
+        if tx.version != Self::LEGACY_TRANSACTION_VERSION
+            && !is_payload_bound_validator_proposal
+            && !is_payload_bound_validator_approval
+            && !is_supply_correction
+        {
+            return Err(format!("Unsupported transaction version! {}", tx.version));
+        }
+        if supply_correction::is_supply_correction(&tx.payload) && !is_supply_correction {
+            return Err("Sovereign supply correction requires transaction version 4".to_string());
+        }
+        if tx.version == Self::LEGACY_TRANSACTION_VERSION && tx.chain_id != Self::L1_CHAIN_ID {
+            return Err("Legacy version 1 transactions require L1 chain_id 0".to_string());
+        }
+        if is_supply_correction {
+            supply_correction::validate_payload(&tx.payload)?;
+            if tx.sender != Self::SOVEREIGN_ADDR
+                || tx.chain_id != Self::L1_CHAIN_ID
+                || tx.recipient != supply_correction::SUPPLY_CORRECTION_RECIPIENT
+                || tx.amount != 0
+                || tx.fee != 0
+                || !tx.sender_public_key.is_empty()
+                || !tx.zk_proof.is_empty()
+                || tx.proof_type != ProofType::Ownership
+                || tx.gas_limit != supply_correction::SUPPLY_CORRECTION_GAS_LIMIT
+                || tx.gas_price != supply_correction::SUPPLY_CORRECTION_GAS_PRICE
+            {
+                return Err("invalid sovereign supply correction transaction envelope".to_string());
+            }
+        }
+        if matches!(
+            &tx.payload,
+            TransactionPayload::MoveCall {
+                module_name,
+                function_name,
+                ..
+            } if module_name == "UltraCoin" && function_name == "mint"
+        ) {
+            return Err(
+                "UltraCoin mint is restricted to genesis bootstrap and the versioned supply correction transaction".to_string(),
+            );
+        }
+        self.verify_transaction_signature(tx)
     }
 
     pub fn get_account_nonce(&self, address: &str) -> u64 {
@@ -2267,6 +2593,32 @@ impl UltraBlockchain {
 
             if let TransactionPayload::ValidatorApproval { proposal_hash } = &tx.payload {
                 hasher.update(proposal_hash);
+            }
+        } else if tx.version == supply_correction::SUPPLY_CORRECTION_TRANSACTION_VERSION {
+            if let TransactionPayload::SovereignSupplyCorrection {
+                correction_id,
+                target_address,
+                expected_balance,
+                target_balance,
+            } = &tx.payload
+            {
+                return supply_correction::canonical_message(
+                    &tx.sender,
+                    &tx.recipient,
+                    tx.amount,
+                    tx.fee,
+                    tx.timestamp,
+                    &tx.nullifier,
+                    tx.nonce,
+                    tx.gas_limit,
+                    tx.gas_price,
+                    tx.chain_id,
+                    tx.version,
+                    correction_id,
+                    target_address,
+                    *expected_balance,
+                    *target_balance,
+                );
             }
         }
 
@@ -2401,16 +2753,19 @@ impl UltraBlockchain {
             shard_groups[shard_id as usize].push(tx);
         }
 
-        // ✅ SEED BLOCK-STM MEMORY (Consistent with Global State)
+        // ✅ SEED BLOCK-STM MEMORY (Consistent with canonical account state)
+        // Use the same legacy-state/Move-resource resolver as admission. A
+        // fresh node may have the genesis balance only in the Move Coin
+        // resource until the first protocol transition materializes it in the
+        // legacy map.
         {
-            let state = self.state.read();
             for (i, group) in shard_groups.iter().enumerate() {
                 // Očisti staru memoriju za ovu rundu rudarenja
                 self.sharded_stm[i].memory.rollback_to(0);
 
                 for tx in group {
-                    let s_bal = state.get(&tx.sender).cloned().unwrap_or(0);
-                    let r_bal = state.get(&tx.recipient).cloned().unwrap_or(0);
+                    let s_bal = self.get_unadjusted_balance(&tx.sender);
+                    let r_bal = self.get_unadjusted_balance(&tx.recipient);
                     self.sharded_stm[i].memory.write(&tx.sender, s_bal);
                     self.sharded_stm[i].memory.write(&tx.recipient, r_bal);
                 }
@@ -2508,7 +2863,7 @@ impl UltraBlockchain {
         // ✅ IZRAČUNAJ STATE ROOT RE-EGZEKUCIJOM (IZOLOVANO)
         // (Ovo je neophodno jer state_root mora biti post-execution, a ne smemo trajno menjati state pre validacije)
         let (state_root, shard_roots) =
-            self.reexecute_block_for_validation(&new_block, &last_block);
+            self.reexecute_block_for_validation(&new_block, &last_block)?;
         new_block.state_root = state_root;
         new_block.shard_roots = shard_roots;
 
@@ -2848,8 +3203,13 @@ impl UltraBlockchain {
             let value = &tx.amount.to_le_bytes();
             merkle_tree.insert(key, value);
 
-            // Dodaj payload u verifikaciju stabla ako je potrebno
-            if let TransactionPayload::MoveCall { .. } = &tx.payload {
+            // Bind payload-bearing protocol operations into the block Merkle
+            // root. Legacy version-1 transfers retain their historical shape.
+            if matches!(
+                &tx.payload,
+                TransactionPayload::MoveCall { .. }
+                    | TransactionPayload::SovereignSupplyCorrection { .. }
+            ) {
                 merkle_tree.insert(format!("{}:move", tx.sender).as_bytes(), &tx.get_hash());
             }
         }
@@ -2895,6 +3255,13 @@ impl UltraBlockchain {
         }
         println!("✅ Gas OK");
 
+        for tx in &block.transactions {
+            if let Err(error) = self.validate_block_transaction_authorization(tx) {
+                println!("❌ Transaction authorization failed: {error}");
+                return false;
+            }
+        }
+
         // 7. Provera veličine
         if block.size > self.max_block_size {
             println!(
@@ -2939,7 +3306,14 @@ impl UltraBlockchain {
         println!("✅ Total difficulty SKIPPED (Mysticeti DAG)");
 
         // 9. PROVERA STATE ROOT-A (MPT)
-        let (candidate_root, _candidate_shards) = self.reexecute_block_for_validation(block, prev);
+        let (candidate_root, _candidate_shards) =
+            match self.reexecute_block_for_validation(block, prev) {
+                Ok(result) => result,
+                Err(error) => {
+                    println!("❌ State re-execution failed: {error}");
+                    return false;
+                }
+            };
         println!("   candidate_root: {}", hex::encode(candidate_root));
         println!("   block.state_root: {}", hex::encode(block.state_root));
 
@@ -2961,11 +3335,17 @@ impl UltraBlockchain {
         &self,
         block: &UltraBlock,
         prev: &UltraBlock,
-    ) -> ([u8; 32], Vec<[u8; 32]>) {
+    ) -> Result<([u8; 32], Vec<[u8; 32]>), String> {
         let mut candidate_trie =
             ShardedStateTrie::new(self.storage.trie_shards.clone(), prev.shard_roots.clone());
         let mut candidate_balances: HashMap<String, u64> = HashMap::new(); // Potpuno izolovan
         let mut move_vm = self.move_vm.write();
+        // Every candidate write, including standard-transfer Coin resources,
+        // must stay in the validation write set until the block is accepted.
+        // Reset first so a prior rejected block cannot leak candidate values
+        // into this re-execution, then keep validation writes off Sled.
+        move_vm.set_validation_mode(false);
+        move_vm.set_validation_mode(true);
 
         // 1. Podeli transakcije
         let (zk_txs, move_txs): (Vec<_>, Vec<_>) = block
@@ -2986,19 +3366,13 @@ impl UltraBlockchain {
                 self.sharded_stm[i].memory.rollback_to(0);
                 for tx in group {
                     // Fetch sender
-                    let s_key = format!("acc:{}", tx.sender);
-                    let s_shard = self.storage.get_shard_id(s_key.as_bytes());
-                    let s_bal = candidate_trie
-                        .get(s_shard, s_key.as_bytes())
-                        .map(|b| u64::from_le_bytes(b.try_into().unwrap_or([0; 8])))
+                    let s_bal = self
+                        .candidate_account_balance(&candidate_trie, &move_vm, &tx.sender)
                         .unwrap_or(0);
 
                     // Fetch recipient
-                    let r_key = format!("acc:{}", tx.recipient);
-                    let r_shard = self.storage.get_shard_id(r_key.as_bytes());
-                    let r_bal = candidate_trie
-                        .get(r_shard, r_key.as_bytes())
-                        .map(|b| u64::from_le_bytes(b.try_into().unwrap_or([0; 8])))
+                    let r_bal = self
+                        .candidate_account_balance(&candidate_trie, &move_vm, &tx.recipient)
                         .unwrap_or(0);
 
                     self.sharded_stm[i].memory.write(&tx.sender, s_bal);
@@ -3037,12 +3411,19 @@ impl UltraBlockchain {
         for (i, shard_results) in results.into_iter().enumerate() {
             for (tx, result) in shard_groups[i].iter().zip(shard_results.iter()) {
                 if result.success {
+                    let total_debit = tx.amount.checked_add(tx.fee).ok_or_else(|| {
+                        "transfer total exceeds the maximum integer value".to_string()
+                    })?;
                     let sender_bal = candidate_balances.entry(tx.sender.clone()).or_insert(0);
-                    *sender_bal = sender_bal.saturating_sub(tx.amount + tx.fee);
+                    *sender_bal = sender_bal.checked_sub(total_debit).ok_or_else(|| {
+                        "transfer sender balance underflowed during re-execution".to_string()
+                    })?;
                     let s_bal = *sender_bal;
 
                     let rec_bal = candidate_balances.entry(tx.recipient.clone()).or_insert(0);
-                    *rec_bal = rec_bal.saturating_add(tx.amount);
+                    *rec_bal = rec_bal.checked_add(tx.amount).ok_or_else(|| {
+                        "transfer recipient balance overflowed during re-execution".to_string()
+                    })?;
                     let r_bal = *rec_bal;
 
                     let s_key = format!("acc:{}", tx.sender);
@@ -3050,8 +3431,10 @@ impl UltraBlockchain {
                     let s_shard = self.storage.get_shard_id(s_key.as_bytes());
                     let r_shard = self.storage.get_shard_id(r_key.as_bytes());
 
-                    let _ = candidate_trie.insert(s_shard, s_key.as_bytes(), &s_bal.to_le_bytes());
-                    let _ = candidate_trie.insert(r_shard, r_key.as_bytes(), &r_bal.to_le_bytes());
+                    candidate_trie.insert(s_shard, s_key.as_bytes(), &s_bal.to_le_bytes())?;
+                    candidate_trie.insert(r_shard, r_key.as_bytes(), &r_bal.to_le_bytes())?;
+                    move_vm.set_persistent_coin_balance(&tx.sender, s_bal)?;
+                    move_vm.set_persistent_coin_balance(&tx.recipient, r_bal)?;
                 }
             }
         }
@@ -3076,6 +3459,58 @@ impl UltraBlockchain {
                         .unwrap_or(AccountAddress::ZERO);
                     let _ = move_vm.deploy_module(name, bytecode.clone(), sender_addr);
                 }
+                TransactionPayload::SovereignSupplyCorrection {
+                    correction_id,
+                    target_address,
+                    expected_balance,
+                    target_balance,
+                } => {
+                    if tx.version != Self::SUPPLY_CORRECTION_TRANSACTION_VERSION {
+                        return Err(
+                            "Sovereign supply correction requires transaction version 4".into()
+                        );
+                    }
+                    supply_correction::validate_payload(&tx.payload)?;
+                    if tx.sender != Self::SOVEREIGN_ADDR
+                        || tx.chain_id != Self::L1_CHAIN_ID
+                        || tx.recipient != supply_correction::SUPPLY_CORRECTION_RECIPIENT
+                        || tx.amount != 0
+                        || tx.fee != 0
+                    {
+                        return Err(
+                            "invalid sovereign supply correction transaction envelope".into()
+                        );
+                    }
+                    let target_key = format!("acc:{target_address}");
+                    let target_shard = self.storage.get_shard_id(target_key.as_bytes());
+                    let current_balance = self
+                        .candidate_account_balance(&candidate_trie, &move_vm, target_address)
+                        .or_else(|| {
+                            // Compatibility for a pre-canonical chain whose
+                            // historical roots never materialized the Move-only
+                            // sovereign account. New chains always carry this
+                            // account in their genesis roots.
+                            (!candidate_trie
+                                .get(target_shard, target_key.as_bytes())
+                                .is_some())
+                            .then(|| self.get_unadjusted_balance(target_address))
+                        })
+                        .unwrap_or(0);
+                    if current_balance != *expected_balance {
+                        return Err(format!(
+                            "supply correction expected {} base units, found {}",
+                            expected_balance, current_balance
+                        ));
+                    }
+                    let _ = correction_id;
+                    self.apply_candidate_account_balance(
+                        &mut candidate_trie,
+                        &mut move_vm,
+                        target_address,
+                        *target_balance,
+                    )?;
+                    candidate_balances.insert(target_address.clone(), *target_balance);
+                }
                 TransactionPayload::ValidatorJoinProposal { .. }
                 | TransactionPayload::ValidatorApproval { .. } => {
                     // Governance events handled in transition layer
@@ -3087,21 +3522,18 @@ impl UltraBlockchain {
         // Nagrade i fee-jevi
         if let Some(first_validator) = block.validator_set.first() {
             let validator_address = hex::encode(first_validator);
+            let starting_balance = self
+                .candidate_account_balance(&candidate_trie, &move_vm, &validator_address)
+                .unwrap_or(0);
             let bal = candidate_balances
                 .entry(validator_address.clone())
-                .or_insert_with(|| {
-                    let v_key = format!("acc:{}", validator_address);
-                    let v_shard = self.storage.get_shard_id(v_key.as_bytes());
-                    candidate_trie
-                        .get(v_shard, v_key.as_bytes())
-                        .map(|b| u64::from_le_bytes(b.try_into().unwrap_or([0; 8])))
-                        .unwrap_or(0)
-                });
+                .or_insert(starting_balance);
             *bal = bal.saturating_add(block.block_reward);
 
             let v_key = format!("acc:{}", validator_address);
             let v_shard = self.storage.get_shard_id(v_key.as_bytes());
-            let _ = candidate_trie.insert(v_shard, v_key.as_bytes(), &bal.to_le_bytes());
+            candidate_trie.insert(v_shard, v_key.as_bytes(), &bal.to_le_bytes())?;
+            move_vm.set_persistent_coin_balance(&validator_address, *bal)?;
         }
 
         let total_fees: u64 = block.transactions.iter().map(|tx| tx.fee).sum();
@@ -3109,21 +3541,18 @@ impl UltraBlockchain {
             let fee_per_validator = total_fees / block.validator_set.len() as u64;
             for validator_pk in &block.validator_set {
                 let validator_address = hex::encode(validator_pk);
+                let starting_balance = self
+                    .candidate_account_balance(&candidate_trie, &move_vm, &validator_address)
+                    .unwrap_or(0);
                 let bal = candidate_balances
                     .entry(validator_address.clone())
-                    .or_insert_with(|| {
-                        let f_key = format!("acc:{}", validator_address);
-                        let f_shard = self.storage.get_shard_id(f_key.as_bytes());
-                        candidate_trie
-                            .get(f_shard, f_key.as_bytes())
-                            .map(|b| u64::from_le_bytes(b.try_into().unwrap_or([0; 8])))
-                            .unwrap_or(0)
-                    });
+                    .or_insert(starting_balance);
                 *bal = bal.saturating_add(fee_per_validator);
 
                 let f_key = format!("acc:{}", validator_address);
                 let f_shard = self.storage.get_shard_id(f_key.as_bytes());
-                let _ = candidate_trie.insert(f_shard, f_key.as_bytes(), &bal.to_le_bytes());
+                candidate_trie.insert(f_shard, f_key.as_bytes(), &bal.to_le_bytes())?;
+                move_vm.set_persistent_coin_balance(&validator_address, *bal)?;
             }
         }
 
@@ -3139,8 +3568,62 @@ impl UltraBlockchain {
 
         let root = candidate_trie.root_hash();
         let shard_roots = candidate_trie.shards.iter().map(|s| s.root_hash).collect();
-        (root, shard_roots)
+        Ok((root, shard_roots))
     }
+    fn candidate_account_balance(
+        &self,
+        candidate_trie: &ShardedStateTrie,
+        _move_vm: &MoveVM,
+        address: &str,
+    ) -> Option<u64> {
+        let key = format!("acc:{address}");
+        let shard = self.storage.get_shard_id(key.as_bytes());
+        candidate_trie
+            .get(shard, key.as_bytes())
+            .and_then(|bytes| bytes.try_into().ok().map(u64::from_le_bytes))
+    }
+
+    fn apply_account_balance(
+        &self,
+        address: &str,
+        balance: u64,
+        move_vm: &mut MoveVM,
+    ) -> Result<(), String> {
+        // Keep every account representation at the same transition boundary:
+        // legacy state, durable state shard, Move Coin resource, and the
+        // consensus MPT account key.
+        self.storage
+            .save_state(address, balance)
+            .map_err(|error| format!("failed to persist account state: {error}"))?;
+        move_vm.set_persistent_coin_balance(address, balance)?;
+        self.state.write().insert(address.to_string(), balance);
+
+        let mut merkle_tree = self.merkle_tree.write();
+        merkle_tree.insert(address.as_bytes(), &balance.to_le_bytes());
+        drop(merkle_tree);
+
+        let key = format!("acc:{address}");
+        let shard = self.storage.get_shard_id(key.as_bytes());
+        self.state_trie
+            .write()
+            .insert(shard, key.as_bytes(), &balance.to_le_bytes())?;
+        Ok(())
+    }
+
+    fn apply_candidate_account_balance(
+        &self,
+        candidate_trie: &mut ShardedStateTrie,
+        move_vm: &mut MoveVM,
+        address: &str,
+        balance: u64,
+    ) -> Result<(), String> {
+        let key = format!("acc:{address}");
+        let shard = self.storage.get_shard_id(key.as_bytes());
+        candidate_trie.insert(shard, key.as_bytes(), &balance.to_le_bytes())?;
+        move_vm.set_persistent_coin_balance(address, balance)?;
+        Ok(())
+    }
+
     // ============================================================
     // 8.6 AŽURIRANJE STANJA
     // ============================================================
@@ -3148,51 +3631,23 @@ impl UltraBlockchain {
         for tx in &block.transactions {
             match &tx.payload {
                 TransactionPayload::StandardTransfer => {
-                    // Smanji stanje pošiljaocu
-                    let new_sender_balance = {
-                        let mut state = self.state.write();
-                        let bal = state.entry(tx.sender.clone()).or_insert(0);
-                        *bal = bal.saturating_sub(tx.amount + tx.fee);
-                        *bal
-                    };
-
-                    // Povećaj stanje primaocu
-                    let new_recipient_balance = {
-                        let mut state = self.state.write();
-                        let bal = state.entry(tx.recipient.clone()).or_insert(0);
-                        *bal = bal.saturating_add(tx.amount);
-                        *bal
-                    };
-
-                    // Ažuriraj Merkle stablo stanja
-                    {
-                        let mut merkle_tree = self.merkle_tree.write();
-                        merkle_tree.insert(tx.sender.as_bytes(), &new_sender_balance.to_le_bytes());
-                        merkle_tree.insert(
-                            tx.recipient.as_bytes(),
-                            &new_recipient_balance.to_le_bytes(),
-                        );
-                    }
-
-                    // ✅ AŽURIRAJ MPT TRIE
-                    {
-                        let mut state_trie = self.state_trie.write();
-                        let s_key = format!("acc:{}", tx.sender);
-                        let r_key = format!("acc:{}", tx.recipient);
-                        let s_shard = self.storage.get_shard_id(s_key.as_bytes());
-                        let r_shard = self.storage.get_shard_id(r_key.as_bytes());
-
-                        let _ = state_trie.insert(
-                            s_shard,
-                            s_key.as_bytes(),
-                            &new_sender_balance.to_le_bytes(),
-                        );
-                        let _ = state_trie.insert(
-                            r_shard,
-                            r_key.as_bytes(),
-                            &new_recipient_balance.to_le_bytes(),
-                        );
-                    }
+                    let sender_balance = self.get_unadjusted_balance(&tx.sender);
+                    let recipient_balance = self.get_unadjusted_balance(&tx.recipient);
+                    let total_debit = tx
+                        .amount
+                        .checked_add(tx.fee)
+                        .expect("validated transfer total must not overflow");
+                    let new_sender_balance = sender_balance
+                        .checked_sub(total_debit)
+                        .expect("validated transfer sender balance must not underflow");
+                    let new_recipient_balance = recipient_balance
+                        .checked_add(tx.amount)
+                        .expect("validated transfer recipient balance must not overflow");
+                    let mut move_vm = self.move_vm.write();
+                    self.apply_account_balance(&tx.sender, new_sender_balance, &mut move_vm)
+                        .expect("validated sender balance update must persist");
+                    self.apply_account_balance(&tx.recipient, new_recipient_balance, &mut move_vm)
+                        .expect("validated recipient balance update must persist");
                 }
                 TransactionPayload::MoveCall {
                     module_address,
@@ -3212,6 +3667,15 @@ impl UltraBlockchain {
                     let mut move_vm = self.move_vm.write();
                     let _ = move_vm.deploy_module(name, bytecode.clone(), sender_addr);
                 }
+                TransactionPayload::SovereignSupplyCorrection {
+                    target_address,
+                    target_balance,
+                    ..
+                } => {
+                    let mut move_vm = self.move_vm.write();
+                    self.apply_account_balance(target_address, *target_balance, &mut move_vm)
+                        .expect("validated supply correction must persist");
+                }
                 TransactionPayload::ValidatorJoinProposal { .. }
                 | TransactionPayload::ValidatorApproval { .. } => {
                     // Handled at protocol addition layer
@@ -3223,20 +3687,12 @@ impl UltraBlockchain {
         if let Some(first_validator) = block.validator_set.first() {
             let validator_address = hex::encode(first_validator);
 
-            let reward_balance = {
-                let mut state = self.state.write();
-                let bal = state.entry(validator_address.clone()).or_insert(0);
-                *bal = bal.saturating_add(block.block_reward);
-                *bal
-            };
-
-            // ✅ AŽURIRAJ MPT TRIE
-            {
-                let mut state_trie = self.state_trie.write();
-                let v_key = format!("acc:{}", validator_address);
-                let v_shard = self.storage.get_shard_id(v_key.as_bytes());
-                let _ = state_trie.insert(v_shard, v_key.as_bytes(), &reward_balance.to_le_bytes());
-            }
+            let reward_balance = self
+                .get_unadjusted_balance(&validator_address)
+                .saturating_add(block.block_reward);
+            let mut move_vm = self.move_vm.write();
+            self.apply_account_balance(&validator_address, reward_balance, &mut move_vm)
+                .expect("validated block reward update must persist");
         }
 
         let total_fees: u64 = block.transactions.iter().map(|tx| tx.fee).sum();
@@ -3245,21 +3701,12 @@ impl UltraBlockchain {
             for validator_pk in &block.validator_set {
                 let validator_address = hex::encode(validator_pk);
 
-                let fee_balance = {
-                    let mut state = self.state.write();
-                    let bal = state.entry(validator_address.clone()).or_insert(0);
-                    *bal = bal.saturating_add(fee_per_validator);
-                    *bal
-                };
-
-                // ✅ AŽURIRAJ MPT TRIE
-                {
-                    let mut state_trie = self.state_trie.write();
-                    let f_key = format!("acc:{}", validator_address);
-                    let f_shard = self.storage.get_shard_id(f_key.as_bytes());
-                    let _ =
-                        state_trie.insert(f_shard, f_key.as_bytes(), &fee_balance.to_le_bytes());
-                }
+                let fee_balance = self
+                    .get_unadjusted_balance(&validator_address)
+                    .saturating_add(fee_per_validator);
+                let mut move_vm = self.move_vm.write();
+                self.apply_account_balance(&validator_address, fee_balance, &mut move_vm)
+                    .expect("validated fee distribution update must persist");
             }
         }
     }
@@ -3566,13 +4013,21 @@ impl UltraBlockchain {
     fn get_unadjusted_balance(&self, address: &str) -> u64 {
         // 1. Proveri legacy state (za kompatibilnost)
         let state = self.state.read();
-        let legacy_balance = *state.get(address).unwrap_or(&0);
-        if legacy_balance > 0 {
-            return legacy_balance;
+        if let Some(legacy_balance) = state.get(address) {
+            // An explicit zero is a real balance. Only fall back to the Move
+            // resource when the legacy account has never been materialized.
+            return *legacy_balance;
         }
         drop(state);
 
-        // 2. Proveri Move VM Resource (UltraCoin)
+        // 2. Use the durable account-state shard when the in-memory map has
+        // not materialized this account yet (for example after a partial
+        // restart before full block replay).
+        if let Some(persisted_balance) = self.storage.get_state(address) {
+            return persisted_balance;
+        }
+
+        // 3. Proveri Move VM Resource (UltraCoin)
         let clean_addr = address.strip_prefix("0x").unwrap_or(address);
         let vm = self.move_vm.read();
         let res_key = format!("{}:Coin", clean_addr);

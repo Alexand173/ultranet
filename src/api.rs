@@ -69,7 +69,12 @@ pub struct ApiResponse {
 #[derive(Debug, Serialize)]
 pub struct AccountResponse {
     pub address: String,
+    /// Compatibility field: integer base units, not whole $ULTRA.
     pub balance: u64,
+    /// Canonical explicit name for the integer account balance.
+    pub balance_base_units: u64,
+    /// Fixed-decimal human-readable representation derived from base units.
+    pub balance_ultra: String,
     pub nonce: u64,
     pub decimals: u8,
     pub updated_at: u64,
@@ -655,6 +660,8 @@ pub async fn get_balance(state: web::Data<AppState>, address: web::Path<String>)
         data: Some(serde_json::json!({
             "address": address,
             "balance": balance,
+            "balance_base_units": balance,
+            "balance_ultra": UltraBlockchain::format_base_units(balance),
             "decimals": UltraBlockchain::ULTRA_DECIMALS,
         })),
     })
@@ -676,9 +683,12 @@ pub async fn get_account(state: web::Data<AppState>, address: web::Path<String>)
         .last()
         .map(|block| block.timestamp)
         .unwrap_or_else(|| chrono::Utc::now().timestamp().max(0) as u64);
+    let balance = blockchain.get_balance(&address);
     let account = AccountResponse {
         address: address.clone(),
-        balance: blockchain.get_balance(&address),
+        balance,
+        balance_base_units: balance,
+        balance_ultra: UltraBlockchain::format_base_units(balance),
         nonce: blockchain.get_next_nonce(&address),
         decimals: UltraBlockchain::ULTRA_DECIMALS,
         updated_at,
@@ -1233,13 +1243,21 @@ pub struct ValidatorProposalRequest {
 pub struct ManifestResponse {
     pub version: String,
     pub ticker: String,
+    /// Compatibility field in whole $ULTRA units.
     pub genesis_allocation: u64,
+    pub genesis_allocation_ultra: u64,
+    pub genesis_allocation_base_units: u64,
+    pub genesis_allocation_display: String,
+    pub decimals: u8,
     pub sovereign_address: String,
     pub multi_sig_threshold: String,
     pub signature_scheme: String,
     pub signature_size: usize,
     pub halving_interval: u64,
+    /// Compatibility field: base block reward in protocol base units.
     pub base_reward: u64,
+    pub base_reward_base_units: u64,
+    pub base_reward_ultra: String,
     pub consensus_protocol: String,
     pub verified_latency: String,
 }
@@ -1249,13 +1267,22 @@ async fn get_manifest() -> impl Responder {
     let manifest = ManifestResponse {
         version: "7.1 Sovereign".to_string(),
         ticker: "$ULTRA".to_string(),
-        genesis_allocation: 1_000_000,
+        genesis_allocation: UltraBlockchain::GENESIS_ALLOCATION_ULTRA,
+        genesis_allocation_ultra: UltraBlockchain::GENESIS_ALLOCATION_ULTRA,
+        genesis_allocation_base_units: UltraBlockchain::GENESIS_ALLOCATION_BASE_UNITS,
+        genesis_allocation_display: format!(
+            "{} $ULTRA",
+            UltraBlockchain::format_base_units(UltraBlockchain::GENESIS_ALLOCATION_BASE_UNITS)
+        ),
+        decimals: UltraBlockchain::ULTRA_DECIMALS,
         sovereign_address: UltraBlockchain::SOVEREIGN_ADDR.to_string(),
         multi_sig_threshold: format!("{}-of-3", UltraBlockchain::SOVEREIGN_THRESHOLD),
         signature_scheme: "Dilithium-5 (Lattice-based)".to_string(),
         signature_size: 4627,
         halving_interval: 31_557_600,
         base_reward: UltraBlockchain::GENESIS_REWARD,
+        base_reward_base_units: UltraBlockchain::GENESIS_REWARD,
+        base_reward_ultra: UltraBlockchain::format_base_units(UltraBlockchain::GENESIS_REWARD),
         consensus_protocol: "Bullshark / Mysticeti DAG".to_string(),
         verified_latency: "27.79µs / vertex".to_string(),
     };
@@ -1663,6 +1690,116 @@ pub struct ValidatorApprovalRequest {
     /// Concatenated Dilithium-5 signatures from the sovereign owners.
     pub signature: Vec<u8>,
     pub version: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SupplyCorrectionRequest {
+    /// Fixed protocol correction identifier, encoded as 64 hexadecimal chars.
+    pub correction_id: String,
+    pub target_address: String,
+    pub expected_balance_base_units: u64,
+    pub target_balance_base_units: u64,
+    pub timestamp: u64,
+    pub nonce: u64,
+    pub nullifier: Vec<u8>,
+    /// Concatenated Dilithium-5 signatures from two distinct sovereign owners.
+    pub signature: Vec<u8>,
+    pub version: u32,
+}
+
+fn parse_fixed_32_hex(value: &str, field: &str) -> Result<[u8; 32], String> {
+    let bytes = hex::decode(value.trim()).map_err(|_| format!("{field} must be hexadecimal"))?;
+    if bytes.len() != 32 {
+        return Err(format!("{field} must contain exactly 32 bytes"));
+    }
+    let mut result = [0u8; 32];
+    result.copy_from_slice(&bytes);
+    Ok(result)
+}
+
+/// Submit the one-time sovereign genesis supply correction.
+///
+/// The sender and transaction envelope are fixed by the node. Authority comes
+/// from the version-4 2-of-3 sovereign signatures, not from the admin bearer
+/// token or a caller-selected Move function.
+pub async fn submit_supply_correction(
+    state: web::Data<AppState>,
+    req: web::Json<SupplyCorrectionRequest>,
+) -> impl Responder {
+    if req.version != UltraBlockchain::SUPPLY_CORRECTION_TRANSACTION_VERSION {
+        return HttpResponse::BadRequest().json(ApiResponse {
+            success: false,
+            message: format!(
+                "Supply corrections require signing-envelope version {}",
+                UltraBlockchain::SUPPLY_CORRECTION_TRANSACTION_VERSION
+            ),
+            data: None,
+        });
+    }
+
+    let correction_id = match parse_fixed_32_hex(&req.correction_id, "correction_id") {
+        Ok(value) => value,
+        Err(message) => {
+            return HttpResponse::BadRequest().json(ApiResponse {
+                success: false,
+                message,
+                data: None,
+            })
+        }
+    };
+    let nullifier = match parse_nullifier(&req.nullifier) {
+        Ok(value) => value,
+        Err(message) => {
+            return HttpResponse::BadRequest().json(ApiResponse {
+                success: false,
+                message,
+                data: None,
+            })
+        }
+    };
+    let payload = TransactionPayload::SovereignSupplyCorrection {
+        correction_id,
+        target_address: req.target_address.trim().to_string(),
+        expected_balance: req.expected_balance_base_units,
+        target_balance: req.target_balance_base_units,
+    };
+    let tx = Transaction {
+        sender: UltraBlockchain::SOVEREIGN_ADDR.to_string(),
+        sender_public_key: vec![],
+        recipient: crate::supply_correction::SUPPLY_CORRECTION_RECIPIENT.to_string(),
+        amount: 0,
+        signature: req.signature.clone(),
+        zk_proof: vec![],
+        nullifier,
+        timestamp: req.timestamp,
+        fee: 0,
+        nonce: req.nonce,
+        gas_limit: crate::supply_correction::SUPPLY_CORRECTION_GAS_LIMIT,
+        gas_price: crate::supply_correction::SUPPLY_CORRECTION_GAS_PRICE,
+        proof_type: ProofType::Ownership,
+        payload,
+        chain_id: UltraBlockchain::L1_CHAIN_ID,
+        version: req.version,
+    };
+    let blockchain = state.blockchain.read();
+    match blockchain.add_transaction(tx.clone()) {
+        Ok(()) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true,
+            "message": "Sovereign supply correction accepted",
+            "data": {
+                "transaction": transaction_view(&tx, "pending"),
+                "correction_id": hex::encode(correction_id),
+                "target_balance_base_units": req.target_balance_base_units,
+                "decimals": UltraBlockchain::ULTRA_DECIMALS,
+            }
+        })),
+        Err(message) => HttpResponse::BadRequest().json(ApiResponse {
+            success: false,
+            message: format!("Supply correction rejected: {message}"),
+            data: None,
+        }),
+    }
 }
 
 /// Submit a sovereign 2-of-3 approval for a pending validator proposal.
@@ -2261,6 +2398,9 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
     println!("   POST /api/appchain/{{chain_id}}/anchor/test - Development-only fixture anchor");
     println!("   POST /api/governance/propose - Submit validator proposal");
     println!("   POST /api/governance/approve - Submit version-3 sovereign approval");
+    println!(
+        "   POST /api/governance/supply-correction - Submit one-time version-4 supply correction"
+    );
     println!("   GET  /api/governance/proposals - List pending proposals");
     println!("   GET  /api/governance/approvals - List durable approval journal");
 
@@ -2331,6 +2471,10 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
             .configure(configure_admin_routes)
             .route("/api/governance/propose", web::post().to(propose_validator))
             .route("/api/governance/approve", web::post().to(approve_validator))
+            .route(
+                "/api/governance/supply-correction",
+                web::post().to(submit_supply_correction),
+            )
             .route("/api/governance/proposals", web::get().to(list_proposals))
             .route(
                 "/api/governance/approvals",

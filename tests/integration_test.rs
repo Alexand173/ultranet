@@ -29,6 +29,18 @@ mod tests {
         UltraBlockchain::new(&path)
     }
 
+    fn init_test_bc_with_balances(name: &str, balances: &[(&str, u64)]) -> UltraBlockchain {
+        let path = format!("test_db_int_{}", name);
+        cleanup(&path);
+        let storage = Arc::new(Storage::new(&path).expect("test storage should open"));
+        for (address, balance) in balances {
+            storage
+                .save_state(address, *balance)
+                .expect("test account state should persist");
+        }
+        UltraBlockchain::with_storage(storage)
+    }
+
     // ============================================================
     // TEST 1: KREIRANJE BLOCKCHAIN-A
     // ============================================================
@@ -51,6 +63,50 @@ mod tests {
             "Početna težina treba da bude 4"
         );
         assert_eq!(blockchain.version, 1, "Verzija treba da bude 1");
+
+        let expected_balance = UltraBlockchain::GENESIS_ALLOCATION_BASE_UNITS;
+        assert_eq!(
+            blockchain.get_balance(UltraBlockchain::SOVEREIGN_ADDR),
+            expected_balance,
+            "fresh genesis must expose the sovereign allocation in base units"
+        );
+        assert_eq!(
+            UltraBlockchain::format_base_units(expected_balance),
+            "1,000,000.000000",
+            "fresh genesis display must use six decimals"
+        );
+        assert_eq!(
+            blockchain
+                .storage
+                .get_state(UltraBlockchain::SOVEREIGN_ADDR),
+            Some(expected_balance),
+            "fresh genesis must persist the sovereign allocation"
+        );
+
+        let genesis = blockchain
+            .chain
+            .first()
+            .expect("genesis block should exist");
+        let account_key = format!("acc:{}", UltraBlockchain::SOVEREIGN_ADDR);
+        let account_shard = blockchain.storage.get_shard_id(account_key.as_bytes());
+        let genesis_trie = ShardedStateTrie::new(
+            blockchain.storage.trie_shards.clone(),
+            genesis.shard_roots.clone(),
+        );
+        let genesis_balance =
+            genesis_trie
+                .get(account_shard, account_key.as_bytes())
+                .map(|bytes| {
+                    let bytes: [u8; 8] = bytes
+                        .try_into()
+                        .expect("genesis account value must be eight bytes");
+                    u64::from_le_bytes(bytes)
+                });
+        assert_eq!(
+            genesis_balance,
+            Some(expected_balance),
+            "genesis MPT roots must contain the sovereign allocation"
+        );
 
         println!("✅ Test blockchain_creation: PROŠAO!");
         cleanup(&format!("test_db_int_{}", name));
@@ -105,15 +161,10 @@ mod tests {
     #[tokio::test]
     async fn test_add_transaction() {
         let name = "add_tx";
-        let blockchain = init_test_bc(name);
         let mut alice = UltraWallet::new();
         let bob = UltraWallet::new();
-
-        // FUND ALICE
-        {
-            let mut state = blockchain.state.write();
-            state.insert(alice.get_address(), 100000);
-        }
+        let alice_address = alice.get_address();
+        let blockchain = init_test_bc_with_balances(name, &[(alice_address.as_str(), 100000)]);
 
         let merkle_root = blockchain.merkle_tree.read().get_root();
         let mut merkle_root_array = [0u8; 32];
@@ -152,15 +203,10 @@ mod tests {
     #[tokio::test]
     async fn test_mine_block() {
         let name = "mine";
-        let mut blockchain = init_test_bc(name);
         let mut alice = UltraWallet::new();
         let bob = UltraWallet::new();
-
-        // FUND ALICE (Required after hardening)
-        {
-            let mut state = blockchain.state.write();
-            state.insert(alice.get_address(), 100000);
-        }
+        let alice_address = alice.get_address();
+        let mut blockchain = init_test_bc_with_balances(name, &[(alice_address.as_str(), 100000)]);
 
         let merkle_root = blockchain.merkle_tree.read().get_root();
         let mut merkle_root_array = [0u8; 32];
@@ -205,15 +251,10 @@ mod tests {
     #[tokio::test]
     async fn test_chain_validation() {
         let name = "validation";
-        let mut blockchain = init_test_bc(name);
         let mut alice = UltraWallet::new();
         let bob = UltraWallet::new();
-
-        // FUND ALICE
-        {
-            let mut state = blockchain.state.write();
-            state.insert(alice.get_address(), 100000);
-        }
+        let alice_address = alice.get_address();
+        let mut blockchain = init_test_bc_with_balances(name, &[(alice_address.as_str(), 100000)]);
 
         let merkle_root = blockchain.merkle_tree.read().get_root();
         let mut merkle_root_array = [0u8; 32];

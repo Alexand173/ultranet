@@ -26,7 +26,10 @@ export interface LatestTransaction {
 
 export interface AccountSnapshot {
   address: string;
+  /** Compatibility alias: integer protocol base units. */
   balance: number;
+  /** Canonical integer account balance in base units. */
+  balanceBaseUnits: number;
   nonce: number;
   decimals: number;
   updatedAt: number;
@@ -74,6 +77,7 @@ interface DataPayload<T> {
 interface AccountPayload {
   address?: unknown;
   balance?: unknown;
+  balance_base_units?: unknown;
   nonce?: unknown;
   decimals?: unknown;
   updated_at?: unknown;
@@ -197,15 +201,20 @@ export function normalizeAccount(payload: DataPayload<AccountPayload>): AccountS
   if (payload.success === false || !account) throw new Error(apiMessage(payload, "Unable to read the account."));
 
   const address = parseString(account.address);
-  const balance = parseNumber(account.balance);
+  const compatibilityBalance = parseNumber(account.balance);
+  const explicitBalance = parseNumber(account.balance_base_units);
+  if (compatibilityBalance !== null && explicitBalance !== null && compatibilityBalance !== explicitBalance) {
+    throw new Error("The node returned conflicting account balance fields.");
+  }
+  const balanceBaseUnits = explicitBalance ?? compatibilityBalance;
   const nonce = parseNumber(account.nonce);
   const decimals = parseNumber(account.decimals);
   const updatedAt = parseNumber(account.updated_at);
-  if (!address || balance === null || nonce === null || decimals === null || updatedAt === null) {
+  if (!address || balanceBaseUnits === null || nonce === null || decimals === null || updatedAt === null) {
     throw new Error("The node returned an incomplete account response.");
   }
 
-  return { address, balance, nonce, decimals, updatedAt };
+  return { address, balance: balanceBaseUnits, balanceBaseUnits, nonce, decimals, updatedAt };
 }
 
 export function normalizeFeeEstimate(payload: DataPayload<FeePayload>): FeeEstimate {
