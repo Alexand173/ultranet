@@ -16,7 +16,7 @@ This script is intentionally written for a real Windows desktop recording. Do no
 - The public Genesis P2P multiaddr may be shown:
 
   ```text
-  /ip4/167.233.161.115/tcp/9000/p2p/12D3KooWRFWD4VDW7g2t4VEmajjyfrGh5ZuQUoPVxFeq7ffRetgP
+  /ip4/167.233.161.115/tcp/9000/p2p/12D3KooWAa2qGYoTkke8Sdfixo1jLXiqCbNFksU1bUrYhNAoAjHb
   ```
 
 - The node API uses local TCP `127.0.0.1:8081`; do not expose it publicly just to make P2P work. Validator peers use TCP and UDP port `9000`.
@@ -98,7 +98,7 @@ The exact peer count and block height may differ, but the recording should show 
 UltraNet configuration is valid.
 UltraNet FHE initialization is valid.
 P2P Node running!
-Added Bootnode: 12D3KooWRFWD4VDW7g2t4VEmajjyfrGh5ZuQUoPVxFeq7ffRetgP
+Added Bootnode: 12D3KooWAa2qGYoTkke8Sdfixo1jLXiqCbNFksU1bUrYhNAoAjHb
 libp2p connection established: peer=...
 Heartbeat - PeerManager tracked peers: ...; libp2p connected peers: ...
 ```

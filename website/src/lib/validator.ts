@@ -8,7 +8,7 @@ import {
 } from "@/lib/releases";
 
 export const GENESIS_MULTIADDR =
-  "/ip4/167.233.161.115/tcp/9000/p2p/12D3KooWRFWD4VDW7g2t4VEmajjyfrGh5ZuQUoPVxFeq7ffRetgP" as const;
+  "/ip4/167.233.161.115/tcp/9000/p2p/12D3KooWAa2qGYoTkke8Sdfixo1jLXiqCbNFksU1bUrYhNAoAjHb" as const;
 
 export const GENESIS_P2P_PORT = 9000 as const;
 export const GENESIS_API_PORT = 8081 as const;

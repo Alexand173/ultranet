@@ -608,7 +608,7 @@ pub struct P2PNode {
 /// peer ID is stable once the node has created its persistent identity file;
 /// update this fallback if the bootstrap node intentionally rotates identity.
 pub const BOOTNODES: &[&str] =
-    &["/ip4/167.233.161.115/tcp/9000/p2p/12D3KooWRFWD4VDW7g2t4VEmajjyfrGh5ZuQUoPVxFeq7ffRetgP"];
+    &["/ip4/167.233.161.115/tcp/9000/p2p/12D3KooWAa2qGYoTkke8Sdfixo1jLXiqCbNFksU1bUrYhNAoAjHb"];
 
 fn describe_disconnect_cause<E: std::fmt::Debug>(
     cause: Option<&libp2p::swarm::ConnectionError<E>>,

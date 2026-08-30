@@ -532,7 +532,7 @@ A `PeerManager` tracks connected peers and their reported chain height. `sync_ch
 ### 15.3 Your Genesis Node's Multiaddr
 
 ```
-/ip4/167.233.161.115/tcp/9000/p2p/12D3KooWRFWD4VDW7g2t4VEmajjyfrGh5ZuQUoPVxFeq7ffRetgP
+/ip4/167.233.161.115/tcp/9000/p2p/12D3KooWAa2qGYoTkke8Sdfixo1jLXiqCbNFksU1bUrYhNAoAjHb
 ```
 
 Sharing this string with a prospective validator is the *entire* onboarding requirement on the networking side — their node will dial this address, perform the libp2p handshake, and begin gossip exchange automatically.
@@ -1024,7 +1024,7 @@ INNER_PUBLIC_INPUTS    = 3          (recursive circuit)
 FHE_PARAM_SET          = PARAM_MESSAGE_2_CARRY_2_KS_PBS
 API_PORT               = 8081
 P2P_PORT               = 9000
-GENESIS_MULTIADDR      = /ip4/167.233.161.115/tcp/9000/p2p/12D3KooWRFWD4VDW7g2t4VEmajjyfrGh5ZuQUoPVxFeq7ffRetgP
+GENESIS_MULTIADDR      = /ip4/167.233.161.115/tcp/9000/p2p/12D3KooWAa2qGYoTkke8Sdfixo1jLXiqCbNFksU1bUrYhNAoAjHb
 ```
 
 ---
