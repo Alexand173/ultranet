@@ -103,6 +103,25 @@ curl --fail http://127.0.0.1:8081/api/stats
 
 The raw registry backup contains `manifest.json` plus JSONL records with the exact original Sled key/value bytes. Legacy anchors are retained as `is_test=true` with `fee_charged=0`; the old schema had no treasury debit contract, so the migration never invents historical production spend. Keep both the raw registry backup and full database archive until post-restart verification is complete. The checked-in wrapper [`../scripts/migrate_appchain_registry.sh`](../scripts/migrate_appchain_registry.sh) invokes the installed release migrator and supports the same dry-run/`--apply` flow.
 
+## Isolated faucet service
+
+The faucet is a separate low-privilege process. It must not use `send_ultra.py`, `sovereign_keys.json`, the validator Sled database, or `ULTRANET_ADMIN_TOKEN`. It submits only normal wallet-signed transfers through the public `POST /api/transaction` boundary. See [`../docs/FAUCET_TECHNICAL_SPEC.md`](../docs/FAUCET_TECHNICAL_SPEC.md) and [`../docs/FAUCET_OPERATIONS.md`](../docs/FAUCET_OPERATIONS.md).
+
+Build the separate binary from the same source revision as the node:
+
+```bash
+cargo build --release --locked --bin ultranet-faucet
+sudo useradd --system --home-dir /var/lib/ultranet-faucet --shell /usr/sbin/nologin ultranet-faucet
+sudo install -d -o ultranet-faucet -g ultranet-faucet -m 0700 /var/lib/ultranet-faucet
+sudo install -d -o root -g ultranet-faucet -m 0750 /etc/ultranet-faucet
+sudo install -o root -g ultranet-faucet -m 0640 deploy/faucet.env.example /etc/ultranet-faucet/faucet.env
+sudo install -d -o root -g root -m 0750 /opt/ultranet-faucet
+sudo install -o root -g root -m 0755 target/release/ultranet-faucet /opt/ultranet-faucet/ultranet-faucet
+sudo install -o root -g root -m 0644 deploy/ultranet-faucet.service /etc/systemd/system/ultranet-faucet.service
+```
+
+Install the encrypted credentials referenced by `deploy/ultranet-faucet.service` through the host's secret-management process. The faucet environment file contains no private key, CAPTCHA secret, operator token, or `ULTRANET_ADMIN_TOKEN`. Keep `FAUCET_ENABLED=false` until the isolated signer, separate SQLite backup, private proxy route, monitoring, and canary procedure have been verified. The full provisioning, preflight, kill-switch, backup, and rotation procedure is in [`../docs/FAUCET_OPERATIONS.md`](../docs/FAUCET_OPERATIONS.md).
+
 ## systemd
 
 Install the release binary under `/opt/ultranet/target/release/UltraNet`, copy `public/` to `/opt/ultranet/public`, and run it as a dedicated `ultranet` user.

@@ -115,6 +115,7 @@ move-vm-runtime = { git = "https://github.com/aptos-labs/aptos-core", package = 
 move-stdlib = { git = "https://github.com/aptos-labs/aptos-core", package = "move-stdlib" }
 move-vm-types = { git = "https://github.com/aptos-labs/aptos-core", package = "move-vm-types" }
 move-table-extension = { git = "https://github.com/aptos-labs/aptos-core", package = "move-table-extension" }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 # ✅ FHE (Fully Homomorphic Encryption) - Zama TFHE-rs
 [target.'cfg(unix)'.dependencies]

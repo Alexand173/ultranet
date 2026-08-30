@@ -1,0 +1,68 @@
+[Unit]
+Description=UltraNet isolated faucet service
+Documentation=https://github.com/Alexand173/ultranet/blob/main/docs/FAUCET_OPERATIONS.md
+After=network-online.target ultranet.service
+Wants=network-online.target
+
+StartLimitIntervalSec=5min
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=ultranet-faucet
+Group=ultranet-faucet
+WorkingDirectory=/opt/ultranet-faucet
+EnvironmentFile=-/etc/ultranet-faucet/faucet.env
+
+# Secrets are supplied through systemd credentials, not the general env file.
+LoadCredentialEncrypted=faucet-signer.json:/etc/ultranet-faucet/secrets/faucet-signer.json.cred
+LoadCredentialEncrypted=faucet-turnstile.secret:/etc/ultranet-faucet/secrets/faucet-turnstile.secret.cred
+LoadCredentialEncrypted=faucet-abuse.key:/etc/ultranet-faucet/secrets/faucet-abuse.key.cred
+LoadCredentialEncrypted=faucet-operator.token:/etc/ultranet-faucet/secrets/faucet-operator.token.cred
+
+ExecStart=/opt/ultranet-faucet/ultranet-faucet serve
+
+StateDirectory=ultranet-faucet
+StateDirectoryMode=0700
+UMask=0077
+LimitNOFILE=4096
+TasksMax=64
+MemoryAccounting=true
+MemoryHigh=512M
+MemoryMax=1024M
+CPUWeight=50
+
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=30s
+TimeoutStopSec=30s
+
+# The faucet can only reach the local node and the Turnstile HTTPS endpoint.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+InaccessiblePaths=/var/lib/ultranet /etc/ultranet /etc/ultranet-faucet/secrets /opt/ultranet /opt/ultranet/public /opt/ultranet/website /root
+ReadOnlyPaths=/etc/ultranet-faucet/faucet.env
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/var/lib/ultranet-faucet
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ultranet-faucet
+
+[Install]
+WantedBy=multi-user.target

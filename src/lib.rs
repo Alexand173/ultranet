@@ -36,6 +36,7 @@ pub mod api;
 pub mod auth;
 pub mod zk_circuit;
 pub use zk_circuit::*;
+pub mod faucet;
 pub mod p2p;
 pub mod runtime_config;
 pub mod validator_identity;
@@ -2551,6 +2552,15 @@ impl UltraBlockchain {
     /// envelope first, then sign the bytes returned by this method. Version 2
     /// appends the domain-separated proposal payload binding.
     pub fn create_transaction_message(&self, tx: &Transaction) -> Vec<u8> {
+        Self::create_transaction_message_for(tx)
+    }
+
+    /// Builds the canonical signing preimage without requiring a live node.
+    ///
+    /// The faucet uses this stateless entry point so it can share the exact
+    /// protocol implementation without opening validator storage or creating
+    /// an `UltraBlockchain` instance. Keep the legacy v1 field order stable.
+    pub fn create_transaction_message_for(tx: &Transaction) -> Vec<u8> {
         let mut hasher = Sha3_256::new();
         hasher.update(tx.sender.as_bytes());
         hasher.update(tx.recipient.as_bytes());

@@ -9,3 +9,14 @@ api.example.com {
 dashboard.example.com {
     reverse_proxy 127.0.0.1:3000
 }
+
+# Optional: enable only after the faucet has passed local integration checks,
+# signer/address verification, backup/restore verification, and a canary plan.
+# Put this hostname behind an upstream WAF with bot protection and edge rate
+# limiting (for example, Cloudflare). Caddy's body limit is not a WAF.
+faucet.example.com {
+    request_body {
+        max_size 16KB
+    }
+    reverse_proxy 127.0.0.1:8090
+}
