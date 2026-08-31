@@ -288,8 +288,12 @@ jobs:
             throw "Exported validator public key must be exactly 5,184 lowercase hexadecimal characters"
           }
           $firstHash = (Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash
-          & $binary "--export-validator-public-key" $outputPath
-          if ($LASTEXITCODE -eq 0) {
+          $overwriteArgument = '"{0}"' -f $outputPath
+          $overwriteProcess = Start-Process -FilePath $binary -ArgumentList @(
+            "--export-validator-public-key",
+            $overwriteArgument
+          ) -Wait -PassThru -NoNewWindow
+          if ($overwriteProcess.ExitCode -eq 0) {
             throw "Windows validator public-key export unexpectedly overwrote an existing output file"
           }
           $secondHash = (Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash
