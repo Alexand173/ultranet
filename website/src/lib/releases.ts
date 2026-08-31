@@ -9,7 +9,7 @@ export interface ReleaseAsset {
   readonly description: string;
 }
 
-export const RELEASE_TAG = "v7.1.6" as const;
+export const RELEASE_TAG = "v7.1.7" as const;
 export const RELEASE_PIPELINE_STATUS = "VERIFIED // SUCCESS" as const;
 export const RELEASE_PIPELINE_STATUS_DESCRIPTION =
   "All platform builds and published asset verification passed." as const;

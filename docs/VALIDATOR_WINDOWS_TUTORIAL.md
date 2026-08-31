@@ -2,14 +2,14 @@
 
 **Target length:** 2–3 minutes
 **Audience:** a first-time Windows x64 validator operator
-**Release:** v7.1.6
+**Release:** v7.1.7
 **Recording status:** production script and shot list; capture the real Windows session before publishing
 
 This script is intentionally written for a real Windows desktop recording. Do not replace the node launch, checksum, or Genesis connection with a mock terminal. The Linux development workspace cannot capture the Windows desktop or produce a truthful runtime recording.
 
 ## Safety before recording
 
-- Use a clean Windows x64 test folder and the published `UltraNetNode-windows-x64.zip` from the [v7.1.6 release](https://github.com/Alexand173/ultranet/releases/tag/v7.1.6).
+- Use a clean Windows x64 test folder and the published `UltraNetNode-windows-x64.zip` from the [v7.1.7 release](https://github.com/Alexand173/ultranet/releases/tag/v7.1.7).
 - Keep the recording at 1920×1080, 30 fps. Record the browser, File Explorer, PowerShell, Notepad, and the node console; do not record unrelated desktop notifications.
 - Prepare a real token locally, but pause the recording or crop/obscure the value while generating, entering, and saving `ULTRANET_ADMIN_TOKEN`.
 - Do not show private keys, wallet recovery words, `UltraNetNode.env` contents, database paths, personal usernames, SSH material, or browser cookies.
@@ -29,7 +29,7 @@ This script is intentionally written for a real Windows desktop recording. Do no
 2. Add a window capture for the browser and a window/display capture for the Windows terminal.
 3. Set the base and output resolution to 1920×1080, 30 fps.
 4. Hide notifications and use a readable terminal font. Keep the cursor visible when clicking the launcher.
-5. Add a small lower-third only if desired: `UltraNet v7.1.6 // Windows x64`.
+5. Add a small lower-third only if desired: `UltraNet v7.1.7 // Windows x64`.
 
 ### Windows Game Bar
 
@@ -39,7 +39,7 @@ Press `Win+G`, enable microphone only if narration is required, and capture the 
 
 | Time | Screen action | Narration | Evidence to capture |
 | --- | --- | --- | --- |
-| `0:00–0:15` | Open `https://ultranetwork.cc/validator` or `/download` and point at the v7.1.6 Windows x64 link. | “This is the UltraNet v7.1.6 validator onboarding path. I’ll download the verified Windows x64 node, start it, and confirm that it reaches Genesis.” | Release tag `v7.1.6`, Windows x64 archive, and checksum link. |
+| `0:00–0:15` | Open `https://ultranetwork.cc/validator` or `/download` and point at the v7.1.7 Windows x64 link. | “This is the UltraNet v7.1.7 validator onboarding path. I’ll download the verified Windows x64 node, start it, and confirm that it reaches Genesis.” | Release tag `v7.1.7`, Windows x64 archive, and checksum link. |
 | `0:15–0:35` | Download `UltraNetNode-windows-x64.zip` and `SHA256SUMS.txt` into a clean folder. Open PowerShell in that folder. | “I download the archive and its checksum manifest from the same GitHub release. I verify before extracting.” | Both files visible; no personal path or unrelated downloads. |
 | `0:35–0:50` | Run the checksum command below. Keep the result on screen. | “The hash matches, so this is the package I intend to run.” | `Checksum OK`. Stop and fix the download if the result is `Checksum mismatch`. |
 | `0:50–1:05` | Extract the complete archive with File Explorer. Show the four package files briefly. | “The complete package includes the executable, launcher, safe environment template, and Windows guide.” | `UltraNetNode.exe`, `Start-UltraNetNode.bat`, `UltraNetNode.env.example`, `README-WINDOWS.txt`. |
@@ -107,7 +107,7 @@ Do not claim “validator active” merely because the binary started. The node 
 
 ## Publishing checklist
 
-- [ ] The recording is between 2 and 3 minutes and uses the real v7.1.6 Windows x64 package.
+- [ ] The recording is between 2 and 3 minutes and uses the real v7.1.7 Windows x64 package.
 - [ ] The checksum command visibly returns `Checksum OK`.
 - [ ] The complete archive and launcher are shown.
 - [ ] The launcher-created `UltraNetNode.env` is acknowledged without exposing its contents.
