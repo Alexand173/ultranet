@@ -35,7 +35,18 @@ if not exist "UltraNetNode.env" (
 )
 
 set "ULTRANET_ENV_FILE=%~dp0UltraNetNode.env"
+rem The desktop package uses the sibling file as the source of truth. Clear any
+rem stale inherited value so it cannot override the token just entered in Notepad.
+set "ULTRANET_ADMIN_TOKEN="
 set "ULTRANET_PAUSE_ON_ERROR=1"
+
+findstr /C:"ULTRANET_ADMIN_TOKEN=replace-with-" "UltraNetNode.env" >nul 2>&1
+if not errorlevel 1 (
+  echo The template token is still present in UltraNetNode.env.
+  echo Enter a fresh 64-character hexadecimal token, save the file, and continue.
+  echo Opening UltraNetNode.env in Notepad...
+  start "" /wait notepad.exe "%~dp0UltraNetNode.env"
+)
 
 echo Checking UltraNet configuration...
 UltraNetNode.exe --check-config

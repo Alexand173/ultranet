@@ -208,21 +208,34 @@ fn missing_admin_token_error() -> io::Error {
 }
 
 fn validate_admin_token(token: &str) -> io::Result<AdminAuthConfig> {
-    if token.starts_with("replace-with-")
-        || token.len() < MIN_ADMIN_TOKEN_BYTES
-        || token.bytes().any(|byte| byte.is_ascii_whitespace())
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "{ADMIN_TOKEN_ENV} must be at least {MIN_ADMIN_TOKEN_BYTES} non-whitespace bytes. This private administrator bearer token protects state-changing node operations; it is not a wallet key or public node identifier. Create a fresh 64-hex-character token with `openssl rand -hex 32` or the PowerShell command in README-WINDOWS.txt. Never share it or place it in browser code."
-            ),
+    if token.starts_with("replace-with-") {
+        return Err(invalid_admin_token_error(
+            "still contains the template placeholder; edit UltraNetNode.env beside UltraNetNode.exe",
+        ));
+    }
+    if token.bytes().any(|byte| byte.is_ascii_whitespace()) {
+        return Err(invalid_admin_token_error(
+            "must not contain spaces, tabs, or other whitespace",
+        ));
+    }
+    if token.len() < MIN_ADMIN_TOKEN_BYTES {
+        return Err(invalid_admin_token_error(
+            "must be at least 32 non-whitespace bytes; use 64 hexadecimal characters for 32 random bytes",
         ));
     }
 
     Ok(AdminAuthConfig {
         token: token.as_bytes().to_vec(),
     })
+}
+
+fn invalid_admin_token_error(reason: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!(
+            "{ADMIN_TOKEN_ENV} {reason}. This private administrator bearer token protects state-changing node operations; it is not a wallet key or public node identifier. Generate it with `openssl rand -hex 32` or the PowerShell command in README-WINDOWS.txt. Never share it or place it in browser code."
+        ),
+    )
 }
 
 fn bearer_token_matches(req: &ServiceRequest, config: &AdminAuthConfig) -> bool {
@@ -2565,6 +2578,32 @@ mod configuration_tests {
         let token = "a".repeat(32);
         let config = validate_admin_token(&token).expect("32-byte token should be accepted");
         assert_eq!(config.token, token.as_bytes());
+    }
+
+    #[test]
+    fn admin_token_validation_accepts_the_recommended_64_hex_format() {
+        let token = "0123456789abcdef".repeat(4);
+        let config =
+            validate_admin_token(&token).expect("64 hexadecimal characters should be accepted");
+        assert_eq!(config.token, token.as_bytes());
+    }
+
+    #[test]
+    fn admin_token_validation_explains_common_desktop_mistakes() {
+        let placeholder_error = validate_admin_token("replace-with-a-token")
+            .unwrap_err()
+            .to_string();
+        assert!(placeholder_error.contains("template placeholder"));
+
+        let whitespace_error = validate_admin_token(&format!("{} ", "a".repeat(32)))
+            .unwrap_err()
+            .to_string();
+        assert!(whitespace_error.contains("spaces, tabs, or other whitespace"));
+
+        let short_error = validate_admin_token(&"a".repeat(31))
+            .unwrap_err()
+            .to_string();
+        assert!(short_error.contains("64 hexadecimal characters"));
     }
 
     #[test]

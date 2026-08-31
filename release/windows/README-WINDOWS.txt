@@ -42,8 +42,10 @@ You can also create the file manually with:
 
 UltraNetNode.env is read only from the local machine. Keep it private and do
 not upload it, commit it, email it, or paste its contents into a browser.
-The launcher sets ULTRANET_ENV_FILE to this sibling file. An already-set
-process or service variable always takes precedence over the file.
+The launcher sets ULTRANET_ENV_FILE to this sibling file and clears any
+inherited ULTRANET_ADMIN_TOKEN in its child process, so the desktop file is
+the source of truth. Direct terminal, service, and container launches keep
+their own environment precedence rules.
 
 3. Create ULTRANET_ADMIN_TOKEN
 ------------------------------
@@ -160,6 +162,17 @@ This is a configuration error, not a peer or firewall error. Create the token
 as shown above, save UltraNetNode.env beside the executable, and run the
 launcher again. For a service deployment, configure the token in the service
 environment instead of using this desktop file.
+
+If the message says the token must be at least 32 non-whitespace bytes, check
+that the value is actually on the ULTRANET_ADMIN_TOKEN= line in the private
+UltraNetNode.env file, not only in UltraNetNode.env.example. The recommended
+value is 32 random bytes written as 64 hexadecimal characters; a 32-character
+hex string represents only 16 random bytes. Also remove any spaces or line
+breaks. The desktop launcher clears stale inherited token values and reopens
+the sibling file when the template placeholder is still present.
+
+If the message identifies the template placeholder, edit UltraNetNode.env
+beside UltraNetNode.exe, save it, close Notepad, and run the launcher again.
 
 For service or Docker deployments, keep their environment handling separate:
 
