@@ -16,6 +16,7 @@ import { normalizeProposalPublicKey, validateProposalPublicKey } from "@/lib/val
 import { useWalletSession } from "@/components/wallet/WalletSessionProvider";
 import WalletConnectionStatus from "@/components/wallet/WalletConnectionStatus";
 import ProposalWalletPrerequisite from "@/components/wallet/ProposalWalletPrerequisite";
+import PendingApprovalsPanel from "@/components/landing/PendingApprovalsPanel";
 
 type ProposalStatus = "idle" | "signing" | "success";
 
@@ -335,6 +336,9 @@ export default function SwarmOnboarding() {
             Once accepted, your node identity will be broadcast to the gossip layer.
           </p>
         </form>
+      </div>
+      <div className="md:col-span-2 border-t border-platinum/10 p-6 md:p-8">
+        <PendingApprovalsPanel />
       </div>
     </section>
   );

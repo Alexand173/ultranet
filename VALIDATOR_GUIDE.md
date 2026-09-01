@@ -195,6 +195,19 @@ During the **Bootstrap Phase (v7.1)**, the validator set is managed by the 2-of-
 2. **On-boarding Request**: Submit the complete public key to the governance portal; do not submit the private `validator_dilithium5_key.json` file.
 3. **Weight Assignment**: Once approved, your weight will be added to the BLS aggregation set in `src/lib.rs`.
 
+### 4.4 Validator-only web approval
+
+The Join Swarm dashboard can display pending proposals to authenticated validator sessions. Approval controls are shown only to sessions explicitly mapped to a configured Sovereign owner. The web flow never asks for `sovereign_keys.json`, `secret_key`, `private_key`, `ULTRANET_ADMIN_TOKEN`, or a wallet password.
+
+The normal web ceremony is:
+
+1. Owner 1 reviews the complete 64-character proposal hash and confirms it.
+2. The isolated signer/HSM creates and locally verifies Owner 1's version-3 signature.
+3. Owner 2 reviews the same proposal and confirms it through a different owner session/signer.
+4. The gateway verifies both distinct public signatures, combines them, and submits the existing approval envelope. The UltraNet node remains the final verifier and activation journal remains authoritative.
+
+This is two browser actions per owner at most; local signer/HSM presence is an independent security control and is not removed for convenience. If the signer is unavailable or the proposal becomes stale, no approval is submitted. Use [`OFFLINE_APPROVAL_SIGNING.md`](./OFFLINE_APPROVAL_SIGNING.md) as the break-glass procedure. Keep signer sockets private and never expose them through Caddy, Cloudflare, public DNS, or the dashboard.
+
 ## 5. Performance Monitoring
 Access the **UltraNet Pro Dashboard** at `http://<your-node-ip>:8081/dashboard`.
 

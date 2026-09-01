@@ -9,6 +9,9 @@ use std::collections::HashMap;
 use crate::appchain::{AnchoredState, AppChainConfig};
 use crate::bls_aggregation::ValidatorInfo;
 use crate::dag_mysticeti::{MysticetiVertex, ValidatorStats};
+use crate::governance::approval::{
+    ApprovalAuditRecord, ApprovalIntentRecord, ApprovalNonceReservation, ApprovalSignatureRecord,
+};
 use crate::{
     Transaction, TransactionPayload, UltraBlock, ValidatorApprovalRecord, ValidatorJoinProposalData,
 };
@@ -29,6 +32,10 @@ pub struct Storage {
     pub pending_proposals: Tree,
     pub approval_journal: Tree,
     pub approval_journal_index: Tree,
+    pub approval_intents: Tree,
+    pub approval_signatures: Tree,
+    pub approval_audit: Tree,
+    pub approval_nonce_reservations: Tree,
     pub auth_challenges: Tree,
     pub auth_sessions: Tree,
     pub appchain_configs: Tree,
@@ -67,6 +74,10 @@ impl Storage {
             pending_proposals: db.open_tree("pending_proposals")?,
             approval_journal: db.open_tree("approval_journal")?,
             approval_journal_index: db.open_tree("approval_journal_index")?,
+            approval_intents: db.open_tree("approval_intents")?,
+            approval_signatures: db.open_tree("approval_signatures")?,
+            approval_audit: db.open_tree("approval_audit")?,
+            approval_nonce_reservations: db.open_tree("approval_nonce_reservations")?,
             auth_challenges: db.open_tree("auth_challenges")?,
             auth_sessions: db.open_tree("auth_sessions")?,
             appchain_configs: db.open_tree("appchain_configs")?,
@@ -582,6 +593,24 @@ impl Storage {
         Ok(())
     }
 
+    pub fn get_approval_record(
+        &self,
+        proposal_hash: &[u8; 32],
+    ) -> Result<Option<ValidatorApprovalRecord>, String> {
+        self.approval_journal
+            .get(proposal_hash)
+            .map_err(|error| format!("failed to read approval journal: {error}"))?
+            .map(|value| {
+                bincode::deserialize(&value).map_err(|error| {
+                    format!(
+                        "invalid approval journal record {}: {error}",
+                        hex::encode(proposal_hash)
+                    )
+                })
+            })
+            .transpose()
+    }
+
     fn rebuild_approval_journal_index(&self) -> Result<(), String> {
         self.approval_journal_index
             .clear()
@@ -701,6 +730,317 @@ impl Storage {
         }
 
         Ok((total, page, next_cursor))
+    }
+
+    pub fn save_approval_intent(&self, intent: &ApprovalIntentRecord) -> Result<(), String> {
+        let value = bincode::serialize(intent)
+            .map_err(|error| format!("failed to encode approval intent: {error}"))?;
+        self.approval_intents
+            .insert(intent.intent_id.as_bytes(), value)
+            .map_err(|error| format!("failed to persist approval intent: {error}"))?;
+        self.db
+            .flush()
+            .map_err(|error| format!("failed to flush approval intent: {error}"))?;
+        Ok(())
+    }
+
+    pub fn get_approval_intent(
+        &self,
+        intent_id: &str,
+    ) -> Result<Option<ApprovalIntentRecord>, String> {
+        self.approval_intents
+            .get(intent_id.as_bytes())
+            .map_err(|error| format!("failed to read approval intent: {error}"))?
+            .map(|value| {
+                bincode::deserialize(&value)
+                    .map_err(|error| format!("invalid approval intent {intent_id}: {error}"))
+            })
+            .transpose()
+    }
+
+    pub fn compare_and_swap_approval_intent(
+        &self,
+        expected: &ApprovalIntentRecord,
+        next: &ApprovalIntentRecord,
+    ) -> Result<bool, String> {
+        if expected.intent_id != next.intent_id || expected.proposal_hash != next.proposal_hash {
+            return Err("approval intent compare-and-swap identity mismatch".into());
+        }
+        let expected_bytes = bincode::serialize(expected)
+            .map_err(|error| format!("failed to encode expected approval intent: {error}"))?;
+        let next_bytes = bincode::serialize(next)
+            .map_err(|error| format!("failed to encode next approval intent: {error}"))?;
+        let result = self
+            .approval_intents
+            .compare_and_swap(
+                expected.intent_id.as_bytes(),
+                Some(expected_bytes),
+                Some(next_bytes),
+            )
+            .map_err(|error| format!("failed to update approval intent: {error}"))?;
+        if result.is_ok() {
+            self.db
+                .flush()
+                .map_err(|error| format!("failed to flush approval intent update: {error}"))?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub fn find_active_approval_intent(
+        &self,
+        proposal_hash: &[u8; 32],
+    ) -> Result<Option<ApprovalIntentRecord>, String> {
+        let mut active = None;
+        for item in self.approval_intents.iter() {
+            let (_key, value) = item.map_err(|error| error.to_string())?;
+            let intent: ApprovalIntentRecord = bincode::deserialize(&value)
+                .map_err(|error| format!("invalid approval intent: {error}"))?;
+            if &intent.proposal_hash == proposal_hash
+                && !matches!(
+                    intent.stage,
+                    crate::governance::approval::ApprovalIntentStage::Expired
+                        | crate::governance::approval::ApprovalIntentStage::Rejected
+                        | crate::governance::approval::ApprovalIntentStage::Approved
+                        | crate::governance::approval::ApprovalIntentStage::Activated
+                )
+            {
+                if active.is_some() {
+                    return Err("multiple active approval intents exist for one proposal".into());
+                }
+                active = Some(intent);
+            }
+        }
+        Ok(active)
+    }
+
+    fn approval_signature_key(intent_id: &str, owner_index: usize) -> Vec<u8> {
+        format!("{intent_id}:{owner_index}").into_bytes()
+    }
+
+    pub fn save_approval_signature(
+        &self,
+        signature: &ApprovalSignatureRecord,
+    ) -> Result<(), String> {
+        let value = bincode::serialize(signature)
+            .map_err(|error| format!("failed to encode approval signature: {error}"))?;
+        self.approval_signatures
+            .insert(
+                Self::approval_signature_key(&signature.intent_id, signature.owner_index),
+                value,
+            )
+            .map_err(|error| format!("failed to persist approval signature: {error}"))?;
+        self.db
+            .flush()
+            .map_err(|error| format!("failed to flush approval signature: {error}"))?;
+        Ok(())
+    }
+
+    pub fn save_approval_signature_if_absent(
+        &self,
+        signature: &ApprovalSignatureRecord,
+    ) -> Result<bool, String> {
+        let key = Self::approval_signature_key(&signature.intent_id, signature.owner_index);
+        let value = bincode::serialize(signature)
+            .map_err(|error| format!("failed to encode approval signature: {error}"))?;
+        let inserted = self
+            .approval_signatures
+            .compare_and_swap(key, None as Option<Vec<u8>>, Some(value))
+            .map_err(|error| format!("failed to reserve approval signature: {error}"))?
+            .is_ok();
+        if inserted {
+            self.db
+                .flush()
+                .map_err(|error| format!("failed to flush approval signature: {error}"))?;
+        }
+        Ok(inserted)
+    }
+
+    pub fn get_approval_signatures(
+        &self,
+        intent_id: &str,
+    ) -> Result<Vec<ApprovalSignatureRecord>, String> {
+        let prefix = format!("{intent_id}:");
+        let mut signatures = Vec::new();
+        for item in self.approval_signatures.scan_prefix(prefix.as_bytes()) {
+            let (_key, value) = item.map_err(|error| error.to_string())?;
+            let signature: ApprovalSignatureRecord = bincode::deserialize(&value)
+                .map_err(|error| format!("invalid approval signature for {intent_id}: {error}"))?;
+            if signature.intent_id != intent_id {
+                return Err("approval signature key does not match intent".into());
+            }
+            signatures.push(signature);
+        }
+        signatures.sort_by_key(|signature| signature.owner_index);
+        Ok(signatures)
+    }
+
+    pub fn reserve_approval_nonce(
+        &self,
+        reservation: &ApprovalNonceReservation,
+        now: u64,
+    ) -> Result<bool, String> {
+        let key = format!("{}:{}", reservation.sender, reservation.nonce);
+        let value = bincode::serialize(reservation)
+            .map_err(|error| format!("failed to encode nonce reservation: {error}"))?;
+        loop {
+            let existing = self
+                .approval_nonce_reservations
+                .get(key.as_bytes())
+                .map_err(|error| format!("failed to read nonce reservation: {error}"))?;
+            let result = match existing {
+                None => self.approval_nonce_reservations.compare_and_swap(
+                    key.as_bytes(),
+                    None as Option<Vec<u8>>,
+                    Some(value.clone()),
+                ),
+                Some(existing_bytes) => {
+                    let existing_reservation: ApprovalNonceReservation =
+                        bincode::deserialize(&existing_bytes).map_err(|error| {
+                            format!("invalid approval nonce reservation: {error}")
+                        })?;
+                    if existing_reservation.expires_at > now {
+                        return Ok(false);
+                    }
+                    self.approval_nonce_reservations.compare_and_swap(
+                        key.as_bytes(),
+                        Some(existing_bytes),
+                        Some(value.clone()),
+                    )
+                }
+            }
+            .map_err(|error| format!("failed to reserve approval nonce: {error}"))?;
+            if result.is_ok() {
+                self.db
+                    .flush()
+                    .map_err(|error| format!("failed to flush nonce reservation: {error}"))?;
+                return Ok(true);
+            }
+        }
+    }
+
+    pub fn release_approval_nonce(
+        &self,
+        sender: &str,
+        nonce: u64,
+        intent_id: &str,
+    ) -> Result<bool, String> {
+        let key = format!("{sender}:{nonce}");
+        let Some(existing_bytes) = self
+            .approval_nonce_reservations
+            .get(key.as_bytes())
+            .map_err(|error| format!("failed to read nonce reservation: {error}"))?
+        else {
+            return Ok(false);
+        };
+        let existing: ApprovalNonceReservation = bincode::deserialize(&existing_bytes)
+            .map_err(|error| format!("invalid approval nonce reservation: {error}"))?;
+        if existing.intent_id != intent_id {
+            return Ok(false);
+        }
+        let removed = self
+            .approval_nonce_reservations
+            .compare_and_swap(key.as_bytes(), Some(existing_bytes), None::<Vec<u8>>)
+            .map_err(|error| format!("failed to release nonce reservation: {error}"))?
+            .is_ok();
+        if removed {
+            self.db
+                .flush()
+                .map_err(|error| format!("failed to flush nonce release: {error}"))?;
+        }
+        Ok(removed)
+    }
+
+    pub fn append_approval_audit(&self, event: &ApprovalAuditRecord) -> Result<(), String> {
+        let value = bincode::serialize(event)
+            .map_err(|error| format!("failed to encode approval audit event: {error}"))?;
+        self.approval_audit
+            .insert(event.event_id.as_bytes(), value)
+            .map_err(|error| format!("failed to persist approval audit event: {error}"))?;
+        self.db
+            .flush()
+            .map_err(|error| format!("failed to flush approval audit event: {error}"))?;
+        Ok(())
+    }
+
+    pub fn has_live_approval_transaction(
+        &self,
+        proposal_hash: &[u8; 32],
+        nonce: u64,
+    ) -> Result<bool, String> {
+        let matches = |transaction: &Transaction| {
+            transaction.sender == crate::UltraBlockchain::SOVEREIGN_ADDR
+                && transaction.nonce == nonce
+                && matches!(
+                    transaction.payload,
+                    TransactionPayload::ValidatorApproval { proposal_hash: candidate }
+                        if &candidate == proposal_hash
+                )
+        };
+        for item in self.pending_transactions.iter() {
+            let (_key, value) = item.map_err(|error| error.to_string())?;
+            let transaction: Transaction = bincode::deserialize(&value).map_err(|error| {
+                format!("invalid pending transaction during approval recovery: {error}")
+            })?;
+            if matches(&transaction) {
+                return Ok(true);
+            }
+        }
+        for item in self.transactions.iter() {
+            let (_key, value) = item.map_err(|error| error.to_string())?;
+            let transaction: Transaction = bincode::deserialize(&value).map_err(|error| {
+                format!("invalid transaction during approval recovery: {error}")
+            })?;
+            if matches(&transaction) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn reap_expired_approval_intents(&self, now: u64) -> Result<usize, String> {
+        let mut expired = 0;
+        for item in self.approval_intents.iter() {
+            let (_key, value) = item.map_err(|error| error.to_string())?;
+            let intent: ApprovalIntentRecord = bincode::deserialize(&value)
+                .map_err(|error| format!("invalid approval intent during cleanup: {error}"))?;
+            if self.get_approval_record(&intent.proposal_hash)?.is_some() {
+                let mut activated = intent.clone();
+                activated.stage = crate::governance::approval::ApprovalIntentStage::Activated;
+                let _ = self.compare_and_swap_approval_intent(&intent, &activated)?;
+                continue;
+            }
+            if intent.expires_at > now
+                || matches!(
+                    intent.stage,
+                    crate::governance::approval::ApprovalIntentStage::Expired
+                        | crate::governance::approval::ApprovalIntentStage::Rejected
+                        | crate::governance::approval::ApprovalIntentStage::Approved
+                        | crate::governance::approval::ApprovalIntentStage::Activated
+                )
+            {
+                continue;
+            }
+            if matches!(
+                intent.stage,
+                crate::governance::approval::ApprovalIntentStage::Finalizing
+            ) && self.has_live_approval_transaction(&intent.proposal_hash, intent.nonce)?
+            {
+                continue;
+            }
+            let mut next = intent.clone();
+            next.stage = crate::governance::approval::ApprovalIntentStage::Expired;
+            if self.compare_and_swap_approval_intent(&intent, &next)? {
+                let _ = self.release_approval_nonce(
+                    crate::UltraBlockchain::SOVEREIGN_ADDR,
+                    intent.nonce,
+                    &intent.intent_id,
+                )?;
+                expired += 1;
+            }
+        }
+        Ok(expired)
     }
 
     pub fn get_all_pending_proposals(
@@ -832,6 +1172,10 @@ impl Storage {
         self.pending_proposals.clear()?;
         self.approval_journal.clear()?;
         self.approval_journal_index.clear()?;
+        self.approval_intents.clear()?;
+        self.approval_signatures.clear()?;
+        self.approval_audit.clear()?;
+        self.approval_nonce_reservations.clear()?;
         self.auth_challenges.clear()?;
         self.auth_sessions.clear()?;
         self.appchain_configs.clear()?;
@@ -864,6 +1208,10 @@ impl Clone for Storage {
             pending_proposals: self.pending_proposals.clone(),
             approval_journal: self.approval_journal.clone(),
             approval_journal_index: self.approval_journal_index.clone(),
+            approval_intents: self.approval_intents.clone(),
+            approval_signatures: self.approval_signatures.clone(),
+            approval_audit: self.approval_audit.clone(),
+            approval_nonce_reservations: self.approval_nonce_reservations.clone(),
             auth_challenges: self.auth_challenges.clone(),
             auth_sessions: self.auth_sessions.clone(),
             appchain_configs: self.appchain_configs.clone(),
@@ -881,7 +1229,12 @@ impl Clone for Storage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
+    use std::{
+        fs,
+        sync::{Arc, Barrier},
+        thread,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn malformed_pending_proposal_fails_closed() {
@@ -1041,6 +1394,179 @@ mod tests {
         assert_eq!(final_page.len(), 1);
         assert_eq!(final_page[0].proposal_hash, [3u8; 32]);
         assert!(final_cursor.is_none());
+        drop(storage);
+        let _ = fs::remove_dir_all(&path);
+    }
+
+    fn temporary_concurrency_path(label: &str) -> String {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_nanos();
+        format!("test_db_storage_{label}_{}_{}", std::process::id(), nonce)
+    }
+
+    fn test_approval_intent(
+        intent_id: &str,
+        stage: crate::governance::approval::ApprovalIntentStage,
+    ) -> ApprovalIntentRecord {
+        let draft = crate::governance::approval::ApprovalDraft {
+            proposal_hash: "11".repeat(32),
+            timestamp: 1_785_183_488,
+            nonce: 7,
+            nullifier: vec![0x22; crate::governance::approval::NULLIFIER_BYTES],
+            version: crate::UltraBlockchain::APPROVAL_BOUND_TRANSACTION_VERSION,
+        };
+        let digest: [u8; 32] = crate::governance::approval::canonical_approval_message(&draft)
+            .expect("test approval draft should hash")
+            .try_into()
+            .expect("approval digest should be 32 bytes");
+        ApprovalIntentRecord {
+            intent_id: intent_id.to_string(),
+            proposal_hash: [0x11; 32],
+            timestamp: draft.timestamp,
+            nonce: draft.nonce,
+            nullifier: [0x22; 32],
+            digest,
+            created_by_session_hash: [0x33; 32],
+            expires_at: 1_785_184_000,
+            stage,
+        }
+    }
+
+    fn test_approval_signature(intent_id: &str) -> ApprovalSignatureRecord {
+        ApprovalSignatureRecord {
+            intent_id: intent_id.to_string(),
+            owner_index: 0,
+            owner_address: "owner-0".to_string(),
+            public_key: vec![0x44; 2_592],
+            signature: vec![0x55; crate::governance::approval::PARTIAL_SIGNATURE_BYTES],
+            recorded_at: 1_785_183_488,
+        }
+    }
+
+    #[test]
+    fn approval_nonce_reservation_has_one_winner_under_contention() {
+        let path = temporary_concurrency_path("nonce");
+        let storage = Arc::new(Storage::new(&path).expect("storage should open"));
+        let barrier = Arc::new(Barrier::new(8));
+        let mut workers = Vec::new();
+        for index in 0..8 {
+            let storage = storage.clone();
+            let barrier = barrier.clone();
+            workers.push(thread::spawn(move || {
+                barrier.wait();
+                let reservation = ApprovalNonceReservation {
+                    sender: crate::UltraBlockchain::SOVEREIGN_ADDR.to_string(),
+                    nonce: 42,
+                    intent_id: format!("nonce-race-{index}"),
+                    expires_at: 2_000,
+                };
+                storage
+                    .reserve_approval_nonce(&reservation, 1_000)
+                    .expect("nonce reservation should not fail")
+            }));
+        }
+
+        let winners = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("nonce worker should not panic"))
+            .filter(|inserted| *inserted)
+            .count();
+        assert_eq!(
+            winners, 1,
+            "exactly one concurrent nonce reservation may win"
+        );
+
+        let competing_reservation = ApprovalNonceReservation {
+            sender: crate::UltraBlockchain::SOVEREIGN_ADDR.to_string(),
+            nonce: 42,
+            intent_id: "nonce-race-afterward".to_string(),
+            expires_at: 2_000,
+        };
+        assert!(!storage
+            .reserve_approval_nonce(&competing_reservation, 1_000)
+            .expect("existing nonce reservation should be readable"));
+        drop(storage);
+        let _ = fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn approval_signature_insert_is_idempotent_under_contention() {
+        let path = temporary_concurrency_path("signature");
+        let storage = Arc::new(Storage::new(&path).expect("storage should open"));
+        let barrier = Arc::new(Barrier::new(8));
+        let signature = test_approval_signature("signature-race");
+        let mut workers = Vec::new();
+        for _ in 0..8 {
+            let storage = storage.clone();
+            let barrier = barrier.clone();
+            let signature = signature.clone();
+            workers.push(thread::spawn(move || {
+                barrier.wait();
+                storage
+                    .save_approval_signature_if_absent(&signature)
+                    .expect("signature insertion should not fail")
+            }));
+        }
+
+        let winners = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("signature worker should not panic"))
+            .filter(|inserted| *inserted)
+            .count();
+        assert_eq!(winners, 1, "exactly one signature insertion may win");
+        let signatures = storage
+            .get_approval_signatures("signature-race")
+            .expect("signature record should be readable");
+        assert_eq!(signatures, vec![signature]);
+        drop(storage);
+        let _ = fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn approval_intent_compare_and_swap_has_one_transition_winner() {
+        let path = temporary_concurrency_path("intent-cas");
+        let storage = Arc::new(Storage::new(&path).expect("storage should open"));
+        let initial = test_approval_intent(
+            "intent-cas-race",
+            crate::governance::approval::ApprovalIntentStage::Created,
+        );
+        let mut next = initial.clone();
+        next.stage = crate::governance::approval::ApprovalIntentStage::Signing;
+        storage
+            .save_approval_intent(&initial)
+            .expect("initial approval intent should persist");
+
+        let barrier = Arc::new(Barrier::new(8));
+        let mut workers = Vec::new();
+        for _ in 0..8 {
+            let storage = storage.clone();
+            let barrier = barrier.clone();
+            let initial = initial.clone();
+            let next = next.clone();
+            workers.push(thread::spawn(move || {
+                barrier.wait();
+                storage
+                    .compare_and_swap_approval_intent(&initial, &next)
+                    .expect("intent CAS should not fail")
+            }));
+        }
+
+        let winners = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("intent worker should not panic"))
+            .filter(|updated| *updated)
+            .count();
+        assert_eq!(winners, 1, "exactly one intent transition may win");
+        assert_eq!(
+            storage
+                .get_approval_intent("intent-cas-race")
+                .expect("intent should be readable")
+                .expect("intent should exist")
+                .stage,
+            crate::governance::approval::ApprovalIntentStage::Signing
+        );
         drop(storage);
         let _ = fs::remove_dir_all(&path);
     }

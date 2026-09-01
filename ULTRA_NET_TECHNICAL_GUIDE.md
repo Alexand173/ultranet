@@ -589,6 +589,25 @@ sequenceDiagram
     V->>P: Proposal approved, validator active
 ```
 
+### 16.6 Validator-only Join Swarm approval surface
+
+The Join Swarm dashboard may orchestrate the same 2-of-3 ceremony through a protected validator-review surface. It does not put Sovereign private keys in Next.js, browser storage, the public API, or the node-admin environment:
+
+```text
+authenticated validator session
+  -> exact proposal-hash review
+  -> isolated owner-specific signer / HSM presence
+  -> public partial signature only
+  -> second distinct owner
+  -> gateway combines exactly two signatures
+  -> existing node ValidatorApproval verifier
+  -> durable approval journal + activated validator
+```
+
+The browser receives only pending proposal metadata, a full copyable proposal hash, public progress, a short-lived intent identifier, and safe status/error fields. Timestamp, nonce, nullifier, canonical digest, signer IDs, owner indexes, and partial/full signatures remain inside the approval gateway/signer boundary. `ULTRANET_ADMIN_TOKEN` cannot authorize this flow. The existing offline `ultranet-approve` ceremony remains the break-glass path.
+
+The dashboard interaction is limited to `Review & approve` followed by `Confirm hash & request my approval`. A second authorized owner repeats the same review and confirmation. The local signer/HSM presence check is mandatory and out-of-band; the two-click limit applies to browser actions, not to bypassing owner custody controls.
+
 ---
 
 ## 17. AI Governor: Autonomous Difficulty Tuning

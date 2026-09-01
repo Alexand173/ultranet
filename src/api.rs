@@ -3,11 +3,20 @@
 // ============================================================
 
 use crate::{
+    approval_signer::{
+        random_operation_id, validate_signer_response, ApprovalGateway, SignerRequest,
+    },
     auth::{
         AuthConfig, AuthError, AuthService, CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME,
     },
-    PrivateTransactionCircuit, ProofType, Transaction, TransactionPayload, UltraBlockchain,
-    MERKLE_TREE_DEPTH,
+    governance::approval::{
+        approval_transaction_for, build_payload, canonical_approval_message, owner_address,
+        parse_proposal_hash, validate_approval_timestamp, ApprovalAuditRecord,
+        ApprovalIntentRecord, ApprovalIntentStage, ApprovalNonceReservation,
+        ApprovalSignatureRecord,
+    },
+    PrivateTransactionCircuit, ProofType, Storage, Transaction, TransactionPayload,
+    UltraBlockchain, MERKLE_TREE_DEPTH,
 };
 use actix_cors::Cors;
 use actix_web::{
@@ -15,17 +24,18 @@ use actix_web::{
     dev::{ServiceRequest, ServiceResponse},
     http::{
         header::{AUTHORIZATION, COOKIE},
-        Method,
+        Method, StatusCode,
     },
     middleware::{from_fn, Next},
     web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
 };
 use hex;
 use parking_lot::RwLock;
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use sha3::Digest;
+use sha3::{Digest, Sha3_256};
 use std::sync::Arc;
-use std::{env, io};
+use std::{env, io, time::Duration};
 use subtle::ConstantTimeEq;
 
 // ===== STRUKTURE ZA API =====
@@ -1705,6 +1715,46 @@ pub struct ValidatorApprovalRequest {
     pub version: u32,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalIntentCreateRequest {
+    pub proposal_hash: String,
+    pub confirmed_proposal_hash: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalIntentApproveRequest {}
+
+#[derive(Debug, Serialize)]
+struct PendingValidatorReview {
+    proposal_hash: String,
+    public_key: String,
+    metadata: String,
+    proposer: String,
+    timestamp: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    intent_id: Option<String>,
+    signed_owner_count: usize,
+    current_owner_signed: bool,
+    threshold: usize,
+    total_owners: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct ApprovalIntentStatusResponse {
+    intent_id: String,
+    proposal_hash: String,
+    stage: ApprovalIntentStage,
+    signed_owner_count: usize,
+    threshold: usize,
+    expires_at: u64,
+    activated: bool,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<&'static str>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SupplyCorrectionRequest {
@@ -1931,6 +1981,914 @@ pub async fn list_proposals(state: web::Data<AppState>) -> impl Responder {
         "success": true,
         "proposals": list
     }))
+}
+
+fn approval_error(
+    status: StatusCode,
+    code: &'static str,
+    message: impl Into<String>,
+) -> HttpResponse {
+    HttpResponse::build(status).json(serde_json::json!({
+        "success": false,
+        "message": message.into(),
+        "code": code,
+    }))
+}
+
+fn session_token_from_request(request: &HttpRequest) -> Result<String, HttpResponse> {
+    request
+        .cookie(SESSION_COOKIE_NAME)
+        .map(|cookie| cookie.value().to_string())
+        .filter(|token| !token.trim().is_empty())
+        .ok_or_else(|| {
+            approval_error(
+                StatusCode::UNAUTHORIZED,
+                "UNAUTHORIZED",
+                "An authenticated validator session is required.",
+            )
+        })
+}
+
+fn session_hash(session_token: &str) -> [u8; 32] {
+    Sha3_256::digest(session_token.as_bytes()).into()
+}
+
+fn validator_review_session(
+    request: &HttpRequest,
+    auth: &AuthService,
+    gateway: &ApprovalGateway,
+) -> Result<(String, [u8; 32]), HttpResponse> {
+    let session_token = session_token_from_request(request)?;
+    let session = auth
+        .session(&session_token)
+        .map_err(|_| {
+            approval_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "AUTH_SERVICE_ERROR",
+                "Unable to validate the wallet session.",
+            )
+        })?
+        .ok_or_else(|| {
+            approval_error(
+                StatusCode::UNAUTHORIZED,
+                "UNAUTHORIZED",
+                "The validator session is missing or expired.",
+            )
+        })?;
+    if !gateway.is_validator_reviewer(&session.node_identifier) {
+        return Err(approval_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "This surface is restricted to authorized validators.",
+        ));
+    }
+    Ok((session.node_identifier, session_hash(&session_token)))
+}
+
+fn sovereign_owner_session(
+    request: &HttpRequest,
+    auth: &AuthService,
+    gateway: &ApprovalGateway,
+) -> Result<(String, [u8; 32], crate::approval_signer::OwnerAuthBinding), HttpResponse> {
+    let (session_identifier, session_fingerprint) =
+        validator_review_session(request, auth, gateway)?;
+    let binding = gateway.owner_binding(&session_identifier).ok_or_else(|| {
+        approval_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Your validator session can review proposals but is not an authorized Sovereign owner.",
+        )
+    })?;
+    Ok((session_identifier, session_fingerprint, binding))
+}
+
+fn approval_status(
+    storage: &Storage,
+    intent: &ApprovalIntentRecord,
+    message: String,
+    code: Option<&'static str>,
+) -> Result<ApprovalIntentStatusResponse, String> {
+    let signatures = storage.get_approval_signatures(&intent.intent_id)?;
+    let activated = storage
+        .get_approval_record(&intent.proposal_hash)?
+        .is_some()
+        || matches!(
+            intent.stage,
+            ApprovalIntentStage::Approved | ApprovalIntentStage::Activated
+        );
+    let stage = if activated {
+        ApprovalIntentStage::Activated
+    } else {
+        intent.stage
+    };
+    Ok(ApprovalIntentStatusResponse {
+        intent_id: intent.intent_id.clone(),
+        proposal_hash: hex::encode(intent.proposal_hash),
+        stage,
+        signed_owner_count: signatures.len(),
+        threshold: UltraBlockchain::SOVEREIGN_THRESHOLD,
+        expires_at: intent.expires_at,
+        activated,
+        message,
+        code,
+    })
+}
+
+fn status_response(
+    storage: &Storage,
+    intent: &ApprovalIntentRecord,
+    message: impl Into<String>,
+    code: Option<&'static str>,
+) -> HttpResponse {
+    match approval_status(storage, intent, message.into(), code) {
+        Ok(status) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true,
+            "message": status.message,
+            "data": status,
+        })),
+        Err(error) => approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error),
+    }
+}
+
+fn audit_event(
+    storage: &Storage,
+    intent: &ApprovalIntentRecord,
+    event_type: &str,
+    owner_address: Option<String>,
+    outcome: &str,
+) -> Result<(), String> {
+    storage.append_approval_audit(&ApprovalAuditRecord {
+        event_id: random_operation_id(),
+        intent_id: intent.intent_id.clone(),
+        proposal_hash: intent.proposal_hash,
+        event_type: event_type.to_string(),
+        owner_address,
+        outcome: outcome.to_string(),
+        occurred_at: now_seconds(),
+    })
+}
+
+fn set_intent_stage(
+    storage: &Storage,
+    intent: &ApprovalIntentRecord,
+    stage: ApprovalIntentStage,
+) -> Result<ApprovalIntentRecord, String> {
+    let mut next = intent.clone();
+    next.stage = stage;
+    if storage.compare_and_swap_approval_intent(intent, &next)? {
+        Ok(next)
+    } else {
+        storage
+            .get_approval_intent(&intent.intent_id)?
+            .ok_or_else(|| "approval intent disappeared during state transition".into())
+    }
+}
+
+fn claim_intent_stage(
+    storage: &Storage,
+    intent: &ApprovalIntentRecord,
+    stage: ApprovalIntentStage,
+) -> Result<(ApprovalIntentRecord, bool), String> {
+    let mut next = intent.clone();
+    next.stage = stage;
+    if storage.compare_and_swap_approval_intent(intent, &next)? {
+        return Ok((next, true));
+    }
+    let current = storage
+        .get_approval_intent(&intent.intent_id)?
+        .ok_or_else(|| "approval intent disappeared during state transition".to_string())?;
+    Ok((current, false))
+}
+
+pub async fn validator_review(
+    state: web::Data<AppState>,
+    auth: web::Data<AuthService>,
+    gateway: web::Data<ApprovalGateway>,
+    request: HttpRequest,
+) -> impl Responder {
+    let (session_identifier, _) = match validator_review_session(&request, &auth, &gateway) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let owner_index = gateway
+        .owner_binding(&session_identifier)
+        .map(|binding| binding.owner_index);
+    let blockchain = state.blockchain.read();
+    let proposals = match blockchain.storage.get_all_pending_proposals() {
+        Ok(proposals) => proposals,
+        Err(error) => {
+            return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error);
+        }
+    };
+    let mut response_proposals = Vec::with_capacity(proposals.len());
+    for (proposal_hash, proposal) in proposals {
+        let intent = match blockchain
+            .storage
+            .find_active_approval_intent(&proposal_hash)
+        {
+            Ok(intent) => intent,
+            Err(error) => {
+                return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error);
+            }
+        };
+        let signatures = match intent.as_ref() {
+            Some(intent) => match blockchain
+                .storage
+                .get_approval_signatures(&intent.intent_id)
+            {
+                Ok(signatures) => signatures,
+                Err(error) => {
+                    return approval_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "STORAGE_ERROR",
+                        error,
+                    );
+                }
+            },
+            None => Vec::new(),
+        };
+        let current_owner_signed = owner_index.is_some_and(|index| {
+            signatures
+                .iter()
+                .any(|signature| signature.owner_index == index)
+        });
+        response_proposals.push(PendingValidatorReview {
+            proposal_hash: hex::encode(proposal_hash),
+            public_key: hex::encode(proposal.public_key),
+            metadata: proposal.metadata,
+            proposer: proposal.proposer,
+            timestamp: proposal.timestamp,
+            intent_id: intent.as_ref().map(|intent| intent.intent_id.clone()),
+            signed_owner_count: signatures.len(),
+            current_owner_signed,
+            threshold: UltraBlockchain::SOVEREIGN_THRESHOLD,
+            total_owners: blockchain.sovereign_owners.len(),
+        });
+    }
+    response_proposals.sort_by(|left, right| left.proposal_hash.cmp(&right.proposal_hash));
+    let capabilities = gateway.capabilities(&session_identifier);
+    HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "proposals": response_proposals,
+        "capabilities": { "capabilities": capabilities },
+    }))
+}
+
+fn require_csrf(request: &HttpRequest, auth: &AuthService) -> Result<(), HttpResponse> {
+    let session_token = session_token_from_request(request)?;
+    let csrf_token = request
+        .headers()
+        .get(CSRF_HEADER_NAME)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            approval_error(
+                StatusCode::UNAUTHORIZED,
+                "CSRF_REQUIRED",
+                "A valid CSRF header is required.",
+            )
+        })?;
+    let valid = auth
+        .validate_session_csrf(&session_token, csrf_token)
+        .map_err(|_| {
+            approval_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "AUTH_SERVICE_ERROR",
+                "Unable to validate the CSRF session.",
+            )
+        })?;
+    if !valid {
+        return Err(approval_error(
+            StatusCode::UNAUTHORIZED,
+            "CSRF_REQUIRED",
+            "The CSRF token is missing or invalid.",
+        ));
+    }
+    Ok(())
+}
+
+pub async fn create_approval_intent(
+    state: web::Data<AppState>,
+    auth: web::Data<AuthService>,
+    gateway: web::Data<ApprovalGateway>,
+    request: HttpRequest,
+    body: web::Json<ApprovalIntentCreateRequest>,
+) -> impl Responder {
+    if let Err(response) = require_csrf(&request, &auth) {
+        return response;
+    }
+    let (session_identifier, session_fingerprint, _) =
+        match sovereign_owner_session(&request, &auth, &gateway) {
+            Ok(value) => value,
+            Err(response) => return response,
+        };
+    let requested_hash = match parse_proposal_hash(&body.proposal_hash) {
+        Ok(hash) => hash,
+        Err(error) => return approval_error(StatusCode::BAD_REQUEST, "HASH_MISMATCH", error),
+    };
+    let confirmed_hash = match parse_proposal_hash(&body.confirmed_proposal_hash) {
+        Ok(hash) => hash,
+        Err(error) => return approval_error(StatusCode::BAD_REQUEST, "HASH_MISMATCH", error),
+    };
+    if requested_hash != confirmed_hash {
+        return approval_error(
+            StatusCode::BAD_REQUEST,
+            "HASH_MISMATCH",
+            "The confirmed proposal hash does not match the selected proposal.",
+        );
+    }
+
+    let blockchain = state.blockchain.read();
+    let _admission_guard = blockchain.admission_lock.lock();
+    let now = now_seconds();
+    if let Err(error) = blockchain.storage.reap_expired_approval_intents(now) {
+        return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error);
+    }
+    if !blockchain
+        .pending_proposals
+        .read()
+        .contains_key(&requested_hash)
+    {
+        return approval_error(
+            StatusCode::NOT_FOUND,
+            "PROPOSAL_NOT_PENDING",
+            "The validator proposal is no longer pending.",
+        );
+    }
+    if let Some(existing) = match blockchain
+        .storage
+        .find_active_approval_intent(&requested_hash)
+    {
+        Ok(intent) => intent,
+        Err(error) => {
+            return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error)
+        }
+    } {
+        return status_response(
+            &blockchain.storage,
+            &existing,
+            "An approval intent already exists for this proposal.",
+            None,
+        );
+    }
+
+    let nonce = blockchain.get_next_nonce(UltraBlockchain::SOVEREIGN_ADDR);
+    let intent_id = random_operation_id();
+    let expires_at = now.saturating_add(gateway.config.intent_ttl_seconds);
+    let reservation = ApprovalNonceReservation {
+        sender: UltraBlockchain::SOVEREIGN_ADDR.to_string(),
+        nonce,
+        intent_id: intent_id.clone(),
+        expires_at,
+    };
+    match blockchain.storage.reserve_approval_nonce(&reservation, now) {
+        Ok(true) => {}
+        Ok(false) => {
+            return approval_error(
+                StatusCode::CONFLICT,
+                "NONCE_BUSY",
+                "Another approval is already using the current Sovereign nonce. Retry after it completes or expires.",
+            )
+        }
+        Err(error) => return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error),
+    }
+
+    let mut nullifier = [0u8; 32];
+    OsRng.fill_bytes(&mut nullifier);
+    let draft = crate::governance::approval::ApprovalDraft {
+        proposal_hash: hex::encode(requested_hash),
+        timestamp: now,
+        nonce,
+        nullifier: nullifier.to_vec(),
+        version: UltraBlockchain::APPROVAL_BOUND_TRANSACTION_VERSION,
+    };
+    let digest = match canonical_approval_message(&draft) {
+        Ok(digest) if digest.len() == 32 => {
+            let mut value = [0u8; 32];
+            value.copy_from_slice(&digest);
+            value
+        }
+        Ok(_) => {
+            let _ = blockchain.storage.release_approval_nonce(
+                UltraBlockchain::SOVEREIGN_ADDR,
+                nonce,
+                &intent_id,
+            );
+            return approval_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CONTRACT_ERROR",
+                "The approval digest has an invalid length.",
+            );
+        }
+        Err(error) => {
+            let _ = blockchain.storage.release_approval_nonce(
+                UltraBlockchain::SOVEREIGN_ADDR,
+                nonce,
+                &intent_id,
+            );
+            return approval_error(StatusCode::BAD_REQUEST, "CONTRACT_ERROR", error);
+        }
+    };
+    let intent = ApprovalIntentRecord {
+        intent_id,
+        proposal_hash: requested_hash,
+        timestamp: now,
+        nonce,
+        nullifier,
+        digest,
+        created_by_session_hash: session_fingerprint,
+        expires_at,
+        stage: ApprovalIntentStage::Created,
+    };
+    if let Err(error) = blockchain.storage.save_approval_intent(&intent) {
+        let _ = blockchain.storage.release_approval_nonce(
+            UltraBlockchain::SOVEREIGN_ADDR,
+            nonce,
+            &intent.intent_id,
+        );
+        return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error);
+    }
+    if let Err(error) = audit_event(
+        &blockchain.storage,
+        &intent,
+        "intent_created",
+        Some(session_identifier),
+        "approval intent created after exact hash confirmation",
+    ) {
+        let _ = set_intent_stage(&blockchain.storage, &intent, ApprovalIntentStage::Rejected);
+        let _ = blockchain.storage.release_approval_nonce(
+            UltraBlockchain::SOVEREIGN_ADDR,
+            nonce,
+            &intent.intent_id,
+        );
+        return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error);
+    }
+    status_response(
+        &blockchain.storage,
+        &intent,
+        "Approval intent created. Confirm locally with the isolated Sovereign signer.",
+        None,
+    )
+}
+
+pub async fn approval_intent_status(
+    state: web::Data<AppState>,
+    auth: web::Data<AuthService>,
+    gateway: web::Data<ApprovalGateway>,
+    request: HttpRequest,
+    intent_id: web::Path<String>,
+) -> impl Responder {
+    let (_, _, _) = match sovereign_owner_session(&request, &auth, &gateway) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let blockchain = state.blockchain.read();
+    let intent_id = intent_id.into_inner();
+    let intent = match blockchain.storage.get_approval_intent(&intent_id) {
+        Ok(Some(intent)) => intent,
+        Ok(None) => {
+            return approval_error(
+                StatusCode::NOT_FOUND,
+                "INTENT_NOT_FOUND",
+                "Approval intent not found.",
+            )
+        }
+        Err(error) => {
+            return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error)
+        }
+    };
+    status_response(&blockchain.storage, &intent, "Approval intent status", None)
+}
+
+pub async fn approve_approval_intent(
+    state: web::Data<AppState>,
+    auth: web::Data<AuthService>,
+    gateway: web::Data<ApprovalGateway>,
+    request: HttpRequest,
+    intent_id: web::Path<String>,
+    _body: web::Json<ApprovalIntentApproveRequest>,
+) -> impl Responder {
+    if let Err(response) = require_csrf(&request, &auth) {
+        return response;
+    }
+    let (session_identifier, _, binding) = match sovereign_owner_session(&request, &auth, &gateway)
+    {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let blockchain = state.blockchain.read();
+    let intent_id = intent_id.into_inner();
+    let intent = match blockchain.storage.get_approval_intent(&intent_id) {
+        Ok(Some(intent)) => intent,
+        Ok(None) => {
+            return approval_error(
+                StatusCode::NOT_FOUND,
+                "INTENT_NOT_FOUND",
+                "Approval intent not found.",
+            )
+        }
+        Err(error) => {
+            return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error)
+        }
+    };
+    if let Ok(Some(_record)) = blockchain
+        .storage
+        .get_approval_record(&intent.proposal_hash)
+    {
+        return status_response(
+            &blockchain.storage,
+            &intent,
+            "Validator already activated.",
+            Some("ALREADY_APPROVED"),
+        );
+    }
+    let now = now_seconds();
+    if intent.expires_at <= now || validate_approval_timestamp(intent.timestamp, now).is_err() {
+        let expired = set_intent_stage(&blockchain.storage, &intent, ApprovalIntentStage::Expired)
+            .unwrap_or_else(|_| intent.clone());
+        let _ = blockchain.storage.release_approval_nonce(
+            UltraBlockchain::SOVEREIGN_ADDR,
+            intent.nonce,
+            &intent.intent_id,
+        );
+        let _ = audit_event(
+            &blockchain.storage,
+            &expired,
+            "rejected",
+            Some(session_identifier),
+            "approval intent expired",
+        );
+        return approval_error(
+            StatusCode::CONFLICT,
+            "INTENT_EXPIRED",
+            "The approval intent expired. Start a new review.",
+        );
+    }
+    if !blockchain
+        .pending_proposals
+        .read()
+        .contains_key(&intent.proposal_hash)
+    {
+        let rejected =
+            set_intent_stage(&blockchain.storage, &intent, ApprovalIntentStage::Rejected)
+                .unwrap_or_else(|_| intent.clone());
+        let _ = audit_event(
+            &blockchain.storage,
+            &rejected,
+            "rejected",
+            Some(session_identifier),
+            "proposal was no longer pending",
+        );
+        return approval_error(
+            StatusCode::CONFLICT,
+            "PROPOSAL_NOT_PENDING",
+            "The proposal is no longer pending. Refresh the queue.",
+        );
+    }
+    let existing_signatures = match blockchain
+        .storage
+        .get_approval_signatures(&intent.intent_id)
+    {
+        Ok(signatures) => signatures,
+        Err(error) => {
+            return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error)
+        }
+    };
+    if existing_signatures
+        .iter()
+        .any(|signature| signature.owner_index == binding.owner_index)
+    {
+        return approval_error(
+            StatusCode::CONFLICT,
+            "DUPLICATE_OWNER",
+            "Your Sovereign approval is already recorded for this proposal.",
+        );
+    }
+    if matches!(
+        intent.stage,
+        ApprovalIntentStage::Finalizing
+            | ApprovalIntentStage::Approved
+            | ApprovalIntentStage::Activated
+    ) {
+        return status_response(
+            &blockchain.storage,
+            &intent,
+            "Another approval request is finalizing.",
+            None,
+        );
+    }
+    let signing_intent =
+        match set_intent_stage(&blockchain.storage, &intent, ApprovalIntentStage::Signing) {
+            Ok(intent) => intent,
+            Err(error) => {
+                return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error)
+            }
+        };
+
+    let draft = crate::governance::approval::ApprovalDraft {
+        proposal_hash: hex::encode(signing_intent.proposal_hash),
+        timestamp: signing_intent.timestamp,
+        nonce: signing_intent.nonce,
+        nullifier: signing_intent.nullifier.to_vec(),
+        version: UltraBlockchain::APPROVAL_BOUND_TRANSACTION_VERSION,
+    };
+    let digest = match canonical_approval_message(&draft) {
+        Ok(digest) => digest,
+        Err(error) => {
+            let _ = set_intent_stage(
+                &blockchain.storage,
+                &signing_intent,
+                ApprovalIntentStage::Rejected,
+            );
+            return approval_error(StatusCode::BAD_REQUEST, "CONTRACT_ERROR", error);
+        }
+    };
+    if digest.as_slice() != signing_intent.digest {
+        let _ = set_intent_stage(
+            &blockchain.storage,
+            &signing_intent,
+            ApprovalIntentStage::Rejected,
+        );
+        return approval_error(
+            StatusCode::CONFLICT,
+            "HASH_MISMATCH",
+            "The approval intent digest no longer matches the canonical proposal envelope.",
+        );
+    }
+    let signer_request = SignerRequest {
+        intent_id: signing_intent.intent_id.clone(),
+        owner_index: binding.owner_index,
+        signer_id: binding.signer_id.clone(),
+        draft: draft.clone(),
+        digest,
+    };
+    let signer = match gateway.signer(binding.owner_index) {
+        Some(signer) => signer,
+        None => {
+            let _ = set_intent_stage(
+                &blockchain.storage,
+                &signing_intent,
+                ApprovalIntentStage::Created,
+            );
+            return approval_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "SIGNER_UNAVAILABLE",
+                "The isolated Sovereign signer is unavailable. No approval was submitted.",
+            );
+        }
+    };
+    let signer_response = match signer.sign(signer_request.clone()).await {
+        Ok(response) => response,
+        Err(error) => {
+            let _ = set_intent_stage(
+                &blockchain.storage,
+                &signing_intent,
+                ApprovalIntentStage::Created,
+            );
+            let _ = audit_event(
+                &blockchain.storage,
+                &signing_intent,
+                "rejected",
+                Some(session_identifier),
+                &format!("isolated signer unavailable: {error}"),
+            );
+            return approval_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "SIGNER_UNAVAILABLE",
+                "The isolated Sovereign signer is unavailable. No approval was submitted.",
+            );
+        }
+    };
+    if let Err(error) = validate_signer_response(
+        &signer_request,
+        &signer_response,
+        binding.owner_index,
+        &blockchain.sovereign_owners,
+    ) {
+        let _ = set_intent_stage(
+            &blockchain.storage,
+            &signing_intent,
+            ApprovalIntentStage::Rejected,
+        );
+        let _ = audit_event(
+            &blockchain.storage,
+            &signing_intent,
+            "rejected",
+            Some(session_identifier),
+            "isolated signer identity or signature validation failed",
+        );
+        return approval_error(StatusCode::BAD_GATEWAY, "INVALID_SIGNATURE", error);
+    }
+    let signature_record = ApprovalSignatureRecord {
+        intent_id: signing_intent.intent_id.clone(),
+        owner_index: binding.owner_index,
+        owner_address: owner_address(&signer_response.public_key),
+        public_key: signer_response.public_key,
+        signature: signer_response.signature,
+        recorded_at: now_seconds(),
+    };
+    match blockchain
+        .storage
+        .save_approval_signature_if_absent(&signature_record)
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            return approval_error(
+                StatusCode::CONFLICT,
+                "DUPLICATE_OWNER",
+                "Your Sovereign approval was already recorded.",
+            );
+        }
+        Err(error) => {
+            return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error)
+        }
+    }
+    if let Err(error) = audit_event(
+        &blockchain.storage,
+        &signing_intent,
+        "owner_signed",
+        Some(signature_record.owner_address.clone()),
+        "verified partial Sovereign signature recorded",
+    ) {
+        return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error);
+    }
+
+    let signatures = match blockchain
+        .storage
+        .get_approval_signatures(&signing_intent.intent_id)
+    {
+        Ok(signatures) => signatures,
+        Err(error) => {
+            return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error)
+        }
+    };
+    if signatures.len() < UltraBlockchain::SOVEREIGN_THRESHOLD {
+        let awaiting = match set_intent_stage(
+            &blockchain.storage,
+            &signing_intent,
+            ApprovalIntentStage::AwaitingSecondOwner,
+        ) {
+            Ok(intent) => intent,
+            Err(error) => {
+                return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error)
+            }
+        };
+        return status_response(
+            &blockchain.storage,
+            &awaiting,
+            "Your approval is recorded. Awaiting a different Sovereign owner.",
+            None,
+        );
+    }
+
+    let (finalizing, claimed_finalization) = match claim_intent_stage(
+        &blockchain.storage,
+        &signing_intent,
+        ApprovalIntentStage::Finalizing,
+    ) {
+        Ok(result) => result,
+        Err(error) => {
+            return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error)
+        }
+    };
+    if !claimed_finalization {
+        return status_response(
+            &blockchain.storage,
+            &finalizing,
+            "Another approval request is finalizing.",
+            None,
+        );
+    }
+    let fresh_now = now_seconds();
+    if validate_approval_timestamp(finalizing.timestamp, fresh_now).is_err()
+        || finalizing.expires_at <= fresh_now
+        || blockchain.get_next_nonce(UltraBlockchain::SOVEREIGN_ADDR) != finalizing.nonce
+        || !blockchain
+            .pending_proposals
+            .read()
+            .contains_key(&finalizing.proposal_hash)
+    {
+        let rejected = set_intent_stage(
+            &blockchain.storage,
+            &finalizing,
+            ApprovalIntentStage::Rejected,
+        )
+        .unwrap_or_else(|_| finalizing.clone());
+        let _ = blockchain.storage.release_approval_nonce(
+            UltraBlockchain::SOVEREIGN_ADDR,
+            finalizing.nonce,
+            &finalizing.intent_id,
+        );
+        let _ = audit_event(
+            &blockchain.storage,
+            &rejected,
+            "rejected",
+            Some(session_identifier),
+            "approval became stale before finalization",
+        );
+        return approval_error(
+            StatusCode::CONFLICT,
+            "NONCE_STALE",
+            "The approval became stale before finalization. Start a new review.",
+        );
+    }
+    let first = &signatures[0];
+    let second = &signatures[1];
+    let payload = match build_payload(
+        draft,
+        (first.owner_index, first.signature.clone()),
+        (second.owner_index, second.signature.clone()),
+    ) {
+        Ok(payload) => payload,
+        Err(error) => {
+            let _ = set_intent_stage(
+                &blockchain.storage,
+                &finalizing,
+                ApprovalIntentStage::Rejected,
+            );
+            return approval_error(StatusCode::BAD_GATEWAY, "INVALID_SIGNATURE", error);
+        }
+    };
+    let transaction = match approval_transaction_for(&payload.draft, payload.signature) {
+        Ok(transaction) => transaction,
+        Err(error) => {
+            let _ = set_intent_stage(
+                &blockchain.storage,
+                &finalizing,
+                ApprovalIntentStage::Rejected,
+            );
+            return approval_error(StatusCode::BAD_REQUEST, "CONTRACT_ERROR", error);
+        }
+    };
+    if let Err(error) = blockchain.add_transaction(transaction) {
+        if blockchain
+            .storage
+            .get_approval_record(&finalizing.proposal_hash)
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            let _ = set_intent_stage(
+                &blockchain.storage,
+                &finalizing,
+                ApprovalIntentStage::Activated,
+            );
+            return status_response(
+                &blockchain.storage,
+                &finalizing,
+                "Validator activated.",
+                Some("ALREADY_APPROVED"),
+            );
+        }
+        let rejected = set_intent_stage(
+            &blockchain.storage,
+            &finalizing,
+            ApprovalIntentStage::Rejected,
+        )
+        .unwrap_or_else(|_| finalizing.clone());
+        let _ = audit_event(
+            &blockchain.storage,
+            &rejected,
+            "rejected",
+            Some(session_identifier),
+            &format!("node rejected final approval: {error}"),
+        );
+        return approval_error(
+            StatusCode::CONFLICT,
+            "FINALIZATION_REJECTED",
+            "The node rejected the final approval. No retry was submitted automatically.",
+        );
+    }
+    let activated = match set_intent_stage(
+        &blockchain.storage,
+        &finalizing,
+        ApprovalIntentStage::Activated,
+    ) {
+        Ok(intent) => intent,
+        Err(error) => {
+            return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error)
+        }
+    };
+    let _ = blockchain.storage.release_approval_nonce(
+        UltraBlockchain::SOVEREIGN_ADDR,
+        activated.nonce,
+        &activated.intent_id,
+    );
+    if let Err(error) = audit_event(
+        &blockchain.storage,
+        &activated,
+        "activated",
+        Some(session_identifier),
+        "two distinct verified signatures submitted and validator activated",
+    ) {
+        return approval_error(StatusCode::INTERNAL_SERVER_ERROR, "STORAGE_ERROR", error);
+    }
+    status_response(
+        &blockchain.storage,
+        &activated,
+        "Validator proposal approved and activated.",
+        None,
+    )
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2333,6 +3291,9 @@ pub fn validate_configuration() -> io::Result<()> {
     let _ = configured_admin_auth()?;
     AuthConfig::from_env()
         .map(|_| ())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    crate::approval_signer::ApprovalGatewayConfig::from_env()
+        .map(|_| ())
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
 }
 
@@ -2386,6 +3347,23 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
         blockchain.read().storage.clone(),
         auth_config,
     ));
+    let approval_gateway = ApprovalGateway::from_env()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    approval_gateway
+        .config
+        .validate_against_owners(&blockchain.read().sovereign_owners)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    let approval_gateway = web::Data::new(approval_gateway);
+    let approval_storage = blockchain.read().storage.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            if let Err(error) = approval_storage.reap_expired_approval_intents(now_seconds()) {
+                eprintln!("⚠️ Approval intent cleanup failed closed: {error}");
+            }
+        }
+    });
 
     println!("🚀 Starting REST API server at http://{api_bind}");
     println!("🔒 CORS allowlist: {}", cors_origins.join(", "));
@@ -2437,6 +3415,7 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
             .app_data(app_state.clone())
             .app_data(admin_auth.clone())
             .app_data(auth_service.clone())
+            .app_data(approval_gateway.clone())
             .service(web::resource("/").to(index))
             .service(web::resource("/dashboard").to(index))
             .service(web::resource("/VALIDATOR_GUIDE.md").to(validator_guide))
@@ -2482,6 +3461,22 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
             .route("/api/auth/session", web::get().to(auth_session))
             .route("/api/auth/logout", web::post().to(auth_logout))
             .configure(configure_admin_routes)
+            .route(
+                "/api/governance/validator-review",
+                web::get().to(validator_review),
+            )
+            .route(
+                "/api/governance/approval-intents",
+                web::post().to(create_approval_intent),
+            )
+            .route(
+                "/api/governance/approval-intents/{intent_id}",
+                web::get().to(approval_intent_status),
+            )
+            .route(
+                "/api/governance/approval-intents/{intent_id}/approve",
+                web::post().to(approve_approval_intent),
+            )
             .route("/api/governance/propose", web::post().to(propose_validator))
             .route("/api/governance/approve", web::post().to(approve_validator))
             .route(

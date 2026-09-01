@@ -1,7 +1,6 @@
 use clap::{Args, Parser, Subcommand};
 use rand::{rngs::OsRng, RngCore};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use sha3::{Digest, Sha3_256};
 use std::{
     env,
     fs::{self, File, OpenOptions},
@@ -12,19 +11,17 @@ use std::{
 use zeroize::{Zeroize, Zeroizing};
 use UltraNet::{
     auth::validate_node_identifier,
+    governance::approval::{
+        canonical_approval_message, combine_two_signatures, normalize_proposal_hash,
+        validate_draft, verify_partial_signature, ApprovalDraft, ApprovalPayload,
+        SignedApprovalArtifact, COMBINED_SIGNATURE_BYTES, NULLIFIER_BYTES, PARTIAL_SIGNATURE_BYTES,
+    },
     quantum_crypto::{PKTrait, SKTrait},
     QuantumKeyPair, UltraBlockchain,
 };
 
 const DEFAULT_API_BASE_URL: &str = "http://127.0.0.1:8081";
-const PROPOSAL_RECIPIENT: &str = "0x0";
-const APPROVAL_AMOUNT: u64 = 0;
-const APPROVAL_FEE: u64 = 0;
-const APPROVAL_GAS_LIMIT: u64 = 1_000_000;
-const APPROVAL_GAS_PRICE: u64 = 1;
-const SIGNATURE_BYTES: usize = 4_627;
-const COMBINED_SIGNATURE_BYTES: usize = SIGNATURE_BYTES * 2;
-const NULLIFIER_BYTES: usize = 32;
+const SIGNATURE_BYTES: usize = PARTIAL_SIGNATURE_BYTES;
 const SOVEREIGN_OWNER_COUNT: usize = 3;
 const LOCAL_KEYPAIR_PROBE: &[u8] = b"ULTRANET_APPROVAL_LOCAL_KEYPAIR_CHECK_V1";
 
@@ -144,31 +141,6 @@ struct SubmitArgs {
     /// Public API origin. Can also be set with ULTRANET_API_BASE_URL.
     #[arg(long)]
     api_base_url: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct ApprovalDraft {
-    proposal_hash: String,
-    timestamp: u64,
-    nonce: u64,
-    nullifier: Vec<u8>,
-    version: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ApprovalPayload {
-    #[serde(flatten)]
-    draft: ApprovalDraft,
-    signature: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SignedApprovalArtifact {
-    #[serde(flatten)]
-    draft: ApprovalDraft,
-    owner_address: String,
-    public_key: String,
-    signature: String,
 }
 
 #[derive(Deserialize)]
@@ -459,73 +431,6 @@ fn write_json<T: Serialize>(value: &T, output: Option<&Path>, pretty: bool) -> R
     Ok(())
 }
 
-fn parse_proposal_hash(value: &str) -> Result<[u8; 32], String> {
-    let value = value.trim();
-    let value = value
-        .strip_prefix("0x")
-        .or_else(|| value.strip_prefix("0X"))
-        .unwrap_or(value);
-    let bytes = hex::decode(value)
-        .map_err(|_| "proposal_hash must contain only hexadecimal characters".to_string())?;
-    if bytes.len() != 32 {
-        return Err("proposal_hash must be exactly 32 bytes (64 hexadecimal characters)".into());
-    }
-    let mut hash = [0u8; 32];
-    hash.copy_from_slice(&bytes);
-    Ok(hash)
-}
-
-fn normalize_proposal_hash(value: &str) -> Result<String, String> {
-    Ok(hex::encode(parse_proposal_hash(value)?))
-}
-
-fn parse_nullifier(value: &[u8]) -> Result<[u8; NULLIFIER_BYTES], String> {
-    if value.len() != NULLIFIER_BYTES {
-        return Err(format!(
-            "nullifier must contain exactly {NULLIFIER_BYTES} bytes; received {}",
-            value.len()
-        ));
-    }
-    let mut nullifier = [0u8; NULLIFIER_BYTES];
-    nullifier.copy_from_slice(value);
-    Ok(nullifier)
-}
-
-fn validate_draft(draft: &ApprovalDraft) -> Result<(), String> {
-    parse_proposal_hash(&draft.proposal_hash)?;
-    parse_nullifier(&draft.nullifier)?;
-    if draft.version != UltraBlockchain::APPROVAL_BOUND_TRANSACTION_VERSION {
-        return Err(format!(
-            "validator approvals require signing-envelope version {}",
-            UltraBlockchain::APPROVAL_BOUND_TRANSACTION_VERSION
-        ));
-    }
-    Ok(())
-}
-
-fn canonical_approval_message(draft: &ApprovalDraft) -> Result<Vec<u8>, String> {
-    validate_draft(draft)?;
-    let proposal_hash = parse_proposal_hash(&draft.proposal_hash)?;
-    let nullifier = parse_nullifier(&draft.nullifier)?;
-
-    let mut hasher = Sha3_256::new();
-    hasher.update(UltraBlockchain::SOVEREIGN_ADDR.as_bytes());
-    hasher.update(PROPOSAL_RECIPIENT.as_bytes());
-    hasher.update(&APPROVAL_AMOUNT.to_le_bytes());
-    hasher.update(&APPROVAL_FEE.to_le_bytes());
-    hasher.update(&draft.timestamp.to_le_bytes());
-    hasher.update(&nullifier);
-    hasher.update(&draft.nonce.to_le_bytes());
-    hasher.update(&APPROVAL_GAS_LIMIT.to_le_bytes());
-    hasher.update(&APPROVAL_GAS_PRICE.to_le_bytes());
-    hasher.update(b"UltraNet/approval-signing-envelope/v3");
-    hasher.update(&draft.version.to_le_bytes());
-    hasher.update(&UltraBlockchain::L1_CHAIN_ID.to_le_bytes());
-    hasher.update(b"ValidatorApproval");
-    hasher.update(&proposal_hash);
-    Ok(hasher.finalize().to_vec())
-}
-
 fn now_seconds() -> Result<u64, String> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -562,7 +467,9 @@ async fn fetch_pending_proposal(
         .proposals
         .into_iter()
         .find(|proposal| {
-            normalize_proposal_hash(&proposal.hash).ok().as_deref() == Some(&requested_hash)
+            normalize_proposal_hash(&proposal.hash)
+                .ok()
+                .is_some_and(|hash| hash == requested_hash)
         })
         .ok_or_else(|| format!("pending validator proposal {requested_hash} was not found"))
 }
@@ -773,12 +680,10 @@ async fn run_sign(args: SignArgs) -> Result<(), String> {
     let owner = load_owner_at(&args.key_file.keys, args.owner_index)?;
 
     let mut signature = owner.keypair.sign(&message);
-    if signature.len() != SIGNATURE_BYTES
-        || !QuantumKeyPair::verify(&owner.keypair.public_key, &message, &signature)
-    {
+    if let Err(error) = verify_partial_signature(&owner.keypair.public_key, &signature, &draft) {
         signature.zeroize();
         return Err(format!(
-            "owner {} produced an invalid Dilithium-5 signature",
+            "owner {} produced an invalid Dilithium-5 signature: {error}",
             owner.index
         ));
     }
@@ -815,14 +720,12 @@ async fn run_combine(args: CombineArgs) -> Result<(), String> {
         return Err("the two signatures must come from different authorized owners".into());
     }
 
-    let mut combined_signature = Vec::with_capacity(COMBINED_SIGNATURE_BYTES);
-    if first_owner_index <= second_owner_index {
-        combined_signature.extend_from_slice(&first_signature);
-        combined_signature.extend_from_slice(&second_signature);
-    } else {
-        combined_signature.extend_from_slice(&second_signature);
-        combined_signature.extend_from_slice(&first_signature);
-    }
+    let combined_signature = combine_two_signatures(
+        first_owner_index,
+        &first_signature,
+        second_owner_index,
+        &second_signature,
+    )?;
     if combined_signature.len() != COMBINED_SIGNATURE_BYTES {
         return Err(format!(
             "combined signature must contain exactly {COMBINED_SIGNATURE_BYTES} bytes"
@@ -894,7 +797,16 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use UltraNet::{ProofType, Transaction, TransactionPayload};
+    use UltraNet::{
+        governance::approval::{parse_nullifier, parse_proposal_hash},
+        ProofType, Transaction, TransactionPayload,
+    };
+
+    const PROPOSAL_RECIPIENT: &str = "0x0";
+    const APPROVAL_AMOUNT: u64 = 0;
+    const APPROVAL_FEE: u64 = 0;
+    const APPROVAL_GAS_LIMIT: u64 = 1_000_000;
+    const APPROVAL_GAS_PRICE: u64 = 1;
 
     fn test_draft() -> ApprovalDraft {
         ApprovalDraft {

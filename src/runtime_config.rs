@@ -293,4 +293,25 @@ mod tests {
 
         env::remove_var(DB_PATH_ENV);
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_default_data_path_uses_localappdata() {
+        let _guard = env_lock()
+            .lock()
+            .expect("environment lock should not be poisoned");
+        let previous = env::var_os("LOCALAPPDATA");
+        let local_app_data = temporary_directory("localappdata");
+        env::set_var("LOCALAPPDATA", &local_app_data);
+
+        assert_eq!(
+            default_data_path(),
+            local_app_data.join("UltraNet").join("data")
+        );
+
+        match previous {
+            Some(value) => env::set_var("LOCALAPPDATA", value),
+            None => env::remove_var("LOCALAPPDATA"),
+        }
+    }
 }

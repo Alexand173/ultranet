@@ -75,6 +75,80 @@ cargo build --release --locked --bin ultranet-auth
 
 The CLI keeps the Dilithium private key local, requests a fresh challenge, and writes the public `POST /api/auth/login` JSON payload. It accepts both the generated hex-encoded `sovereign_keys.json` format and the local owner backup format with byte-array `public_key` and `private_key` fields. Submit that payload with a private cookie jar or import it through the `CLI_SIGNED_PAYLOAD` mode on the browser `/login` page, as documented in [`../CLI_AUTH_SIGNING.md`](../CLI_AUTH_SIGNING.md). Do not copy the key file or the CLI signing binary to the VPS. The browser import accepts only the public login fields, keeps the pasted payload in memory, and clears it after a successful session.
 
+## Validator-only web approval
+
+The Join Swarm dashboard has a protected pending-approval surface, but the web flow is disabled unless the isolated signer boundary is explicitly provisioned. Web approval is not an online copy of `sovereign_keys.json`:
+
+```text
+validator wallet session
+        │  review + exact hash confirmation
+        ▼
+UltraNet approval gateway (public API; no private key)
+        │  private Unix socket per owner
+        ├── owner-0 signer process / HSM
+        ├── owner-1 signer process / HSM
+        └── owner-2 signer process / HSM
+        │  two distinct verified signatures
+        ▼
+existing node ValidatorApproval verifier + durable approval journal
+```
+
+The gateway and browser never receive a Sovereign secret key. The checked-in `ultranet-approval-signer` file adapter is a bootstrap/local-agent implementation that keeps one private owner key in a separate process and requires local `APPROVE` presence by default. For production, replace that adapter with an HSM or separately administered signer host; do not enable unattended file signing merely to remove a local presence check.
+
+Enable the feature only after the signer, role mapping, backup, and recovery procedure have passed a staging review:
+
+```bash
+cargo build --release --locked --bin UltraNet --bin ultranet-approval-signer
+sudo install -o root -g root -m 0755 target/release/UltraNet /opt/ultranet/target/release/UltraNet
+sudo install -o root -g root -m 0755 target/release/ultranet-approval-signer /opt/ultranet/target/release/ultranet-approval-signer
+sudo install -d -o root -g ultranet -m 0750 /etc/ultranet
+sudo install -o root -g ultranet -m 0640 deploy/sovereign-owner-auth.example.json /etc/ultranet/sovereign-owner-auth.json
+sudoedit /etc/ultranet/sovereign-owner-auth.json
+sudo chmod 0640 /etc/ultranet/sovereign-owner-auth.json
+```
+
+Each owner binding must use a unique absolute socket and signer ID. The file contains only non-secret session-to-signer mapping data:
+
+```json
+[
+  {
+    "owner_index": 0,
+    "session_node_identifier": "<owner-session-wallet-address>",
+    "signer_id": "owner-0",
+    "signer_socket": "/run/ultranet-approval-signer/owner-0.sock"
+  },
+  {
+    "owner_index": 1,
+    "session_node_identifier": "<owner-session-wallet-address>",
+    "signer_id": "owner-1",
+    "signer_socket": "/run/ultranet-approval-signer/owner-1.sock"
+  },
+  {
+    "owner_index": 2,
+    "session_node_identifier": "<owner-session-wallet-address>",
+    "signer_id": "owner-2",
+    "signer_socket": "/run/ultranet-approval-signer/owner-2.sock"
+  }
+]
+```
+
+Set both session allowlists. The identifiers must also be present in `ULTRANET_AUTHORIZED_NODE_IDENTIFIERS` so they can establish a wallet session:
+
+```dotenv
+ULTRANET_WEB_APPROVAL_ENABLED=true
+ULTRANET_AUTHORIZED_NODE_IDENTIFIERS=<owner-0-session>,<owner-1-session>,<owner-2-session>
+ULTRANET_VALIDATOR_REVIEW_IDENTIFIERS=<owner-0-session>,<owner-1-session>,<owner-2-session>
+ULTRANET_SOVEREIGN_OWNER_AUTH_FILE=/etc/ultranet/sovereign-owner-auth.json
+ULTRANET_APPROVAL_SIGNER_TIMEOUT_SECONDS=20
+ULTRANET_APPROVAL_INTENT_TTL_SECONDS=600
+```
+
+Run three independently permissioned signer processes, one per owner index. Do not use one process/socket for all three private keys. The default process requires the local signer operator to type `APPROVE` after inspecting the exact hash; an HSM adapter should replace that prompt for unattended production orchestration. If the signer is unavailable, the dashboard must report `SIGNER_UNAVAILABLE` and no node approval is submitted.
+
+The browser flow is deliberately limited to a review and exact-hash confirmation. After the first signer records a valid public signature, the second distinct owner repeats the confirmation. The gateway automatically combines exactly two public signatures and submits the existing version-3 payload. `POST /api/governance/approve` remains the final node verifier and the offline `ultranet-approve` procedure remains the break-glass path.
+
+The approval gateway persists only short-lived intent state, public signatures, nonce reservations, public owner identity, stage, and audit outcomes. It must not persist or log private keys, wallet passwords, `ULTRANET_ADMIN_TOKEN`, signer credentials, or raw request dumps. Keep the signer socket off Caddy, Cloudflare, public DNS, and the dashboard's public network surface.
+
 ## AppChain registry migration
 
 The first AppChain prototype stored four-field configs and anchors without a treasury, fee, anchor number, or proof metadata. Run the migrator once before starting the production binary against an existing database. It refuses to run while `ultranet.service` or an `UltraNet` process is active, writes raw `appchain_configs` and `appchain_anchors` records first, and is a dry run unless `--apply` is supplied.
@@ -121,6 +195,38 @@ sudo install -o root -g root -m 0644 deploy/ultranet-faucet.service /etc/systemd
 ```
 
 Install the encrypted credentials referenced by `deploy/ultranet-faucet.service` through the host's secret-management process. The faucet environment file contains no private key, CAPTCHA secret, operator token, or `ULTRANET_ADMIN_TOKEN`. Keep `FAUCET_ENABLED=false` until the isolated signer, separate SQLite backup, private proxy route, monitoring, and canary procedure have been verified. The full provisioning, preflight, kill-switch, backup, and rotation procedure is in [`../docs/FAUCET_OPERATIONS.md`](../docs/FAUCET_OPERATIONS.md).
+
+### Faucet UI/API origin and CORS
+
+Use `https://faucet.ultranetwork.cc` as the canonical faucet origin. The repository currently contains no faucet UI, so the installed Caddy route is API-only and the existing dashboard setting `NEXT_PUBLIC_API_BASE_URL=https://api.ultranetwork.cc` must not be changed for faucet work.
+
+The preferred future design is same-origin: serve the faucet UI at `faucet.ultranetwork.cc`, route only `/api/faucet/status`, `/api/faucet/claims`, and `/api/faucet/claims/*` to `127.0.0.1:8090`, and route the UI shell to its own explicitly approved frontend target. With that arrangement, the browser needs no CORS headers, no wildcard origin, and no credentials. The faucet API must not be folded into the general node API or dashboard route.
+
+If a future product decision requires a cross-origin UI, add one explicit `Access-Control-Allow-Origin` value and an explicit `OPTIONS` preflight route at the proxy. Allow only `GET`, `POST`, `Content-Type`, and `Idempotency-Key`; do not allow credentials or `*`. Do not add the faucet origin to the node's CORS allowlist unless the browser is intentionally calling the node directly.
+
+The route must remain behind the upstream WAF/bot-control layer. The Caddy 2.6.2 route uses its per-upstream `trusted_proxies` CIDR list and rebuilds `X-Forwarded-For` from trusted proxy metadata; it strips client-supplied forwarding headers and does not copy raw `CF-Connecting-IP`. Keep origin HTTP/HTTPS access restricted to the WAF's published ranges or a tunnel before treating that identity as trusted.
+
+The faucet Turnstile widget is restricted to the exact hostname `faucet.ultranetwork.cc` and action `faucet_claim`. The server-side Siteverify response must report `success=true` with both values before a request can pass CAPTCHA validation. Keep the secret only in the encrypted systemd credential; the public widget uses only the site key.
+
+### Coordinated Cloudflare origin lockdown
+
+Proxy both `api.ultranetwork.cc` and `faucet.ultranetwork.cc` in Cloudflare before removing broad VPS web ingress. The API hostname must not remain DNS-only when the origin firewall is tightened. The checked-in [`CLOUDFLARE_RULES.md`](./CLOUDFLARE_RULES.md) contains the managed-WAF, faucet path/method, cache, Turnstile, rate-limit, canary, and rollback policy.
+
+The guarded [`cloudflare-origin-lockdown.sh`](./cloudflare-origin-lockdown.sh) procedure downloads and validates the official Cloudflare IPv4/IPv6 ranges, verifies both names resolve only to those ranges, snapshots UFW state, and adds Cloudflare-only TCP 80/443 rules. It never modifies SSH/P2P rules or Cloudflare dashboard settings:
+
+```bash
+sudo bash deploy/cloudflare-origin-lockdown.sh --check
+sudo bash deploy/cloudflare-origin-lockdown.sh --apply
+```
+
+The first apply retains existing broad rules. After public HTTPS checks pass and a separate SSH recovery path is confirmed, remove the broad rules explicitly:
+
+```bash
+sudo env CLOUDFLARE_LOCKDOWN_CONFIRM=I_UNDERSTAND \\
+  bash deploy/cloudflare-origin-lockdown.sh --apply --remove-broad
+```
+
+Do not run the removal step while `api.ultranetwork.cc` is DNS-only. Keep the faucet disabled until the origin firewall, WAF, Turnstile, monitoring, and canary gates are complete.
 
 ## systemd
 

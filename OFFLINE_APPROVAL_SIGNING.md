@@ -4,6 +4,8 @@ This guide is for the three Sovereign owners who approve a pending validator. Th
 
 The approval threshold is **2 of 3**. Two different Sovereign owners sign the same version-3 approval draft with their Dilithium-5 private keys. The node verifies both signatures and activates the pending validator. The CLI does not assign approval authority; the node's configured Sovereign public keys remain the final authority.
 
+The Join Swarm dashboard may orchestrate the same ceremony through a separately deployed signer/HSM boundary, but it does not replace this offline procedure. The browser can request a short-lived approval intent and display public progress only; it never receives a Sovereign private key, nonce/nullifier/digest internals, or signature arrays. A local signer/HSM presence confirmation remains mandatory even when the browser flow has only review and confirm buttons.
+
 ## Security boundary
 
 Keep `sovereign_keys.json` and all `secret_key` / `private_key` fields on an offline signing machine. Do not copy them to:

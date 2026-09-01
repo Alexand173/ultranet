@@ -33,7 +33,9 @@ use parking_lot::RwLock;
 
 use serde::{Deserialize, Serialize};
 pub mod api;
+pub mod approval_signer;
 pub mod auth;
+pub mod governance;
 pub mod zk_circuit;
 pub use zk_circuit::*;
 pub mod faucet;

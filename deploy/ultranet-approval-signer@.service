@@ -1,0 +1,42 @@
+[Unit]
+Description=UltraNet isolated Sovereign approval signer (owner %i)
+After=network.target
+
+[Service]
+Type=simple
+User=ultranet-approver-%i
+Group=ultranet-approver-%i
+UMask=0077
+WorkingDirectory=/opt/ultranet
+EnvironmentFile=-/etc/ultranet/approval-signer-%i.env
+# The file-backed adapter requires an explicit unattended acknowledgement. In
+# production, replace it with the HSM/local-presence adapter; never add that
+# acknowledgement merely to hide a missing owner-presence control.
+ExecStart=/opt/ultranet/target/release/ultranet-approval-signer \
+  --socket /run/ultranet-approval-signer/owner-%i.sock \
+  --keys /var/lib/ultranet-approval-signer/owner-%i/key.json \
+  --owner-index %i \
+  --key-index 0 \
+  --signer-id owner-%i \
+  --unattended
+RuntimeDirectory=ultranet-approval-signer
+RuntimeDirectoryMode=0750
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/var/lib/ultranet-approval-signer
+ReadWritePaths=/run/ultranet-approval-signer
+RestrictAddressFamilies=AF_UNIX
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=30s
+TimeoutStopSec=15s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ultranet-approval-signer-%i
+
+[Install]
+WantedBy=multi-user.target

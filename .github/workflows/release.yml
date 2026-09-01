@@ -334,9 +334,97 @@ jobs:
           path: dist/UltraNetNode-windows-x64.zip
           if-no-files-found: error
 
+  test-windows:
+    name: Test Windows x64 in parallel
+    needs: validate-release
+    runs-on: windows-2022
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      CARGO_NET_RETRY: "5"
+      CARGO_HTTP_TIMEOUT: "120"
+      GIT_TERMINAL_PROMPT: "0"
+      RUST_BACKTRACE: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Install MinGW toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          path-type: inherit
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-clang
+            mingw-w64-x86_64-llvm
+            mingw-w64-x86_64-llvm-libs
+            mingw-w64-x86_64-cmake
+
+      - name: Install native LLVM for bindgen
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          choco install llvm -y --no-progress
+          $llvmPath = "C:\Program Files\LLVM\bin"
+          if (!(Test-Path "$llvmPath\libclang.dll")) {
+            throw "libclang.dll was not installed at $llvmPath"
+          }
+          "LIBCLANG_PATH=$llvmPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $llvmPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Restore Cargo dependency cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ultranet-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ultranet-cargo-
+
+      - name: Verify Windows test toolchain
+        shell: msys2 {0}
+        env:
+          LIBCLANG_PATH: C:/Program Files/LLVM/bin
+        run: |
+          set -euo pipefail
+          test -f "/c/Program Files/LLVM/bin/libclang.dll"
+          cargo --version
+          rustc --version
+          clang --version
+
+      - name: Run complete Windows test suite with default parallelism
+        shell: msys2 {0}
+        env:
+          LIBCLANG_PATH: C:/Program Files/LLVM/bin
+        run: |
+          set -o pipefail
+          cargo test --target x86_64-pc-windows-gnu --locked --all-targets 2>&1 | tee windows-test.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::error title=Windows tests::The complete Windows all-targets suite failed"
+            exit "$status"
+          fi
+
+      - name: Upload Windows test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: UltraNetNode-windows-test-log
+          path: windows-test.log
+          if-no-files-found: ignore
+
   publish:
     name: Publish GitHub release
-    needs: [build-linux, build-macos, build-windows]
+    needs: [build-linux, build-macos, build-windows, test-windows]
     runs-on: ubuntu-22.04
     steps:
       - name: Download packaged archives

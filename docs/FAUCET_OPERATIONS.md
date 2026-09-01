@@ -167,6 +167,38 @@ Run all checks locally or through a private administrative shell. Do not perform
 
 5. Confirm the reverse proxy limits the request body and publishes only the intended hostname. Put public traffic behind an upstream WAF/bot-control and edge rate limiter; Caddy's body limit is not a WAF. Keep the node API private and do not add wildcard CORS or browser credentials.
 
+## Reverse proxy and origin policy
+
+The canonical faucet origin is `https://faucet.ultranetwork.cc`. The current repository has no faucet UI, so the configured route is API-only. It accepts only:
+
+```text
+GET  /api/faucet/status
+GET  /api/faucet/claims/<claim-id>
+POST /api/faucet/claims
+```
+
+Every other method and path, including `/internal/*`, must return `404` at Caddy and must never reach `ultranet-faucet`. The API listener remains `127.0.0.1:8090`; the node API remains `127.0.0.1:8081` and is not part of this public route.
+
+The preferred future UI deployment is same-origin on `faucet.ultranetwork.cc`. No CORS headers, browser credentials, or wildcard origins are required in that model. Keep `website/.env.example` and the existing dashboard `NEXT_PUBLIC_API_BASE_URL` pointed at `https://api.ultranetwork.cc`. If a cross-origin faucet UI is approved later, add one exact UI origin plus an explicit preflight policy at the proxy; never add `*` or credentials.
+
+The proxy must strip `Authorization`, cookies, CSRF headers, `CF-Connecting-IP`, and client-supplied forwarding headers. The Caddy 2.6.2 route uses its per-upstream `trusted_proxies` CIDR list and rebuilds `X-Forwarded-For` from trusted proxy metadata rather than copying raw `CF-Connecting-IP`. Until the VPS firewall or a tunnel restricts origin access to the upstream WAF, direct-origin requests must not be treated as trusted client identity.
+
+Turnstile is bound to the exact application context `faucet.ultranetwork.cc` with action `faucet_claim`. The server accepts a Siteverify response only when `success=true`, `hostname` matches `faucet.ultranetwork.cc`, and `action` matches `faucet_claim`; missing or mismatched context is treated as a rejected CAPTCHA. The browser supplies only the short-lived token and never selects the hostname or action.
+
+Validate and reload the route without exposing credentials:
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo systemctl reload caddy
+curl --fail --silent https://faucet.ultranetwork.cc/api/faucet/status
+curl --silent --show-error --output /dev/null --write-out '%{http_code}\n' \\
+  https://faucet.ultranetwork.cc/internal/status  # must be 404
+```
+
+Cloudflare must provide TLS/WAF/bot protection, disable caching for `/api/faucet/*`, apply a dedicated write rate limit, and avoid logging request bodies or secret headers. Caddy's body limit is a request guard, not a WAF. The exact dashboard expressions and the guarded UFW procedure are in [`../deploy/CLOUDFLARE_RULES.md`](../deploy/CLOUDFLARE_RULES.md) and [`../deploy/cloudflare-origin-lockdown.sh`](../deploy/cloudflare-origin-lockdown.sh).
+
+The node API hostname must also be Cloudflare-proxied before broad TCP 80/443 rules are removed. The current production API and faucet share the VPS origin, so tightening the firewall for only the faucet would either leave a bypass or break the API. Run the lockdown script first in `--check` mode, then stage allow rules, verify all public HTTPS routes, and remove broad rules only with an active SSH recovery path. Never run the removal step while `api.ultranetwork.cc` is DNS-only.
+
 ## Public API
 
 The public routes are:

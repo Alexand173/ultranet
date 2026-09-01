@@ -3,7 +3,7 @@
 **Status:** Draft for a mainnet capped beta
 **Scope:** Dedicated online faucet signer and public claim service
 **Network:** UltraNet L1 (`chain_id: 0`)
-**Last reviewed:** 2026-08-30
+**Last reviewed:** 2026-08-31
 
 ## 1. Executive summary
 
@@ -643,11 +643,11 @@ Also apply bounded memory, CPU, open files, request body size, connection count,
 
 - Bind the faucet service to `127.0.0.1`.
 - Terminate TLS at the existing Caddy/Nginx layer.
-- Route a dedicated host such as `faucet.ultranetwork.cc` or a same-origin `/faucet` path.
+- Use `https://faucet.ultranetwork.cc` as the canonical faucet origin; the current repository has no faucet UI, so the deployed route is API-only until a same-origin UI is approved.
+- Allow only `GET /api/faucet/status`, `GET /api/faucet/claims/<claim-id>`, and `POST /api/faucet/claims`; return `404` for `/internal/*`, unsupported methods, and unknown paths before proxying.
 - Keep TCP `8081` private; only the reverse proxy and local faucet process need node API access.
-- Use an exact frontend origin; never use wildcard CORS.
-- Do not enable browser credentials for public claim requests.
-- Trust forwarded client IP headers only from the configured reverse proxy, never from arbitrary clients.
+- Prefer same-origin UI/API so no CORS headers or browser credentials are required. If a cross-origin UI is approved, allow exactly one origin and explicit preflight methods/headers; never use wildcard CORS or credentials.
+- Strip client-supplied authorization, cookie, CSRF, Cloudflare, and forwarding headers. Forward only the reverse proxy's observed peer address until origin access is restricted to the upstream WAF and a trusted-proxy configuration is reviewed.
 - Apply proxy body-size, request-rate, connection, and timeout limits before traffic reaches the service.
 
 ### 9.4 Abuse resistance
@@ -839,6 +839,10 @@ Production should fail closed if the signer key is missing, the derived address 
 ### 11.2 Reverse proxy
 
 Add only a dedicated proxy route after the faucet has passed its local integration checks. The public route must forward to `127.0.0.1:8090`, apply TLS, request limits, and security headers. The node remains behind its existing private API boundary.
+
+The canonical faucet origin is `https://faucet.ultranetwork.cc`; the Turnstile widget and Siteverify response must use the exact hostname `faucet.ultranetwork.cc` and action `faucet_claim`. Prefer a same-origin faucet UI so no CORS headers or browser credentials are needed. If a cross-origin UI is approved, allow exactly one explicit origin and explicit preflight methods/headers; never use wildcard CORS or credentials.
+
+For the currently deployed Caddy 2.6.2, configure Cloudflare `trusted_proxies` inside each `reverse_proxy` handler with the reviewed IPv4/IPv6 CIDR list. Do not use the newer global `servers` syntax or the newer `static` module token on this version. Strip client-supplied forwarding and operator/session headers before forwarding. Trust `CF-Connecting-IP` only after the VPS firewall or tunnel restricts web ingress to Cloudflare.
 
 ### 11.3 Backups
 

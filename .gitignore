@@ -50,6 +50,7 @@ website/crypto/ultra-dilithium5/build/
 *.sh
 !deploy/ultranet-dashboard-deploy.sh
 !deploy/ultranet-memory-monitor.sh
+!deploy/cloudflare-origin-lockdown.sh
 !scripts/migrate_appchain_registry.sh
 !website/crypto/ultra-dilithium5/build.sh
 !website/crypto/ultra-dilithium5/NOTICE.txt
