@@ -174,7 +174,7 @@ export default function WalletSetup({
   };
 
   return (
-    <section className="relative z-10 mx-auto max-w-5xl px-6 py-12 sm:px-10 lg:px-12 lg:py-20" aria-labelledby="wallet-setup-title">
+    <section className="relative z-10 mx-auto max-w-5xl px-6 py-12 md:px-10 lg:px-12 lg:py-20" aria-labelledby="wallet-setup-title">
       <div className="mb-8 flex flex-col gap-5 border-b border-platinum/15 pb-8 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="font-mono text-xs uppercase tracking-[0.24em] text-cyan-glow">WALLET // PHASE_0</p>
@@ -203,7 +203,7 @@ export default function WalletSetup({
         })}
       </ol>
 
-      {error && <div role="alert" aria-live="polite" className="mb-6 border border-red-300/40 bg-red-300/10 px-4 py-3 font-mono text-xs leading-6 text-red-200">{error}</div>}
+      {error && <div id="wallet-setup-error" role="alert" aria-live="polite" aria-atomic="true" className="mb-6 border border-red-300/40 bg-red-300/10 px-4 py-3 font-mono text-xs leading-6 text-red-200">{error}</div>}
 
       {mode === "restore" && (
         <form className="max-w-2xl space-y-6" onSubmit={handlePasswordSubmit} noValidate aria-busy={busy}>
@@ -215,8 +215,8 @@ export default function WalletSetup({
           )}
           <div className="space-y-2">
             <label htmlFor="restore-recovery-phrase" className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/60">Recovery phrase</label>
-            <textarea id="restore-recovery-phrase" value={restorePhrase} onChange={(event) => setRestorePhrase(event.target.value)} rows={4} autoComplete="off" spellCheck={false} placeholder="Enter your 12 words in order" className="w-full resize-y border border-platinum/15 bg-platinum/[0.03] p-4 font-mono text-sm leading-7 text-platinum outline-hidden focus:border-cyan-glow focus:ring-1 focus:ring-cyan-glow/40" />
-            <p className="font-mono text-[10px] leading-5 text-platinum/40">Never enter this phrase into a website that does not clearly keep it local.</p>
+            <textarea id="restore-recovery-phrase" value={restorePhrase} onChange={(event) => setRestorePhrase(event.target.value)} rows={4} autoComplete="off" spellCheck={false} autoCapitalize="none" aria-describedby="restore-recovery-phrase-help" placeholder="Enter the original 12 words in order, separated by spaces" className="w-full resize-y border border-platinum/15 bg-platinum/[0.03] p-4 font-mono text-sm leading-7 text-platinum outline-hidden focus:border-cyan-glow focus:ring-1 focus:ring-cyan-glow/40" />
+            <p id="restore-recovery-phrase-help" className="font-mono text-[10px] leading-5 text-platinum/40">Never enter this phrase into a website that does not clearly keep it local.</p>
           </div>
           <PasswordFields password={password} confirmPassword={confirmPassword} setPassword={setPassword} setConfirmPassword={setConfirmPassword} />
           <button type="submit" disabled={busy} className="inline-flex min-h-11 items-center justify-center bg-cyan-glow px-6 py-4 font-mono text-xs font-black uppercase tracking-[0.16em] text-ink-black hover:bg-platinum focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black disabled:cursor-wait disabled:opacity-50">{busy ? "Restoring wallet…" : "Restore wallet"}</button>
