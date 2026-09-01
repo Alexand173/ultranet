@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   decryptWalletSeed,
   deriveIdentityFromStoredSeed,
+  RECOVERY_PHRASE_WORD_COUNT,
   storedPublicKeyToBytes,
   type LocalWalletKeyMaterial,
   type StoredWallet,
@@ -107,7 +108,7 @@ export default function WalletLocked({ wallet, onUnlocked, onCreated }: WalletLo
         <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-amber-200">WALLET_RECOVERY / NEW_KEY</p>
         <AlertTriangle className="mt-6 h-7 w-7 text-amber-200" aria-hidden="true" />
         <h1 ref={recoveryHeadingRef} id="wallet-replace-title" tabIndex={-1} className="mt-5 font-space-grotesk text-3xl font-bold uppercase tracking-tight text-platinum sm:text-4xl">Create a brand-new wallet?</h1>
-        <p className="mt-4 max-w-2xl text-sm leading-7 text-platinum/65">This is the fallback when the old wallet password and 12-word recovery phrase are both unavailable. UltraNet cannot reset the local password or recover that old wallet.</p>
+        <p className="mt-4 max-w-2xl text-sm leading-7 text-platinum/65">This is the fallback when the old wallet password and {RECOVERY_PHRASE_WORD_COUNT}-word recovery phrase are both unavailable. UltraNet cannot reset the local password or recover that old wallet.</p>
 
         <div className="mt-8 border border-amber-300/30 bg-amber-300/10 p-5 text-sm leading-7 text-amber-100/85">
           <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-amber-200">Before you continue</p>
@@ -178,13 +179,13 @@ export default function WalletLocked({ wallet, onUnlocked, onCreated }: WalletLo
       <section className="mt-10 border-t border-platinum/10 pt-7" aria-labelledby="wallet-recovery-title">
         <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-cyan-glow">Forgot your wallet password?</p>
         <h2 id="wallet-recovery-title" className="mt-3 font-space-grotesk text-2xl font-bold uppercase tracking-tight text-platinum">Choose a recovery path</h2>
-        <p className="mt-3 max-w-2xl text-sm leading-7 text-platinum/55"><strong className="text-platinum/80">Your 12-word recovery phrase is required</strong> if this device or password is lost. UltraNet cannot reset this local password. Use the phrase to restore this same wallet, or create a new wallet if the phrase is gone too.</p>
+        <p className="mt-3 max-w-2xl text-sm leading-7 text-platinum/55"><strong className="text-platinum/80">Your {RECOVERY_PHRASE_WORD_COUNT}-word recovery phrase is required</strong> if this device or password is lost. UltraNet cannot reset this local password. Use the phrase to restore this same wallet, or create a new wallet if the phrase is gone too.</p>
 
         <div className="mt-6 grid gap-4 md:grid-cols-2">
           <article className="border border-cyan-glow/25 bg-cyan-glow/[0.04] p-5">
             <KeyRound className="h-5 w-5 text-cyan-glow" aria-hidden="true" />
             <h3 className="mt-4 font-space-grotesk text-xl font-bold uppercase tracking-tight text-platinum">Restore this wallet</h3>
-            <p className="mt-3 text-sm leading-6 text-platinum/60">Enter the original 12 words and choose a new password. The same wallet address and funds remain available after the restore.</p>
+            <p className="mt-3 text-sm leading-6 text-platinum/60">Enter the original {RECOVERY_PHRASE_WORD_COUNT} words and choose a new password. The same wallet address and funds remain available after the restore.</p>
             <button type="button" onClick={() => openRecoveryView("restore")} className="mt-5 inline-flex min-h-11 items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-glow transition-colors hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black">
               Restore with recovery phrase <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
             </button>

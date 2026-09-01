@@ -8,6 +8,7 @@ import {
 } from "@/lib/dilithium-wasm";
 
 export const WALLET_CRYPTO_VERSION = 1 as const;
+export const RECOVERY_PHRASE_WORD_COUNT = 12 as const;
 export const WALLET_KDF_ITERATIONS = 310_000 as const;
 export const WALLET_KDF_SALT_BYTES = 16 as const;
 export const WALLET_AES_IV_BYTES = 12 as const;
@@ -99,8 +100,19 @@ export function normalizeRecoveryPhrase(phrase: string): string {
   return phrase.trim().toLowerCase().split(/\s+/).join(" ");
 }
 
+export function normalizeWalletAddress(address: string): string {
+  return address.trim().replace(/^0x/i, "").toLowerCase();
+}
+
+export function recoveryPhraseWordCount(phrase: string): number {
+  const normalized = normalizeRecoveryPhrase(phrase);
+  return normalized === "" ? 0 : normalized.split(" ").length;
+}
+
 export function isRecoveryPhraseValid(phrase: string): boolean {
-  return validateMnemonic(normalizeRecoveryPhrase(phrase), wordlist);
+  const normalized = normalizeRecoveryPhrase(phrase);
+  return recoveryPhraseWordCount(normalized) === RECOVERY_PHRASE_WORD_COUNT
+    && validateMnemonic(normalized, wordlist);
 }
 
 export function createRecoveryPhrase(): string {
@@ -109,8 +121,8 @@ export function createRecoveryPhrase(): string {
 
 export function deriveDilithiumSeedFromPhrase(phrase: string): Uint8Array {
   const normalized = normalizeRecoveryPhrase(phrase);
-  if (!validateMnemonic(normalized, wordlist)) {
-    throw new Error("Enter a valid 12-word recovery phrase.");
+  if (!isRecoveryPhraseValid(normalized)) {
+    throw new Error(`Enter a valid ${RECOVERY_PHRASE_WORD_COUNT}-word recovery phrase.`);
   }
 
   const bip39Seed = mnemonicToSeedSync(normalized);
@@ -172,8 +184,9 @@ export async function deriveIdentityFromStoredSeed(
   createdAt: number,
 ): Promise<LocalWalletKeyMaterial> {
   const identity = await createLocalWalletIdentity(seed, createdAt);
+  const normalizedAddress = normalizeWalletAddress(address);
   const expectedAddress = addressFromPublicKey(publicKey);
-  if (identity.address !== address || expectedAddress !== address || !identity.publicKey.every((byte, index) => byte === publicKey[index])) {
+  if (identity.address !== normalizedAddress || expectedAddress !== normalizedAddress || !identity.publicKey.every((byte, index) => byte === publicKey[index])) {
     clearKeyPair(identity);
     identity.seed.fill(0);
     throw new Error("The stored wallet identity does not match its encrypted key material.");
@@ -281,5 +294,6 @@ export function keyMaterialToStoredWallet(
 }
 
 export function splitRecoveryPhrase(phrase: string): string[] {
-  return normalizeRecoveryPhrase(phrase).split(" ");
+  const normalized = normalizeRecoveryPhrase(phrase);
+  return normalized === "" ? [] : normalized.split(" ");
 }

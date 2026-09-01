@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, ArrowLeft, Check, Eye, EyeOff, KeyRound, RotateCcw } from "lucide-react";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   bytesToHex,
   clearLocalWalletKeyMaterial,
@@ -11,6 +11,8 @@ import {
   isRecoveryPhraseValid,
   keyMaterialToStoredWallet,
   normalizeRecoveryPhrase,
+  normalizeWalletAddress,
+  RECOVERY_PHRASE_WORD_COUNT,
   splitRecoveryPhrase,
   type LocalWalletKeyMaterial,
   type StoredWallet,
@@ -31,9 +33,9 @@ type SetupStep = "password" | "phrase" | "verify" | "created";
 
 function makeCheckPositions(): [number, number] {
   const values = crypto.getRandomValues(new Uint32Array(2));
-  const first = (values[0] % 12) + 1;
-  const second = (values[1] % 12) + 1;
-  return [first, second === first ? (second % 12) + 1 : second];
+  const first = (values[0] % RECOVERY_PHRASE_WORD_COUNT) + 1;
+  const second = (values[1] % RECOVERY_PHRASE_WORD_COUNT) + 1;
+  return [first, second === first ? (second % RECOVERY_PHRASE_WORD_COUNT) + 1 : second];
 }
 
 export default function WalletSetup({
@@ -54,8 +56,19 @@ export default function WalletSetup({
   const [saved, setSaved] = useState(false);
   const [checkPositions, setCheckPositions] = useState<[number, number]>(() => makeCheckPositions());
   const [checkWords, setCheckWords] = useState<[string, string]>(["", ""]);
-  const [error, setError] = useState("");
+  const [error, setErrorState] = useState("");
+  const [errorRevision, setErrorRevision] = useState(0);
   const [busy, setBusy] = useState(false);
+  const errorRef = useRef<HTMLDivElement>(null);
+
+  const setError = (message: string) => {
+    if (message) setErrorRevision((current) => current + 1);
+    setErrorState(message);
+  };
+
+  useEffect(() => {
+    if (error) errorRef.current?.focus();
+  }, [error, errorRevision]);
 
   const words = useMemo(() => splitRecoveryPhrase(phrase), [phrase]);
   const title = mode === "restore"
@@ -104,7 +117,7 @@ export default function WalletSetup({
 
     if (mode === "restore") {
       if (!isRecoveryPhraseValid(restorePhrase)) {
-        setError("Enter the valid 12-word recovery phrase for this wallet.");
+        setError(`Enter the valid ${RECOVERY_PHRASE_WORD_COUNT}-word recovery phrase for this wallet.`);
         return;
       }
       void persistWallet(normalizeRecoveryPhrase(restorePhrase));
@@ -124,8 +137,9 @@ export default function WalletSetup({
     try {
       material = await createLocalWalletFromPhrase(recoveryPhrase);
       if (restoreTarget) {
+        const expectedAddress = normalizeWalletAddress(restoreTarget.address);
         const expectedPublicKey = restoreTarget.publicKey.trim().replace(/^0x/i, "").toLowerCase();
-        if (material.address !== restoreTarget.address || bytesToHex(material.publicKey) !== expectedPublicKey) {
+        if (material.address !== expectedAddress || bytesToHex(material.publicKey) !== expectedPublicKey) {
           throw new Error("That recovery phrase belongs to a different wallet. To replace the locked wallet, cancel and explicitly choose Create a brand-new wallet.");
         }
       }
@@ -156,7 +170,7 @@ export default function WalletSetup({
     event.preventDefault();
     setError("");
     if (!saved) {
-      setError("Confirm that you saved all 12 words before checking your backup.");
+      setError(`Confirm that you saved all ${RECOVERY_PHRASE_WORD_COUNT} words before checking your backup.`);
       return;
     }
     setStep("verify");
@@ -203,19 +217,19 @@ export default function WalletSetup({
         })}
       </ol>
 
-      {error && <div id="wallet-setup-error" role="alert" aria-live="polite" aria-atomic="true" className="mb-6 border border-red-300/40 bg-red-300/10 px-4 py-3 font-mono text-xs leading-6 text-red-200">{error}</div>}
+      {error && <div ref={errorRef} id="wallet-setup-error" role="alert" aria-live="polite" aria-atomic="true" tabIndex={-1} className="mb-6 border border-red-300/40 bg-red-300/10 px-4 py-3 font-mono text-xs leading-6 text-red-200">{error}</div>}
 
       {mode === "restore" && (
         <form className="max-w-2xl space-y-6" onSubmit={handlePasswordSubmit} noValidate aria-busy={busy}>
           {replacement && (
             <div className="border border-cyan-glow/25 bg-cyan-glow/[0.04] p-5 text-sm leading-7 text-platinum/65">
               <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-cyan-glow">Recover the existing wallet</p>
-              <p className="mt-3">Use the original 12 words to keep this wallet&apos;s existing address and funds. The phrase must derive the same wallet identity before the encrypted record can be replaced.</p>
+              <p className="mt-3">Use the original {RECOVERY_PHRASE_WORD_COUNT} words to keep this wallet&apos;s existing address and funds. The phrase must derive the same wallet identity before the encrypted record can be replaced.</p>
             </div>
           )}
           <div className="space-y-2">
             <label htmlFor="restore-recovery-phrase" className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/60">Recovery phrase</label>
-            <textarea id="restore-recovery-phrase" value={restorePhrase} onChange={(event) => setRestorePhrase(event.target.value)} rows={4} autoComplete="off" spellCheck={false} autoCapitalize="none" aria-describedby="restore-recovery-phrase-help" placeholder="Enter the original 12 words in order, separated by spaces" className="w-full resize-y border border-platinum/15 bg-platinum/[0.03] p-4 font-mono text-sm leading-7 text-platinum outline-hidden focus:border-cyan-glow focus:ring-1 focus:ring-cyan-glow/40" />
+            <textarea id="restore-recovery-phrase" value={restorePhrase} onChange={(event) => setRestorePhrase(event.target.value)} rows={4} autoComplete="off" spellCheck={false} autoCapitalize="none" aria-describedby="restore-recovery-phrase-help" placeholder={`Enter the original ${RECOVERY_PHRASE_WORD_COUNT} words in order, separated by spaces`} className="w-full resize-y border border-platinum/15 bg-platinum/[0.03] p-4 font-mono text-sm leading-7 text-platinum outline-hidden focus:border-cyan-glow focus:ring-1 focus:ring-cyan-glow/40" />
             <p id="restore-recovery-phrase-help" className="font-mono text-[10px] leading-5 text-platinum/40">Never enter this phrase into a website that does not clearly keep it local.</p>
           </div>
           <PasswordFields password={password} confirmPassword={confirmPassword} setPassword={setPassword} setConfirmPassword={setConfirmPassword} />
@@ -244,7 +258,7 @@ export default function WalletSetup({
           <div className="mt-6 grid grid-cols-2 gap-x-5 border-y border-cyan-glow/15 font-mono text-xs sm:gap-x-10">
             {Array.from({ length: 6 }, (_, index) => { const left = index; const right = index + 6; return <div key={index} className="contents"><PhraseWord index={left + 1} word={words[left]} visible={visible} /><PhraseWord index={right + 1} word={words[right]} visible={visible} /></div>; })}
           </div>
-          {visible && <form className="mt-6 space-y-5" onSubmit={handleBackupSubmit}><label className="flex min-h-11 items-start gap-3 text-sm leading-6 text-platinum/70"><input type="checkbox" checked={saved} onChange={(event) => setSaved(event.target.checked)} className="mt-1 h-4 w-4 accent-cyan-glow" /> <span>I saved all 12 words in order</span></label><button type="submit" className="inline-flex min-h-11 items-center justify-center bg-cyan-glow px-6 py-4 font-mono text-xs font-black uppercase tracking-[0.16em] text-ink-black hover:bg-platinum focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-[#0A0A1A]">Check my backup</button></form>}
+          {visible && <form className="mt-6 space-y-5" onSubmit={handleBackupSubmit}><label className="flex min-h-11 items-start gap-3 text-sm leading-6 text-platinum/70"><input type="checkbox" checked={saved} onChange={(event) => setSaved(event.target.checked)} className="mt-1 h-4 w-4 accent-cyan-glow" /> <span>I saved all {RECOVERY_PHRASE_WORD_COUNT} words in order</span></label><button type="submit" className="inline-flex min-h-11 items-center justify-center bg-cyan-glow px-6 py-4 font-mono text-xs font-black uppercase tracking-[0.16em] text-ink-black hover:bg-platinum focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-[#0A0A1A]">Check my backup</button></form>}
         </div>
       )}
 
