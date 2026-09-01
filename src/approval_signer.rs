@@ -19,6 +19,7 @@ use zeroize::Zeroize;
 pub const DEFAULT_SIGNER_TIMEOUT_SECONDS: u64 = 20;
 pub const DEFAULT_APPROVAL_INTENT_TTL_SECONDS: u64 = 10 * 60;
 const MIN_SIGNER_RESPONSE_BYTES: usize = PARTIAL_SIGNATURE_BYTES;
+#[cfg(unix)]
 const MAX_SIGNER_FRAME_BYTES: usize = 128 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

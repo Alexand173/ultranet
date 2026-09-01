@@ -1,5 +1,8 @@
+#[cfg(unix)]
 use parking_lot::RwLock;
+#[cfg(unix)]
 use serde::Serialize;
+#[cfg(unix)]
 use std::{
     env,
     fs::{self, OpenOptions},
@@ -10,6 +13,7 @@ use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
+#[cfg(unix)]
 use UltraNet::{
     api,
     auth::{canonical_login_message, AuthConfig, AuthService},
@@ -18,6 +22,7 @@ use UltraNet::{
     UltraBlockchain, ValidatorJoinProposalData,
 };
 
+#[cfg(unix)]
 #[derive(Debug, Serialize)]
 struct SessionBootstrap {
     owner_index: usize,
@@ -26,6 +31,7 @@ struct SessionBootstrap {
     csrf_token: String,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Serialize)]
 struct Bootstrap {
     api_base_url: String,
@@ -33,6 +39,7 @@ struct Bootstrap {
     owner_sessions: Vec<SessionBootstrap>,
 }
 
+#[cfg(unix)]
 fn private_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut file = OpenOptions::new()
         .write(true)
@@ -46,6 +53,7 @@ fn private_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .map_err(|error| format!("cannot sync {}: {error}", path.display()))
 }
 
+#[cfg(unix)]
 #[tokio::main]
 async fn main() -> Result<(), String> {
     let root = env::var_os("ULTRANET_APPROVAL_E2E_ROOT")
@@ -272,4 +280,10 @@ async fn main() -> Result<(), String> {
         let _ = child.wait();
     }
     server_result
+}
+
+#[cfg(not(unix))]
+fn main() {
+    eprintln!("UltraNet approval E2E harness requires a Unix-domain socket host.");
+    std::process::exit(1);
 }
