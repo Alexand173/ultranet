@@ -27,6 +27,7 @@ jobs:
       CARGO_HTTP_TIMEOUT: "120"
       GIT_TERMINAL_PROMPT: "0"
       RUST_BACKTRACE: "1"
+      CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS: "-C link-arg=-Wl,--exclude-all-symbols"
     steps:
       - name: Check out source
         uses: actions/checkout@v5
