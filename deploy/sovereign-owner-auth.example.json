@@ -3,18 +3,18 @@
     "owner_index": 0,
     "session_node_identifier": "replace-with-authorized-owner-session-identifier-0",
     "signer_id": "owner-0",
-    "signer_socket": "/run/ultranet-approval-signer/owner-0.sock"
+    "signer_socket": "/run/ultranet-approval-signer/owner-0/approval.sock"
   },
   {
     "owner_index": 1,
     "session_node_identifier": "replace-with-authorized-owner-session-identifier-1",
     "signer_id": "owner-1",
-    "signer_socket": "/run/ultranet-approval-signer/owner-1.sock"
+    "signer_socket": "/run/ultranet-approval-signer/owner-1/approval.sock"
   },
   {
     "owner_index": 2,
     "session_node_identifier": "replace-with-authorized-owner-session-identifier-2",
     "signer_id": "owner-2",
-    "signer_socket": "/run/ultranet-approval-signer/owner-2.sock"
+    "signer_socket": "/run/ultranet-approval-signer/owner-2/approval.sock"
   }
 ]

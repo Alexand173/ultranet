@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, CircleAlert, Copy, LoaderCircle, ShieldCheck, X } from "lucide-react";
 import {
   approveApprovalIntent,
@@ -130,8 +131,9 @@ export default function ApprovalReviewDialog({ proposal, onClose, onStatusChange
 
   const isFinal = status?.activated || status?.stage === "activated" || status?.stage === "approved";
   const isAwaiting = status?.stage === "awaiting_second_owner";
+  const recordedOwnerCount = status?.signedOwnerCount ?? proposal.signedOwnerCount;
 
-  return (
+  const dialog = (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-ink-black/85 px-4 py-6 backdrop-blur-sm" role="presentation">
       <div
         ref={dialogRef}
@@ -206,7 +208,7 @@ export default function ApprovalReviewDialog({ proposal, onClose, onStatusChange
           <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum/45">
             <span>ENVELOPE // VERSION 3</span>
             <span className="text-cyan-glow">SOVEREIGN // 2 OF 3</span>
-            <span>RECORDED // {proposal.signedOwnerCount}/{proposal.threshold}</span>
+            <span>RECORDED // {recordedOwnerCount}/{status?.threshold ?? proposal.threshold}</span>
           </div>
 
           {(status || error) && (
@@ -248,4 +250,5 @@ export default function ApprovalReviewDialog({ proposal, onClose, onStatusChange
       </div>
     </div>
   );
+  return typeof document === "undefined" ? null : createPortal(dialog, document.body);
 }

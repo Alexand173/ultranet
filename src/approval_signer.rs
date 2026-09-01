@@ -583,6 +583,25 @@ fn ensure_private_file_permissions(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_owner_auth_permissions(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(path)
+            .map_err(|error| format!("cannot inspect owner auth file: {error}"))?
+            .permissions()
+            .mode()
+            & 0o777;
+        if mode != 0o600 && mode != 0o640 {
+            return Err(format!(
+                "owner auth file {} must have mode 0600 or 0640",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn parse_bool_env(name: &str, default: bool) -> Result<bool, String> {
     match env::var(name) {
         Ok(value) => match value.trim() {
@@ -634,7 +653,7 @@ fn parse_identifier_list(name: &str, allow_missing: bool) -> Result<HashSet<Stri
 }
 
 fn load_owner_auth_bindings(path: &Path) -> Result<Vec<OwnerAuthBinding>, String> {
-    ensure_private_file_permissions(path)?;
+    ensure_owner_auth_permissions(path)?;
     let raw = fs::read_to_string(path).map_err(|error| {
         format!(
             "cannot read Sovereign owner auth file {}: {error}",
@@ -704,6 +723,29 @@ mod tests {
             signers: Arc::new(HashMap::new()),
         };
         assert!(gateway.capabilities("a".repeat(64).as_str()).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owner_auth_permissions_allow_private_or_group_readable_mapping_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = temporary_signer_directory("owner-auth-permissions");
+        std::fs::create_dir_all(&directory).expect("test directory should be created");
+        let path = directory.join("sovereign-owner-auth.json");
+        std::fs::write(&path, b"[]").expect("test mapping should be written");
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .expect("private mapping mode should be set");
+        assert!(ensure_owner_auth_permissions(&path).is_ok());
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640))
+            .expect("group-readable mapping mode should be set");
+        assert!(ensure_owner_auth_permissions(&path).is_ok());
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("world-readable mapping mode should be set");
+        assert!(ensure_owner_auth_permissions(&path).is_err());
+
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     #[test]

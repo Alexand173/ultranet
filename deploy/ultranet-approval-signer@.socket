@@ -1,0 +1,14 @@
+[Unit]
+Description=UltraNet approval signer socket (owner %i)
+PartOf=ultranet-approval-signer@%i.service
+
+[Socket]
+ListenStream=/run/ultranet-approval-signer/owner-%i/approval.sock
+SocketUser=ultranet-approver-%i
+SocketGroup=ultranet-approval-owner-%i
+SocketMode=0660
+RemoveOnStop=true
+Service=ultranet-approval-signer@%i.service
+
+[Install]
+WantedBy=sockets.target

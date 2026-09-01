@@ -30,16 +30,22 @@ async function readJson<T>(response: Response): Promise<ApiEnvelope<T>> {
   return payload;
 }
 
+function buildRequestHeaders(init: RequestInit, csrfToken?: string): Headers {
+  const headers = new Headers(init.headers);
+  if (!headers.has("Accept")) headers.set("Accept", "application/json");
+  if (typeof init.body === "string" && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (csrfToken) headers.set("X-UltraNet-CSRF", csrfToken);
+  return headers;
+}
+
 async function request<T>(path: string, init: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     credentials: "include",
     cache: "no-store",
-    headers: {
-      Accept: "application/json",
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
-      ...init.headers,
-    },
+    headers: buildRequestHeaders(init),
   });
   const payload = await readJson<T>(response);
   if (!response.ok || payload.success === false || payload.data === undefined) {
@@ -130,11 +136,7 @@ export async function authenticatedFetch(path: string, init: RequestInit = {}): 
     ...init,
     credentials: "include",
     cache: "no-store",
-    headers: {
-      Accept: "application/json",
-      ...(csrfToken ? { "X-UltraNet-CSRF": csrfToken } : {}),
-      ...init.headers,
-    },
+    headers: buildRequestHeaders(init, csrfToken ?? undefined),
   });
 }
 

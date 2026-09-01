@@ -52,6 +52,11 @@ website/crypto/ultra-dilithium5/build/
 !deploy/ultranet-memory-monitor.sh
 !deploy/cloudflare-origin-lockdown.sh
 !scripts/migrate_appchain_registry.sh
+!scripts/check_approval_staging.sh
+
+# Generated offline approval and legacy transaction artifacts - never commit
+/owner-identities.json
+/transfer.json
 !website/crypto/ultra-dilithium5/build.sh
 !website/crypto/ultra-dilithium5/NOTICE.txt
 !website/public/crypto/NOTICE-pqclean-dilithium5.txt

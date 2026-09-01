@@ -1,0 +1,8 @@
+# UltraNet approval signer runtime directories.
+# Each signer owns its directory; systemd socket activation owns the socket
+# through the corresponding per-owner group. The parent is traversable but not
+# listable by the node or signer users.
+d /run/ultranet-approval-signer 0711 root root -
+d /run/ultranet-approval-signer/owner-0 0710 ultranet-approver-0 ultranet-approval-owner-0 -
+d /run/ultranet-approval-signer/owner-1 0710 ultranet-approver-1 ultranet-approval-owner-1 -
+d /run/ultranet-approval-signer/owner-2 0710 ultranet-approver-2 ultranet-approval-owner-2 -

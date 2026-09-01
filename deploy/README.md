@@ -95,17 +95,53 @@ existing node ValidatorApproval verifier + durable approval journal
 
 The gateway and browser never receive a Sovereign secret key. The checked-in `ultranet-approval-signer` file adapter is a bootstrap/local-agent implementation that keeps one private owner key in a separate process and requires local `APPROVE` presence by default. For production, replace that adapter with an HSM or separately administered signer host; do not enable unattended file signing merely to remove a local presence check.
 
-Enable the feature only after the signer, role mapping, backup, and recovery procedure have passed a staging review:
+The checked-in systemd units use one socket and one Unix group per owner. `ultranet` receives only the three socket groups through a drop-in; it does not receive read permission on any signer key directory. The signer service adopts the descriptor created by its matching socket unit, so the signer cannot replace or broaden the gateway socket path:
+
+```text
+/run/ultranet-approval-signer/owner-0/approval.sock  owner-0 group
+/run/ultranet-approval-signer/owner-1/approval.sock  owner-1 group
+/run/ultranet-approval-signer/owner-2/approval.sock  owner-2 group
+```
+
+Enable the feature only after the signer, role mapping, backup, recovery, and socket-ACL procedure have passed a staging review. Install the service and group contracts first:
 
 ```bash
 cargo build --release --locked --bin UltraNet --bin ultranet-approval-signer
 sudo install -o root -g root -m 0755 target/release/UltraNet /opt/ultranet/target/release/UltraNet
 sudo install -o root -g root -m 0755 target/release/ultranet-approval-signer /opt/ultranet/target/release/ultranet-approval-signer
+
+for owner in 0 1 2; do
+  sudo getent group "ultranet-approval-owner-$owner" >/dev/null || \
+    sudo groupadd --system "ultranet-approval-owner-$owner"
+  if ! id -u "ultranet-approver-$owner" >/dev/null 2>&1; then
+    sudo useradd --system --gid "ultranet-approval-owner-$owner" \
+      --home-dir "/var/lib/ultranet-approval-signer/owner-$owner" \
+      --shell /usr/sbin/nologin "ultranet-approver-$owner"
+  else
+    sudo usermod --gid "ultranet-approval-owner-$owner" "ultranet-approver-$owner"
+  fi
+  sudo install -d -o "ultranet-approver-$owner" -g "ultranet-approval-owner-$owner" -m 0700 \
+    "/var/lib/ultranet-approval-signer/owner-$owner"
+done
+
 sudo install -d -o root -g ultranet -m 0750 /etc/ultranet
 sudo install -o root -g ultranet -m 0640 deploy/sovereign-owner-auth.example.json /etc/ultranet/sovereign-owner-auth.json
+sudo install -o root -g root -m 0644 deploy/ultranet-approval-signer@.service /etc/systemd/system/ultranet-approval-signer@.service
+sudo install -o root -g root -m 0644 deploy/ultranet-approval-signer@.socket /etc/systemd/system/ultranet-approval-signer@.socket
+sudo install -o root -g root -m 0644 deploy/ultranet-approval-signer.tmpfiles /etc/tmpfiles.d/ultranet-approval-signer.conf
+sudo install -d -o root -g root -m 0755 /etc/systemd/system/ultranet.service.d
+sudo install -o root -g root -m 0644 deploy/ultranet.service.d/approval-sockets.conf /etc/systemd/system/ultranet.service.d/approval-sockets.conf
 sudoedit /etc/ultranet/sovereign-owner-auth.json
 sudo chmod 0640 /etc/ultranet/sovereign-owner-auth.json
+sudo systemd-tmpfiles --create /etc/tmpfiles.d/ultranet-approval-signer.conf
+sudo systemctl daemon-reload
+for owner in 0 1 2; do
+  sudo systemctl enable --now "ultranet-approval-signer@${owner}.socket"
+done
+sudo systemctl restart ultranet.service
 ```
+
+For staging-only transport validation, install exactly one private key record into each owner directory with mode `0600`, owned by that owner’s signer account. Never use this file-backed step on production when an HSM or separately administered signer host is required. Do not copy `sovereign_keys.json` containing all owners to the node.
 
 Each owner binding must use a unique absolute socket and signer ID. The file contains only non-secret session-to-signer mapping data:
 
@@ -115,19 +151,19 @@ Each owner binding must use a unique absolute socket and signer ID. The file con
     "owner_index": 0,
     "session_node_identifier": "<owner-session-wallet-address>",
     "signer_id": "owner-0",
-    "signer_socket": "/run/ultranet-approval-signer/owner-0.sock"
+    "signer_socket": "/run/ultranet-approval-signer/owner-0/approval.sock"
   },
   {
     "owner_index": 1,
     "session_node_identifier": "<owner-session-wallet-address>",
     "signer_id": "owner-1",
-    "signer_socket": "/run/ultranet-approval-signer/owner-1.sock"
+    "signer_socket": "/run/ultranet-approval-signer/owner-1/approval.sock"
   },
   {
     "owner_index": 2,
     "session_node_identifier": "<owner-session-wallet-address>",
     "signer_id": "owner-2",
-    "signer_socket": "/run/ultranet-approval-signer/owner-2.sock"
+    "signer_socket": "/run/ultranet-approval-signer/owner-2/approval.sock"
   }
 ]
 ```
@@ -143,11 +179,20 @@ ULTRANET_APPROVAL_SIGNER_TIMEOUT_SECONDS=20
 ULTRANET_APPROVAL_INTENT_TTL_SECONDS=600
 ```
 
-Run three independently permissioned signer processes, one per owner index. Do not use one process/socket for all three private keys. The default process requires the local signer operator to type `APPROVE` after inspecting the exact hash; an HSM adapter should replace that prompt for unattended production orchestration. If the signer is unavailable, the dashboard must report `SIGNER_UNAVAILABLE` and no node approval is submitted.
+Run the staging preflight before enabling the feature. The full gate, canary, rollback, and production sign-off procedure is in [`../docs/APPROVAL_STAGING_PREFLIGHT.md`](../docs/APPROVAL_STAGING_PREFLIGHT.md). It has a static mode for CI/review and a host mode for a configured staging node:
+
+```bash
+bash scripts/check_approval_staging.sh --static
+sudo bash scripts/check_approval_staging.sh --api-base-url https://api-staging.example.com
+```
+
+Host mode must pass as root and verifies the exact environment-file/mapping ownership, three unique owner accounts and groups, `0660` socket ownership, `ultranet` connectivity without key readability, socket activation, node health, and the unauthenticated review-route boundary. It intentionally does not approve a proposal. Perform one controlled staging canary with two distinct owners after the preflight; record the exact hash, signer audit events, node journal, activation response, and rollback result.
+
+Run three independently permissioned signer sockets, one per owner index. Do not use one process/socket for all three private keys. The checked-in file adapter still requires the local signer operator to type `APPROVE`; because a systemd service has no interactive terminal, a production deployment must replace the file adapter with the audited HSM/local-presence adapter before live approvals. If the signer is unavailable, the dashboard must report `SIGNER_UNAVAILABLE` and no node approval is submitted.
 
 The browser flow is deliberately limited to a review and exact-hash confirmation. After the first signer records a valid public signature, the second distinct owner repeats the confirmation. The gateway automatically combines exactly two public signatures and submits the existing version-3 payload. `POST /api/governance/approve` remains the final node verifier and the offline `ultranet-approve` procedure remains the break-glass path.
 
-The approval gateway persists only short-lived intent state, public signatures, nonce reservations, public owner identity, stage, and audit outcomes. It must not persist or log private keys, wallet passwords, `ULTRANET_ADMIN_TOKEN`, signer credentials, or raw request dumps. Keep the signer socket off Caddy, Cloudflare, public DNS, and the dashboard's public network surface.
+The approval gateway persists only short-lived intent state, public signatures, nonce reservations, public owner identity, stage, and audit outcomes. It must not persist or log private keys, wallet passwords, `ULTRANET_ADMIN_TOKEN`, signer credentials, or raw request dumps. Keep the signer socket off Caddy, Cloudflare, public DNS, and the dashboard's public network surface. The socket is local-only; only the node service account reaches it through the per-owner supplementary groups. Do not add a reverse-proxy route or TCP listener for any signer.
 
 ## AppChain registry migration
 

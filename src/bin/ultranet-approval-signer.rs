@@ -1,9 +1,9 @@
 #[cfg(unix)]
 use clap::Parser;
 #[cfg(unix)]
-use std::os::unix::fs::FileTypeExt;
+use std::os::unix::{fs::FileTypeExt, io::FromRawFd, net::UnixListener as StdUnixListener};
 #[cfg(unix)]
-use std::{path::PathBuf, sync::Arc};
+use std::{env, path::PathBuf, sync::Arc};
 #[cfg(unix)]
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -64,19 +64,6 @@ async fn main() -> Result<(), String> {
         );
     }
 
-    if cli.socket.exists() {
-        let metadata = std::fs::symlink_metadata(&cli.socket)
-            .map_err(|error| format!("cannot inspect existing signer socket: {error}"))?;
-        if !metadata.file_type().is_socket() {
-            return Err(format!(
-                "refusing to replace non-socket path {}",
-                cli.socket.display()
-            ));
-        }
-        std::fs::remove_file(&cli.socket)
-            .map_err(|error| format!("cannot remove stale signer socket: {error}"))?;
-    }
-
     let signer = Arc::new(FileApprovalSigner::from_key_file(
         &cli.keys,
         cli.key_index,
@@ -84,13 +71,32 @@ async fn main() -> Result<(), String> {
         cli.signer_id,
         require_confirmation,
     )?);
-    let listener = UnixListener::bind(&cli.socket).map_err(|error| {
-        format!(
-            "cannot bind signer socket {}: {error}",
-            cli.socket.display()
-        )
-    })?;
-    set_socket_permissions(&cli.socket)?;
+    let listener = match socket_activation_listener(&cli.socket)? {
+        Some(listener) => listener,
+        None => {
+            if cli.socket.exists() {
+                let metadata = std::fs::symlink_metadata(&cli.socket)
+                    .map_err(|error| format!("cannot inspect existing signer socket: {error}"))?;
+                if !metadata.file_type().is_socket() {
+                    return Err(format!(
+                        "refusing to replace non-socket path {}",
+                        cli.socket.display()
+                    ));
+                }
+                std::fs::remove_file(&cli.socket)
+                    .map_err(|error| format!("cannot remove stale signer socket: {error}"))?;
+            }
+
+            let listener = UnixListener::bind(&cli.socket).map_err(|error| {
+                format!(
+                    "cannot bind signer socket {}: {error}",
+                    cli.socket.display()
+                )
+            })?;
+            set_socket_permissions(&cli.socket)?;
+            listener
+        }
+    };
     eprintln!(
         "UltraNet approval signer listening on {}",
         cli.socket.display()
@@ -147,6 +153,51 @@ async fn handle_connection(
         .await
         .map_err(|error| format!("cannot close signer response: {error}"))?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn socket_activation_listener(path: &PathBuf) -> Result<Option<UnixListener>, String> {
+    let listen_pid = env::var("LISTEN_PID").ok();
+    let listen_fds = env::var("LISTEN_FDS").ok();
+    if listen_pid.is_none() && listen_fds.is_none() {
+        return Ok(None);
+    }
+
+    let listen_pid = listen_pid
+        .ok_or_else(|| "LISTEN_PID is missing for socket activation".to_string())?
+        .parse::<u32>()
+        .map_err(|_| "LISTEN_PID is invalid for socket activation".to_string())?;
+    let listen_fds = listen_fds
+        .ok_or_else(|| "LISTEN_FDS is missing for socket activation".to_string())?
+        .parse::<usize>()
+        .map_err(|_| "LISTEN_FDS is invalid for socket activation".to_string())?;
+    if listen_pid != std::process::id() {
+        return Err("LISTEN_PID does not belong to this signer process".into());
+    }
+    if listen_fds != 1 {
+        return Err(format!(
+            "approval signer requires exactly one activated socket; received {listen_fds}"
+        ));
+    }
+
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("cannot inspect activated signer socket: {error}"))?;
+    if !metadata.file_type().is_socket() {
+        return Err(format!(
+            "activated signer path is not a socket: {}",
+            path.display()
+        ));
+    }
+
+    // systemd reserves fd 3 for the first socket in LISTEN_FDS. Ownership of
+    // the descriptor transfers to this listener, so it closes on shutdown.
+    let listener = unsafe { StdUnixListener::from_raw_fd(3) };
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| format!("cannot configure activated signer socket: {error}"))?;
+    UnixListener::from_std(listener)
+        .map(Some)
+        .map_err(|error| format!("cannot adopt activated signer socket: {error}"))
 }
 
 #[cfg(unix)]
