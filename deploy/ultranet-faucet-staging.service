@@ -37,6 +37,7 @@ TasksMax=64
 MemoryAccounting=true
 MemoryHigh=512M
 MemoryMax=1024M
+MemorySwapMax=0
 CPUWeight=25
 
 Restart=on-failure

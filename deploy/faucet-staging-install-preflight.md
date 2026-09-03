@@ -407,3 +407,17 @@ sudo journalctl -u ultranet-faucet-staging.service \
 ```
 
 Preserve the staging SQLite database, WAL/SHM state, unit/config revision, and redacted logs for review. Never switch the staging service to production credentials or address as a recovery shortcut.
+
+## Recorded disabled-only preflight — 2026-09-03
+
+A disabled-only staging faucet preflight was run on the separately provisioned VPS `2.28.61.71` after the staging validator's node-only gate passed. It used source revision `fb1274278190b4ddbeb5c9a4f0625d18d4df0fb6`; the deployed `ultranet-faucet` artifact matched SHA-256 `bd7258d2d2d0d4b7d86c1025c6d15442d24bc66368a588f8bd2dad17cc739cd3`.
+
+The preflight installed the dedicated `ultranet-faucet-staging` user/group, staging binary, staging environment, four encrypted credential files, and the staging systemd unit. A fresh staging-only Dilithium signer/address was generated and did not reuse the production faucet address. The plaintext signer, abuse, operator, and Turnstile staging files were removed after encryption; only root-owned mode-`0600` `.cred` files remain. The staging service has no production group membership and cannot read production or validator paths under its service UID.
+
+The staging faucet service is active but remains disabled at both configuration and persisted service-state layers. `check-config` passed with `127.0.0.1:8090`, node API `http://127.0.0.1:8081`, the exact hostname `faucet-staging.ultranetwork.cc`, the fixed claim amount `1,000,000` base units, and `FAUCET_ENABLED=false`. Local status reported `enabled=false`, `availability=disabled`, six decimals, zero queue depth, zero reserved/confirmed budget, and zero claims. Unauthenticated `/internal/status` and `/internal/health` returned `401`; an unknown claim lookup returned `404`.
+
+The staging node returned valid chain state, the staging signer address account probe returned `decimals=6`, and the transaction estimate returned the fixed amount with a fee of at least `10,000` base units. API and P2P listeners remained loopback-only. The faucet cgroup used `MemoryHigh=512M`, `MemoryMax=1G`, and `MemorySwapMax=0`; `oom=0` and `oom_kill=0` were recorded. No production/faucet/Caddy service was active and no production or public faucet connection was observed.
+
+For this no-claim preflight, the Turnstile credential was a random disposable local placeholder because a provider-issued staging widget secret was not available. It was loaded only to prove credential projection and startup; no request was sent to Cloudflare Siteverify. Therefore Turnstile hostname/secret validity, public DNS/TLS/WAF behavior, Caddy validation, origin firewall policy, and external route checks remain unverified. The staging Caddy template is reviewed and committed but is not installed because no separate staging Caddy service exists on this host.
+
+No `/internal/enable` call was made, no claim was submitted, no faucet funds were moved, and no production DNS, Cloudflare, firewall, proxy, service, credential, state, or funds were modified. Replace the placeholder with a separately provisioned staging Turnstile secret and obtain a separate claim approval before any canary procedure.
