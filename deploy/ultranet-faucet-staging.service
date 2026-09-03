@@ -68,7 +68,7 @@ AmbientCapabilities=
 # The service must not read validator, production faucet, dashboard, or
 # credential-source paths. systemd projects only the four named credentials
 # into $CREDENTIALS_DIRECTORY for the worker.
-InaccessiblePaths=/var/lib/ultranet /var/lib/ultranet-staging /etc/ultranet /etc/ultranet-staging /etc/ultranet-faucet /etc/ultranet-faucet-staging/secrets /opt/ultranet /opt/ultranet-staging /opt/ultranet-faucet /opt/ultranet-faucet-staging/public /root
+InaccessiblePaths=-/var/lib/ultranet -/var/lib/ultranet-staging -/etc/ultranet -/etc/ultranet-staging -/etc/ultranet-faucet -/etc/ultranet-faucet-staging/secrets -/opt/ultranet -/opt/ultranet-staging -/opt/ultranet-faucet -/opt/ultranet-faucet-staging/public -/root
 ReadOnlyPaths=/etc/ultranet-faucet-staging/faucet.env
 ReadWritePaths=/var/lib/ultranet-faucet-staging
 
