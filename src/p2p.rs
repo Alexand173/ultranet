@@ -9,7 +9,9 @@ use libp2p::{
     identify, identity, kad, mdns,
     multiaddr::Protocol,
     noise, ping,
-    swarm::{Config as SwarmConfig, NetworkBehaviour, Swarm, SwarmEvent},
+    swarm::{
+        behaviour::toggle::Toggle, Config as SwarmConfig, NetworkBehaviour, Swarm, SwarmEvent,
+    },
     tcp, yamux, Multiaddr, PeerId, Transport,
 };
 use parking_lot::Mutex;
@@ -63,7 +65,7 @@ pub enum NetworkMessage {
 #[behaviour(to_swarm = "UltraEvent")]
 pub struct UltraBehaviour {
     pub gossipsub: gossipsub::Behaviour,
-    pub mdns: mdns::tokio::Behaviour,
+    pub mdns: Toggle<mdns::tokio::Behaviour>,
     pub identify: identify::Behaviour,
     pub kademlia: kad::Behaviour<kad::store::MemoryStore>,
     pub ping: ping::Behaviour,
@@ -845,7 +847,18 @@ impl P2PNode {
         )?;
 
         // 4. mDNS
-        let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)?;
+        // Disposable nodes have no permitted external interfaces or peers. Avoid
+        // constructing the mDNS interface watcher in that profile because it
+        // requires an AF_NETLINK socket, which is intentionally excluded by the
+        // staging systemd sandbox. Production keeps the existing IPv4 mDNS path.
+        let mdns = if p2p_config.disposable_mode {
+            Toggle::from(None)
+        } else {
+            Toggle::from(Some(mdns::tokio::Behaviour::new(
+                mdns::Config::default(),
+                peer_id,
+            )?))
+        };
 
         // 5. Identify
         let identify = identify::Behaviour::new(identify::Config::new(
