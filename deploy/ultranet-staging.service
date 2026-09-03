@@ -77,7 +77,9 @@ AmbientCapabilities=
 # The staging service must not read production node/faucet state, deployment
 # files, website assets, signer stores, or the encrypted credential source.
 # systemd loads the named credential before applying this filesystem sandbox.
-InaccessiblePaths=/var/lib/ultranet /var/lib/ultranet-faucet /etc/ultranet /etc/ultranet-faucet /etc/ultranet-staging/secrets /opt/ultranet /opt/ultranet-faucet /opt/ultranet/public /root
+# A leading '-' keeps a clean disposable host installable when a production
+# path has not been provisioned; an existing path is still made inaccessible.
+InaccessiblePaths=-/var/lib/ultranet -/var/lib/ultranet-faucet -/etc/ultranet -/etc/ultranet-faucet -/etc/ultranet-staging/secrets -/opt/ultranet -/opt/ultranet-faucet -/opt/ultranet/public -/root
 ReadOnlyPaths=/etc/ultranet-staging/ultranet.env /opt/ultranet-staging/target/release
 ReadWritePaths=/var/lib/ultranet-staging
 
