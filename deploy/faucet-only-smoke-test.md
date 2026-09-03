@@ -308,24 +308,65 @@ Observed gates:
   environment contained no admin token assignment or production path, the
   encrypted credential projected successfully, and service/state ownership and
   modes matched the reviewed unit.
-- The node started under the deny-all/loopback policy and remained stable, but
-  first-run TFHE key generation held approximately 6.72 GiB with no API or P2P
-  listener after a bounded observation window. The node was stopped cleanly
-  before any faucet action; no claim, faucet credential, firewall, DNS, Caddy,
-  production service, or production state was touched.
+- The initial node start loaded the database but stopped before P2P because
+  first-run TFHE key generation held approximately 6.72 GiB. The node was
+  stopped before any faucet action; no claim, faucet credential, firewall, DNS,
+  Caddy, production service, or production state was touched.
 
-Phase 2 is explicitly blocked at the cryptographic-initialization capacity gate.
-Do not raise `MemoryMax`, add swap, or copy generated cryptographic state as an
-unreviewed workaround. Re-run on a separately approved host with sufficient
-headroom, or obtain a written capacity exception and a reviewed key-generation
-procedure before attempting final staging initialization.
+The initial attempt was blocked at the cryptographic-initialization capacity
+gate. Do not raise `MemoryMax`, add swap, or copy generated cryptographic state
+as an unreviewed workaround. The follow-up below records the separately
+controlled off-host key-generation path that cleared the node-only gate for
+this disposable experiment; it does not change the 32-GiB recommendation for
+sustained validator workloads.
+
+### Node-only preflight follow-up after off-host key generation
+
+On 2026-09-03, TFHE and ZK state was generated on a stronger controlled Linux
+machine with 23 GiB RAM and 6 GiB swap. The initialized disposable state was
+then copied to `/var/lib/ultranet-staging` on `2.28.61.71`, with the live
+network profile set to `ultranet-disposable-test-01` and the loopback P2P
+multiaddress `/ip4/127.0.0.1/tcp/19000`.
+
+The follow-up also found and removed an unnecessary plaintext 64-hex admin-token
+file from the state directory. The encrypted systemd credential at
+`/etc/ultranet-staging/secrets/ultranet-staging-admin.token.cred` is now the sole
+admin-token source; the environment contains no `ULTRANET_ADMIN_TOKEN`
+assignment and no plaintext token remains in node state.
+
+The tested node artifact was rebuilt from the same working tree and deployed
+with checksum
+`82f0ce0017053253e82c961f1151746a3914a56af619e1ab8d9dacf70df6b77f`. The
+runtime was updated in commit
+`27364720bd28cb7c9255cdb79ccc963fa3adc400` to disable mDNS in disposable mode.
+This avoids the `AF_NETLINK` interface-watcher dependency while retaining the
+unit's deny-all address policy; production profiles retain the existing mDNS
+behavior.
+
+Under the committed staging unit, the node-only gate passed:
+
+- `/api/validate` returned `{"success":true,"data":{"valid":true}}`.
+- `/api/manifest` reported `decimals=6`; `/api/stats` succeeded.
+- An unauthenticated `POST /api/mine` returned `401`.
+- P2P listened only on `127.0.0.1:19000`; the API listened only on
+  `127.0.0.1:8081`; no public `9000` or public `19000` listener existed.
+- The service remained on `MemoryMax=7G` with `MemorySwapMax=0`, reached a
+  stable approximately 6.86 GiB current/peak footprint, and recorded
+  `oom_kill=0` during a 45-second observation with the same PID.
+- Startup logs reported the disposable network ID and zero tracked,
+  persistent, or connected peers.
+
+The staging node is currently active but remains disabled at boot. The faucet
+service was not installed or started, no Turnstile credential was loaded, and
+no claim or real-value operation was performed. A separate faucet integration
+and claim approval is still required before any intake action.
 
 ### Phase 2 setup order when unblocked
 
 1. Choose a larger disposable host or obtain an explicit capacity exception. Use the existing 8-GiB validator profile as the minimum practical reference for a controlled node experiment; 32 GiB remains the documented recommendation for sustained validator workloads. Do not add swap or relax limits as an unreviewed workaround.
 2. Build `UltraNet` and `ultranet-faucet` on a stronger controlled machine from the same clean locked revision. Record both artifact checksums and copy only the release binaries.
 3. Create a dedicated disposable node account, state directory, and unit. Set `ULTRANET_DB_PATH` to that directory, `ULTRANET_API_BIND=127.0.0.1:8081`, `ULTRANET_PAUSE_ON_ERROR=false`, and an exact non-wildcard local CORS origin if one is needed. Generate a node-only admin token into the protected maintenance path, encrypt it with the host credential key, and expose it only through `ULTRANET_ADMIN_TOKEN_FILE`; never set or give `ULTRANET_ADMIN_TOKEN` to the faucet.
-4. Start with no `ULTRANET_PERSISTENT_PEERS`, a fresh node database, a fresh node P2P identity, no production genesis/storage/peers, `ULTRANET_DISPOSABLE_MODE=true`, `ULTRANET_NETWORK_ID=ultranet-disposable-review`, and `ULTRANET_P2P_BIND=/ip4/127.0.0.1/tcp/19000`. Verify `/api/validate` only after cryptographic initialization completes and before starting the faucet.
+4. Start with no `ULTRANET_PERSISTENT_PEERS`, a fresh node database, a fresh node P2P identity, no production genesis/storage/peers, `ULTRANET_DISPOSABLE_MODE=true`, `ULTRANET_NETWORK_ID=ultranet-disposable-test-01`, and `ULTRANET_P2P_BIND=/ip4/127.0.0.1/tcp/19000`. Verify `/api/validate` only after cryptographic initialization completes and before starting the faucet.
 5. Create a separate faucet account/state directory and four encrypted faucet credentials. Generate a fresh signer-derived address and set it in a dedicated environment file with `FAUCET_NODE_API_BASE_URL=http://127.0.0.1:8081`, loopback bind, `FAUCET_ENABLED=false`, a small disposable daily cap, and the exact approved non-production Turnstile hostname.
 6. Install the faucet under its dedicated user and unit, run `check-config`, verify service-user filesystem isolation, and confirm the local status endpoint reports disabled before any enablement.
 7. Obtain explicit approval for one disposable claim, enable only the disposable faucet, perform the exact reconciliation/idempotency assertions below, disable intake immediately, preserve redacted evidence, and remove the disposable state.
