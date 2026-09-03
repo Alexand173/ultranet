@@ -410,7 +410,7 @@ Preserve the staging SQLite database, WAL/SHM state, unit/config revision, and r
 
 ## Recorded disabled-only preflight — 2026-09-03
 
-A disabled-only staging faucet preflight was run on the separately provisioned VPS `2.28.61.71` after the staging validator's node-only gate passed. It used source revision `fb1274278190b4ddbeb5c9a4f0625d18d4df0fb6`; the deployed `ultranet-faucet` artifact matched SHA-256 `bd7258d2d2d0d4b7d86c1025c6d15442d24bc66368a588f8bd2dad17cc739cd3`.
+A disabled-only staging faucet preflight was initially run on the separately provisioned VPS `2.28.61.71` after the staging validator's node-only gate passed. The initial faucet unit used source revision `fb1274278190b4ddbeb5c9a4f0625d18d4df0fb6`; the deployed `ultranet-faucet` artifact matched SHA-256 `bd7258d2d2d0d4b7d86c1025c6d15442d24bc66368a588f8bd2dad17cc739cd3`.
 
 The preflight installed the dedicated `ultranet-faucet-staging` user/group, staging binary, staging environment, four encrypted credential files, and the staging systemd unit. A fresh staging-only Dilithium signer/address was generated and did not reuse the production faucet address. The plaintext signer, abuse, operator, and Turnstile staging files were removed after encryption; only root-owned mode-`0600` `.cred` files remain. The staging service has no production group membership and cannot read production or validator paths under its service UID.
 
