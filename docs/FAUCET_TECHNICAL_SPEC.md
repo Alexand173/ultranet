@@ -818,6 +818,7 @@ FAUCET_ADDRESS_COOLDOWN_SECONDS=86400
 FAUCET_MAX_QUEUE_LENGTH=100
 FAUCET_ENABLED=false
 FAUCET_CAPTCHA_PROVIDER=turnstile
+FAUCET_TURNSTILE_HOSTNAME=faucet.ultranetwork.cc
 FAUCET_STATE_PATH=/var/lib/ultranet-faucet
 ```
 
@@ -840,7 +841,7 @@ Production should fail closed if the signer key is missing, the derived address 
 
 Add only a dedicated proxy route after the faucet has passed its local integration checks. The public route must forward to `127.0.0.1:8090`, apply TLS, request limits, and security headers. The node remains behind its existing private API boundary.
 
-The canonical faucet origin is `https://faucet.ultranetwork.cc`; the Turnstile widget and Siteverify response must use the exact hostname `faucet.ultranetwork.cc` and action `faucet_claim`. Prefer a same-origin faucet UI so no CORS headers or browser credentials are needed. If a cross-origin UI is approved, allow exactly one explicit origin and explicit preflight methods/headers; never use wildcard CORS or credentials.
+The canonical production faucet origin is `https://faucet.ultranetwork.cc`; the production Turnstile widget and Siteverify response must use the exact hostname `faucet.ultranetwork.cc` and action `faucet_claim`. `FAUCET_TURNSTILE_HOSTNAME` defaults to that production hostname and must be set to the exact separately provisioned staging hostname for staging. A staging faucet requires its own VPS, validator state, signer/address, database, credentials, WAF policy, and budget. Never reuse production credentials or point a staging signer at a funded production address. Prefer a same-origin faucet UI so no CORS headers or browser credentials are needed. If a cross-origin UI is approved, allow exactly one explicit origin and explicit preflight methods/headers; never use wildcard CORS or credentials.
 
 For the currently deployed Caddy 2.6.2, configure Cloudflare `trusted_proxies` inside each `reverse_proxy` handler with the reviewed IPv4/IPv6 CIDR list. Do not use the newer global `servers` syntax or the newer `static` module token on this version. Strip client-supplied forwarding and operator/session headers before forwarding. Trust `CF-Connecting-IP` only after the VPS firewall or tunnel restricts web ingress to Cloudflare.
 

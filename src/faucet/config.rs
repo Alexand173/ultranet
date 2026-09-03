@@ -1,6 +1,6 @@
 use std::{env, net::SocketAddr, path::PathBuf};
 
-use crate::UltraBlockchain;
+use crate::{faucet::captcha::TURNSTILE_HOSTNAME, UltraBlockchain};
 
 pub const DEFAULT_BIND: &str = "127.0.0.1:8090";
 pub const DEFAULT_NODE_API_BASE_URL: &str = "http://127.0.0.1:8081";
@@ -29,6 +29,7 @@ pub struct FaucetConfig {
     pub confirmation_timeout_seconds: u64,
     pub enabled: bool,
     pub captcha_provider: String,
+    pub turnstile_hostname: String,
     pub state_path: PathBuf,
     pub signer_credential: String,
     pub turnstile_secret_credential: String,
@@ -85,6 +86,10 @@ impl FaucetConfig {
             )?,
             enabled: parse_bool("FAUCET_ENABLED", false)?,
             captcha_provider: env_string("FAUCET_CAPTCHA_PROVIDER", "turnstile".into())?,
+            turnstile_hostname: hostname(
+                "FAUCET_TURNSTILE_HOSTNAME",
+                TURNSTILE_HOSTNAME.to_string(),
+            )?,
             state_path: PathBuf::from(env_string(
                 "FAUCET_STATE_PATH",
                 "/var/lib/ultranet-faucet/faucet.db".into(),
@@ -139,6 +144,8 @@ impl FaucetConfig {
         if self.captcha_provider != "turnstile" {
             return Err("FAUCET_CAPTCHA_PROVIDER must be turnstile".into());
         }
+        self.turnstile_hostname =
+            validate_hostname("FAUCET_TURNSTILE_HOSTNAME", &self.turnstile_hostname)?;
         if self.state_path.as_os_str().is_empty() {
             return Err("FAUCET_STATE_PATH cannot be empty".into());
         }
@@ -182,6 +189,7 @@ impl FaucetConfig {
             confirmation_timeout_seconds: DEFAULT_CONFIRMATION_TIMEOUT_SECONDS,
             enabled: true,
             captcha_provider: "turnstile".into(),
+            turnstile_hostname: TURNSTILE_HOSTNAME.into(),
             state_path,
             signer_credential: "unused-signer".into(),
             turnstile_secret_credential: "unused-turnstile".into(),
@@ -201,6 +209,31 @@ fn env_string(name: &str, default: String) -> Result<String, String> {
 
 fn credential_name(name: &str, default: &str) -> Result<String, String> {
     env_string(name, default.to_string())
+}
+
+fn hostname(name: &str, default: String) -> Result<String, String> {
+    validate_hostname(name, &env_string(name, default)?)
+}
+
+fn validate_hostname(name: &str, value: &str) -> Result<String, String> {
+    let value = value.trim().to_ascii_lowercase();
+    if value.is_empty() || value.len() > 253 || !value.is_ascii() {
+        return Err(format!("{name} must be a DNS hostname"));
+    }
+    if value.split('.').any(|label| {
+        label.is_empty()
+            || label.len() > 63
+            || label.starts_with('-')
+            || label.ends_with('-')
+            || !label
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    }) {
+        return Err(format!(
+            "{name} must be a DNS hostname without a scheme or wildcard"
+        ));
+    }
+    Ok(value)
 }
 
 fn parse_bind(value: &str) -> Result<SocketAddr, String> {
@@ -281,6 +314,26 @@ mod tests {
     fn http_remote_node_is_rejected() {
         assert!(validate_node_api_url("http://203.0.113.5:8081").is_err());
         assert!(validate_node_api_url("https://203.0.113.5:8081").is_err());
+    }
+
+    #[test]
+    fn staging_hostname_is_normalized_and_rejects_unsafe_values() {
+        assert_eq!(
+            validate_hostname(
+                "FAUCET_TURNSTILE_HOSTNAME",
+                " Faucet-Staging.UltraNetWork.cc "
+            )
+            .unwrap(),
+            "faucet-staging.ultranetwork.cc"
+        );
+        for value in [
+            "https://faucet-staging.ultranetwork.cc",
+            "*.ultranetwork.cc",
+            "faucet_staging.ultranetwork.cc",
+            "faucet-staging.ultranetwork.cc/path",
+        ] {
+            assert!(validate_hostname("FAUCET_TURNSTILE_HOSTNAME", value).is_err());
+        }
     }
 
     #[test]

@@ -245,15 +245,17 @@ Install the encrypted credentials referenced by `deploy/ultranet-faucet.service`
 
 ### Faucet UI/API origin and CORS
 
-Use `https://faucet.ultranetwork.cc` as the canonical faucet origin. The repository currently contains no faucet UI, so the installed Caddy route is API-only and the existing dashboard setting `NEXT_PUBLIC_API_BASE_URL=https://api.ultranetwork.cc` must not be changed for faucet work.
+Use `https://faucet.ultranetwork.cc` as the canonical production faucet origin. The repository currently contains no faucet UI, so the installed Caddy route is API-only and the existing dashboard setting `NEXT_PUBLIC_API_BASE_URL=https://api.ultranetwork.cc` must not be changed for faucet work.
 
 The preferred future design is same-origin: serve the faucet UI at `faucet.ultranetwork.cc`, route only `/api/faucet/status`, `/api/faucet/claims`, and `/api/faucet/claims/*` to `127.0.0.1:8090`, and route the UI shell to its own explicitly approved frontend target. With that arrangement, the browser needs no CORS headers, no wildcard origin, and no credentials. The faucet API must not be folded into the general node API or dashboard route.
+
+For isolated staging, use `https://faucet-staging.ultranetwork.cc` only on a separate staging VPS and configure `FAUCET_TURNSTILE_HOSTNAME=faucet-staging.ultranetwork.cc`. The staging host must have a separate validator/network state, faucet signer/address, SQLite state directory, service account, systemd unit, encrypted credentials, backups, monitoring, firewall policy, and claim budget. Do not point the existing production unit, production Caddy route, production signer, or production database at staging. The tracked templates are [`faucet.env.staging.example`](./faucet.env.staging.example), [`ultranet-faucet-staging.service`](./ultranet-faucet-staging.service), and [`Caddyfile.staging.example`](./Caddyfile.staging.example); the guarded installation sequence is [`faucet-staging-install-preflight.md`](./faucet-staging-install-preflight.md). They are intentionally incomplete until the staging-only address, host credentials, staging VPS, and DNS record are provisioned.
 
 If a future product decision requires a cross-origin UI, add one explicit `Access-Control-Allow-Origin` value and an explicit `OPTIONS` preflight route at the proxy. Allow only `GET`, `POST`, `Content-Type`, and `Idempotency-Key`; do not allow credentials or `*`. Do not add the faucet origin to the node's CORS allowlist unless the browser is intentionally calling the node directly.
 
 The route must remain behind the upstream WAF/bot-control layer. The Caddy 2.6.2 route uses its per-upstream `trusted_proxies` CIDR list and rebuilds `X-Forwarded-For` from trusted proxy metadata; it strips client-supplied forwarding headers and does not copy raw `CF-Connecting-IP`. Keep origin HTTP/HTTPS access restricted to the WAF's published ranges or a tunnel before treating that identity as trusted.
 
-The faucet Turnstile widget is restricted to the exact hostname `faucet.ultranetwork.cc` and action `faucet_claim`. The server-side Siteverify response must report `success=true` with both values before a request can pass CAPTCHA validation. Keep the secret only in the encrypted systemd credential; the public widget uses only the site key.
+The production faucet Turnstile widget is restricted to the exact hostname `faucet.ultranetwork.cc` and action `faucet_claim`. A staging widget must use the exact approved staging hostname and the same `faucet_claim` action; set `FAUCET_TURNSTILE_HOSTNAME` accordingly. The server-side Siteverify response must report `success=true` with both values before a request can pass CAPTCHA validation. Keep each environment's secret only in its own encrypted systemd credential; the public widget uses only the matching site key.
 
 ### Coordinated Cloudflare origin lockdown
 

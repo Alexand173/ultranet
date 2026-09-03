@@ -150,6 +150,11 @@ if sudo grep -q 'replace-with-derived-staging-faucet-address' \
   printf '%s\n' 'staging faucet address placeholder was not replaced' >&2
   exit 1
 fi
+if ! sudo grep -Eq '^FAUCET_TURNSTILE_HOSTNAME=faucet-staging\.ultranetwork\.cc$' \
+  /etc/ultranet-faucet-staging/faucet.env; then
+  printf '%s\n' 'staging Turnstile hostname is not the approved exact host' >&2
+  exit 1
+fi
 ```
 
 Create the independent abuse and operator secrets without printing them. Supply the Turnstile secret from the separately provisioned staging widget:

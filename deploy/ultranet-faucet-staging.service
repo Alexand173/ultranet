@@ -1,0 +1,80 @@
+# UltraNet staging-only faucet service template.
+# Install only on the separately provisioned staging VPS.
+# Do not point this unit at production state, credentials, signer, or database.
+
+[Unit]
+Description=UltraNet isolated staging faucet service
+Documentation=https://github.com/Alexand173/ultranet/blob/main/docs/FAUCET_OPERATIONS.md
+After=network-online.target ultranet-staging.service
+Wants=network-online.target
+
+StartLimitIntervalSec=5min
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=ultranet-faucet-staging
+Group=ultranet-faucet-staging
+# Do not inherit a secondary production group from the host account.
+SupplementaryGroups=
+WorkingDirectory=/opt/ultranet-faucet-staging
+EnvironmentFile=-/etc/ultranet-faucet-staging/faucet.env
+
+# These encrypted credentials exist only on the staging host. The credential
+# names must match the aliases in deploy/faucet.env.staging.example.
+LoadCredentialEncrypted=faucet-staging-signer.json:/etc/ultranet-faucet-staging/secrets/faucet-staging-signer.json.cred
+LoadCredentialEncrypted=faucet-staging-turnstile.secret:/etc/ultranet-faucet-staging/secrets/faucet-staging-turnstile.secret.cred
+LoadCredentialEncrypted=faucet-staging-abuse.key:/etc/ultranet-faucet-staging/secrets/faucet-staging-abuse.key.cred
+LoadCredentialEncrypted=faucet-staging-operator.token:/etc/ultranet-faucet-staging/secrets/faucet-staging-operator.token.cred
+
+ExecStart=/opt/ultranet-faucet-staging/ultranet-faucet serve
+
+StateDirectory=ultranet-faucet-staging
+StateDirectoryMode=0700
+UMask=0077
+LimitNOFILE=4096
+TasksMax=64
+MemoryAccounting=true
+MemoryHigh=512M
+MemoryMax=1024M
+CPUWeight=25
+
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=30s
+TimeoutStopSec=30s
+
+# The faucet needs loopback access to the staging node and HTTPS access to
+# the staging Turnstile endpoint; it does not need raw devices or privileges.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# The service must not read validator, production faucet, dashboard, or
+# credential-source paths. systemd projects only the four named credentials
+# into $CREDENTIALS_DIRECTORY for the worker.
+InaccessiblePaths=/var/lib/ultranet /var/lib/ultranet-staging /etc/ultranet /etc/ultranet-staging /etc/ultranet-faucet /etc/ultranet-faucet-staging/secrets /opt/ultranet /opt/ultranet-staging /opt/ultranet-faucet /opt/ultranet-faucet-staging/public /root
+ReadOnlyPaths=/etc/ultranet-faucet-staging/faucet.env
+ReadWritePaths=/var/lib/ultranet-faucet-staging
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ultranet-faucet-staging
+
+[Install]
+WantedBy=multi-user.target

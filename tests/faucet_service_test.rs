@@ -120,6 +120,7 @@ fn service(mock: Arc<MockNode>) -> FaucetService {
         confirmation_timeout_seconds: 900,
         enabled: true,
         captcha_provider: "turnstile".into(),
+        turnstile_hostname: "faucet.ultranetwork.cc".into(),
         state_path: "unused-test.db".into(),
         signer_credential: "unused-signer".into(),
         turnstile_secret_credential: "unused-turnstile".into(),

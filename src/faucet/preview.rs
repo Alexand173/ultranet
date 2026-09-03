@@ -225,6 +225,7 @@ pub async fn run(bind: SocketAddr) -> Result<(), String> {
         confirmation_timeout_seconds: 900,
         enabled: true,
         captcha_provider: "turnstile".into(),
+        turnstile_hostname: "faucet.ultranetwork.cc".into(),
         state_path: root.join("faucet.db"),
         signer_credential: signer_path.to_string_lossy().into_owned(),
         turnstile_secret_credential: "preview-unused".into(),

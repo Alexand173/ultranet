@@ -8,6 +8,23 @@
 
 This document is the dashboard-side companion to [`Caddyfile.example`](./Caddyfile.example) and [`cloudflare-origin-lockdown.sh`](./cloudflare-origin-lockdown.sh). It does not contain Cloudflare API tokens, Turnstile secrets, operator tokens, or private keys.
 
+## Staging overlay
+
+Staging must use a separate VPS and isolated validator/network state. Do not add staging records or broad allow rules to the production faucet policy below. If `faucet-staging.ultranetwork.cc` is approved, create an independent proxied DNS record pointing to the staging VPS and install [`Caddyfile.staging.example`](./Caddyfile.staging.example) as a separate staging Caddy instance, with its upstream bound only to the staging faucet service. Use [`faucet-staging-install-preflight.md`](./faucet-staging-install-preflight.md) for the guarded host installation and non-mutating preflight sequence.
+
+The staging hostname requires its own Full (strict) TLS coverage, managed-WAF policy, no-store cache bypass, read/write rate limits, temporary operator-egress canary restriction, and Turnstile widget/secret. Substitute the exact staging hostname in every expression; never accept both production and staging hosts in one permissive rule. Keep the staging node API private, do not expose `/internal/*`, and verify direct-origin access is restricted to the intended WAF/VPN path before the staging canary.
+
+Use placeholders until the staging VPS address and exact hostname are approved:
+
+```text
+Staging hostname: faucet-staging.ultranetwork.cc
+Staging origin: <STAGING_VPS_IP>
+Staging faucet upstream: 127.0.0.1:8090
+Staging node upstream: 127.0.0.1:8081
+Turnstile hostname: faucet-staging.ultranetwork.cc
+Turnstile action: faucet_claim
+```
+
 ## Required order
 
 1. Proxy both `api.ultranetwork.cc` and `faucet.ultranetwork.cc` A records through Cloudflare.

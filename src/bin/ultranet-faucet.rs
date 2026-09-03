@@ -94,6 +94,7 @@ fn check_config() -> Result<(), String> {
     println!("UltraNet faucet configuration is valid.");
     println!("Bind address: {}", config.bind);
     println!("Node API: {}", config.node_api_base_url);
+    println!("Turnstile hostname: {}", config.turnstile_hostname);
     println!("Faucet address: {}", config.faucet_address);
     println!(
         "Claim amount: {} base units",
@@ -114,8 +115,11 @@ async fn serve() -> Result<(), String> {
     let turnstile_secret =
         read_secret(&config.credential_path(&config.turnstile_secret_credential))?;
     let captcha = Arc::new(
-        TurnstileVerifier::new(secret_string(turnstile_secret)?)
-            .map_err(|error| error.to_string())?,
+        TurnstileVerifier::new_for_hostname(
+            secret_string(turnstile_secret)?,
+            config.turnstile_hostname.clone(),
+        )
+        .map_err(|error| error.to_string())?,
     );
     let abuse_key = read_secret(&config.credential_path(&config.abuse_key_credential))?;
     let operator_token = read_secret(&config.credential_path(&config.operator_token_credential))?;

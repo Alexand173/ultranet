@@ -34,9 +34,22 @@ pub struct TurnstileVerifier {
 
 impl TurnstileVerifier {
     pub fn new(secret: String) -> Result<Self, CaptchaError> {
-        Self::with_policy(secret)
+        Self::new_for_hostname(secret, TURNSTILE_HOSTNAME.to_string())
     }
 
+    pub fn new_for_hostname(
+        secret: String,
+        expected_hostname: String,
+    ) -> Result<Self, CaptchaError> {
+        Self::build(
+            secret,
+            expected_hostname,
+            TURNSTILE_ACTION.to_string(),
+            TURNSTILE_SITEVERIFY_URL.to_string(),
+        )
+    }
+
+    #[cfg(test)]
     fn with_policy(secret: String) -> Result<Self, CaptchaError> {
         Self::build(
             secret,
@@ -170,7 +183,7 @@ mod tests {
     };
 
     fn verifier() -> TurnstileVerifier {
-        TurnstileVerifier::new("test-secret".into()).unwrap()
+        TurnstileVerifier::with_policy("test-secret".into()).unwrap()
     }
 
     fn payload(hostname: Option<&str>, action: Option<&str>, success: bool) -> TurnstileResponse {
@@ -239,6 +252,25 @@ mod tests {
         assert_eq!(verifier.expected_hostname, TURNSTILE_HOSTNAME);
         assert_eq!(verifier.expected_action, TURNSTILE_ACTION);
         assert_eq!(verifier.siteverify_url, TURNSTILE_SITEVERIFY_URL);
+    }
+
+    #[test]
+    fn policy_accepts_a_configured_staging_hostname() {
+        let verifier = TurnstileVerifier::new_for_hostname(
+            "test-secret".into(),
+            "faucet-staging.ultranetwork.cc".into(),
+        )
+        .unwrap();
+        assert!(verifier.accepts(&payload(
+            Some("faucet-staging.ultranetwork.cc"),
+            Some(TURNSTILE_ACTION),
+            true,
+        )));
+        assert!(!verifier.accepts(&payload(
+            Some(TURNSTILE_HOSTNAME),
+            Some(TURNSTILE_ACTION),
+            true,
+        )));
     }
 
     #[test]

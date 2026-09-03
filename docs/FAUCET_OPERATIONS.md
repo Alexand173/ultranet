@@ -117,6 +117,22 @@ sudo systemctl --no-pager --full status ultranet-faucet.service
 
 The first start should remain disabled at the intake layer and should fail closed if the signer, Turnstile secret, abuse key, operator token, or database policy is missing. A missing credential is not a reason to weaken the unit.
 
+## Dedicated staging environment
+
+A real staging faucet is a separate deployment, not a second environment file on the production host. Provision a separate VPS and an isolated validator/network state before issuing any staging funds:
+
+1. Build the validator and faucet from the same locked source revision. The staging validator must use a separate database, chain/genesis/network identity, P2P identity, service account, and API boundary; it must not share `/var/lib/ultranet`, production peers, production admin credentials, or production storage.
+2. Create a dedicated `ultranet-faucet-staging` service user/group and a separate unit such as `ultranet-faucet-staging.service`. Its `EnvironmentFile`, `LoadCredentialEncrypted` source paths, `StateDirectory`, `WorkingDirectory`, and `ReadWritePaths` must all be staging-specific. The service must have no membership in the production `ultranet` group.
+3. Generate a fresh staging-only Dilithium-5 signer. Set `FAUCET_ADDRESS` to the address derived by that key, and verify it differs from the production faucet address before encrypting the credential. Use a separate staging SQLite path and separate encrypted signer, Turnstile, abuse, and operator credentials.
+4. Publish `faucet-staging.ultranetwork.cc` only after the staging origin is ready. Proxy its DNS record through Cloudflare to the staging VPS, use Full (strict) TLS, and keep the staging node API private. The staging Caddy route must forward only the three public faucet routes to its loopback listener and return `404` for `/internal/*`, unsupported methods, and unknown paths.
+5. Create a separate Turnstile widget and secret for the exact hostname `faucet-staging.ultranetwork.cc` and action `faucet_claim`. Set `FAUCET_TURNSTILE_HOSTNAME` to that exact hostname; never reuse the production Turnstile secret or configure staging to accept the production hostname.
+6. Add staging-scoped managed WAF, no-store/cache bypass, write/read rate limits, and a temporary operator-egress restriction for the canary. Do not add a broad allow rule and do not alter production Cloudflare rules while validating staging.
+7. Configure separate backups, monitoring, alerting, kill-switch access, reserve, and daily debit cap. Keep `FAUCET_ENABLED=false` until the service-user, signer/address, node chain/decimals, database, proxy, WAF, and restore checks pass.
+
+Use [`../deploy/faucet.env.staging.example`](../deploy/faucet.env.staging.example) as the non-secret starting point. Install [`../deploy/ultranet-faucet-staging.service`](../deploy/ultranet-faucet-staging.service) and [`../deploy/Caddyfile.staging.example`](../deploy/Caddyfile.staging.example) only on the separate staging VPS. The environment file requires a real staging address before `check-config` can pass and intentionally does not contain any credential material.
+
+The staging unit expects the `ultranet-faucet-staging` user/group, `/opt/ultranet-faucet-staging/ultranet-faucet`, `/etc/ultranet-faucet-staging/faucet.env`, and four encrypted credentials under `/etc/ultranet-faucet-staging/secrets/`. Its Caddy template publishes only the three public faucet routes for `faucet-staging.ultranetwork.cc`; configure the separate Cloudflare WAF, cache, rate-limit, Turnstile, and origin-firewall policies before enabling intake. Use [`../deploy/faucet-staging-install-preflight.md`](../deploy/faucet-staging-install-preflight.md) for the guarded installation and non-mutating host preflight sequence.
+
 ## Local preview (no production access)
 
 Before installing systemd or provisioning real credentials, run the built-in preview harness on a loopback port:
