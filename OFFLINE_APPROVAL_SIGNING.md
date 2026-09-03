@@ -1,3 +1,119 @@
+Listaj svoje owner identitete (bez privatnih klju?eva)
+bash
+./target/release/ultranet-approve owners \
+  --keys \home\valerian\UltraNet_Linux\sovereign_keys.json \
+  --pretty \
+  --output owner-identities.json
+
+1?? Pripremi draft (javni, bez klju?eva)
+bash
+./target/release/ultranet-approve prepare \
+  --api-base-url https://api.ultranetwork.cc \
+  --proposal-hash "887bd6787b7ce11f8ae2f1a5e9305cbcce1f154f1fcf9723d22aa7ecbb454505" \
+  --output approval-draft.json \
+  --pretty
+2?? Potpiši sa owner 0
+bash
+./target/release/ultranet-approve sign \
+  --request approval-draft.json \
+  --keys ./sovereign_keys.json \
+  --owner-index 0 \
+  --output owner-0-approval.json \
+  --pretty
+3?? Potpiši sa owner 1 (drugi vlasnik)
+bash
+./target/release/ultranet-approve sign \
+  --request approval-draft.json \
+  --keys ./sovereign_keys.json \
+  --owner-index 1 \
+  --output owner-1-approval.json \
+  --pretty
+Napomena: Ako tvoj sovereign_keys.json sadrži sva tri klju?a, ovo ?e raditi. Ako sadrži samo jedan, mora?eš da koristiš posebne fajlove za svaki klju?.
+4?? Spoji dva potpisa u jedan validan approval payload
+bash
+./target/release/ultranet-approve combine \
+  --request approval-draft.json \
+  --authorized-owners owner-identities.json \
+  --signature owner-0-approval.json \
+  --signature owner-1-approval.json \
+  --output approval.json \
+  --pretty
+5?? Pošalji odobrenje na mrežu
+bash
+./target/release/ultranet-approve submit \
+  --api-base-url https://api.ultranetwork.cc \
+  --request approval.json
+Ako je sve ispravno, dobi?eš poruku Validator proposal approved!.
+
+? Proveri da li je predlog odobren
+bash
+curl -s https://api.ultranetwork.cc/api/governance/proposals | jq
+curl -s https://api.ultranetwork.cc/api/governance/approvals?limit=50 | jq
+Predlog bi trebalo da nestane iz pending liste i da se pojavi u approvals sa statusom activated.
+
+?? Šta ako nemaš sva tri klju?a u sovereign_keys.json?
+Ako fajl sadrži samo jedan klju? (ili ih imaš u odvojenim fajlovima), onda koristi --keys owner-0-key.json za prvi potpis i --keys owner-1-key.json za drugi. Prvo ih izdvoji ako treba.
+
+?? Podsetnik
+* Klju?evi su offline – nikada ih ne deli.
+* Web approval je i dalje isklju?en – ovo je offline CLI na?in koji radi bez dodatnog podešavanja.
+
+Javi mi ako negde zapneš – spremam se da ti pomognem. ????
+--api-base-url https://api.ultranetwork.cc \ --proposal-hash "887bd6787b7ce11f8ae2f1a5e9305cbcce1f154f1fcf9723d22aa7ecbb454505" \ --output approval-draft.json \ --pretty Wrote JSON output to approval-draft.json Prepared validator approval draft alias: "VladTepes" proposal hash: 887bd6787b7ce11f8ae2f1a5e9305cbcce1f154f1fcf9723d22aa7ecbb454505 node public key bytes: 2592 nonce: 1 nullifier: generated with the OS CSPRNG; do not reuse this draft
+We have the draft prepared. The user wants to proceed with the approval. They have the sovereign_keys.json and have generated owner-identities.json. Now we need to sign with owner 0 and owner 1, combine, and submit.
+We should give clear commands for the signing steps, but note that if the sovereign_keys.json contains all three keys, the signing commands with --keys ./sovereign_keys.json and --owner-index 0 and --owner-index 1 will work. The user already generated the draft successfully, so they are ready.
+Let's provide the next commands with clear explanations. Also, we should remind them to ensure the sovereign_keys.json contains the private keys for both owner 0 and owner 1. If not, they need to use separate key files.
+We'll give the commands for signing with owner 0 and owner 1, then combine and submit.
+Odli?no – draft je uspešno pripremljen! Sada prelazimo na potpisivanje.
+
+?? Potpiši draft sa dva Sovereign klju?a
+Pošto je sovereign_keys.json generisan i sadrži sva tri klju?a, koristi?emo ga za oba potpisa.
+1?? Potpiši sa owner 0
+bash
+./target/release/ultranet-approve sign \
+  --request approval-draft.json \
+  --keys ./sovereign_keys.json \
+  --owner-index 0 \
+  --output owner-0-approval.json \
+  --pretty
+2?? Potpiši sa owner 1 (drugi vlasnik)
+bash
+./target/release/ultranet-approve sign \
+  --request approval-draft.json \
+  --keys ./sovereign_keys.json \
+  --owner-index 1 \
+  --output owner-1-approval.json \
+  --pretty
+Napomena: Ako tvoj sovereign_keys.json sadrži samo jedan klju?, ove komande ne?e raditi – tada moraš da koristiš posebne fajlove za svaki klju? (npr. owner-0-key.json i owner-1-key.json). Ako nisi siguran, proveri strukturu fajla:
+bash
+jq keys sovereign_keys.json
+Ako vrati ["0","1","2"] – sve je u redu.
+
+?? Spoji dva potpisa u jedan approval payload
+bash
+./target/release/ultranet-approve combine \
+  --request approval-draft.json \
+  --authorized-owners owner-identities.json \
+  --signature owner-0-approval.json \
+  --signature owner-1-approval.json \
+  --output approval.json \
+  --pretty
+
+?? Pošalji odobrenje na mrežu
+bash
+./target/release/ultranet-approve submit \
+  --api-base-url https://api.ultranetwork.cc \
+  --request approval.json
+Ako je sve ispravno, dobi?eš poruku:
+text
+Validator proposal approved!
+
+? Proveri da li je predlog odobren
+bash
+curl -s https://api.ultranetwork.cc/api/governance/proposals | jq
+curl -s https://api.ultranetwork.cc/api/governance/approvals?limit=50 | jq
+
+
 # Offline validator approval signing
 
 This guide is for the three Sovereign owners who approve a pending validator. The applicant's validator key and personal wallet are **not** used for this step.
@@ -296,3 +412,4 @@ SHA3-256(
 ```
 
 The node accepts the approval only when at least two distinct configured Sovereign owner public keys verify signatures over this exact digest.
+

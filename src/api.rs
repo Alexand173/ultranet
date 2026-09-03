@@ -35,8 +35,14 @@ use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::sync::Arc;
-use std::{env, io, time::Duration};
+use std::{
+    env, fs,
+    io::{self, Read},
+    path::Path,
+    time::Duration,
+};
 use subtle::ConstantTimeEq;
+use zeroize::{Zeroize, Zeroizing};
 
 // ===== STRUKTURE ZA API =====
 
@@ -196,40 +202,152 @@ pub struct AppState {
 }
 
 const ADMIN_TOKEN_ENV: &str = "ULTRANET_ADMIN_TOKEN";
+const ADMIN_TOKEN_FILE_ENV: &str = "ULTRANET_ADMIN_TOKEN_FILE";
 const MIN_ADMIN_TOKEN_BYTES: usize = 32;
+const MAX_ADMIN_TOKEN_BYTES: usize = 4096;
 
-#[derive(Clone, Debug)]
 struct AdminAuthConfig {
     token: Vec<u8>,
 }
 
+impl std::fmt::Debug for AdminAuthConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AdminAuthConfig")
+            .field("token", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl Drop for AdminAuthConfig {
+    fn drop(&mut self) {
+        self.token.zeroize();
+    }
+}
+
 fn configured_admin_auth() -> io::Result<AdminAuthConfig> {
-    let token = env::var(ADMIN_TOKEN_ENV).map_err(|_| missing_admin_token_error())?;
-    validate_admin_token(&token)
+    let token_file = env::var_os(ADMIN_TOKEN_FILE_ENV);
+    let legacy_token = env::var(ADMIN_TOKEN_ENV);
+    resolve_admin_auth(token_file.as_deref(), legacy_token)
+}
+
+fn resolve_admin_auth(
+    token_file: Option<&std::ffi::OsStr>,
+    legacy_token: Result<String, env::VarError>,
+) -> io::Result<AdminAuthConfig> {
+    if token_file.is_some() && !matches!(&legacy_token, Err(env::VarError::NotPresent)) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "{ADMIN_TOKEN_FILE_ENV} and {ADMIN_TOKEN_ENV} must not both be configured; choose one administrator token source"
+            ),
+        ));
+    }
+
+    if let Some(path) = token_file {
+        let path = Path::new(path);
+        let token = Zeroizing::new(read_admin_token_file(path)?);
+        return validate_admin_token_from_source(ADMIN_TOKEN_FILE_ENV, &token);
+    }
+
+    match legacy_token {
+        Ok(token) => {
+            let token = Zeroizing::new(token);
+            validate_admin_token(&token)
+        }
+        Err(env::VarError::NotPresent) => Err(missing_admin_token_error()),
+        Err(env::VarError::NotUnicode(_)) => Err(invalid_admin_token_error(
+            ADMIN_TOKEN_ENV,
+            "must be valid UTF-8",
+        )),
+    }
+}
+
+fn read_admin_token_file(path: &Path) -> io::Result<String> {
+    if !path.is_absolute() {
+        return Err(admin_token_file_error("must be an absolute path"));
+    }
+
+    let metadata =
+        fs::symlink_metadata(path).map_err(|_| admin_token_file_error("could not be read"))?;
+    if !metadata.file_type().is_file() {
+        return Err(admin_token_file_error("must be a regular file"));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let mode = metadata.permissions().mode();
+        let group_readable_root_file = mode & 0o040 != 0 && metadata.uid() == 0;
+        if mode & 0o400 == 0
+            || mode & 0o007 != 0
+            || mode & 0o020 != 0
+            || (mode & 0o040 != 0 && !group_readable_root_file)
+        {
+            return Err(admin_token_file_error(
+                "must be readable by the service owner without group/other access",
+            ));
+        }
+    }
+
+    let file = fs::File::open(path).map_err(|_| admin_token_file_error("could not be read"))?;
+    let mut bytes = Vec::with_capacity(MAX_ADMIN_TOKEN_BYTES.min(256));
+    file.take((MAX_ADMIN_TOKEN_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| admin_token_file_error("could not be read"))?;
+    if bytes.len() > MAX_ADMIN_TOKEN_BYTES {
+        return Err(admin_token_file_error("is too large"));
+    }
+
+    let mut token =
+        String::from_utf8(bytes).map_err(|_| admin_token_file_error("must contain valid UTF-8"))?;
+    // Permit one conventional terminal line ending from a secret-file tool,
+    // while leaving all other whitespace for the strict token validator.
+    if token.ends_with('\n') {
+        token.pop();
+        if token.ends_with('\r') {
+            token.pop();
+        }
+    }
+    Ok(token)
+}
+
+fn admin_token_file_error(reason: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("{ADMIN_TOKEN_FILE_ENV} {reason}; the administrator token was not loaded"),
+    )
 }
 
 fn missing_admin_token_error() -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidInput,
         format!(
-            "{ADMIN_TOKEN_ENV} is required for the node API. This private administrator bearer token protects state-changing node operations; it is not a wallet key or public node identifier. Create a 64-hex-character token with `openssl rand -hex 32`, put it only in UltraNetNode.env or the service environment, and start the node again. Never share it or place it in browser code."
+            "{ADMIN_TOKEN_ENV} or {ADMIN_TOKEN_FILE_ENV} is required for the node API. This private administrator bearer token protects state-changing node operations; it is not a wallet key or public node identifier. Create a 64-hex-character token with `openssl rand -hex 32`, put it only in the service credential environment or protected credential file, and start the node again. Never share it or place it in browser code."
         ),
     )
 }
 
 fn validate_admin_token(token: &str) -> io::Result<AdminAuthConfig> {
+    validate_admin_token_from_source(ADMIN_TOKEN_ENV, token)
+}
+
+fn validate_admin_token_from_source(source: &str, token: &str) -> io::Result<AdminAuthConfig> {
     if token.starts_with("replace-with-") {
         return Err(invalid_admin_token_error(
-            "still contains the template placeholder; edit UltraNetNode.env beside UltraNetNode.exe",
+            source,
+            "still contains the template placeholder; replace it with a generated token",
         ));
     }
     if token.bytes().any(|byte| byte.is_ascii_whitespace()) {
         return Err(invalid_admin_token_error(
+            source,
             "must not contain spaces, tabs, or other whitespace",
         ));
     }
     if token.len() < MIN_ADMIN_TOKEN_BYTES {
         return Err(invalid_admin_token_error(
+            source,
             "must be at least 32 non-whitespace bytes; use 64 hexadecimal characters for 32 random bytes",
         ));
     }
@@ -239,11 +357,11 @@ fn validate_admin_token(token: &str) -> io::Result<AdminAuthConfig> {
     })
 }
 
-fn invalid_admin_token_error(reason: &str) -> io::Error {
+fn invalid_admin_token_error(source: &str, reason: &str) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidInput,
         format!(
-            "{ADMIN_TOKEN_ENV} {reason}. This private administrator bearer token protects state-changing node operations; it is not a wallet key or public node identifier. Generate it with `openssl rand -hex 32` or the PowerShell command in README-WINDOWS.txt. Never share it or place it in browser code."
+            "{source} {reason}. This private administrator bearer token protects state-changing node operations; it is not a wallet key or public node identifier. Generate it with `openssl rand -hex 32` or the PowerShell command in README-WINDOWS.txt. Never share it or place it in browser code."
         ),
     )
 }
@@ -3502,8 +3620,9 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
 mod configuration_tests {
     use super::{
         configure_admin_routes, csrf_cookie, missing_admin_token_error, parse_api_bind,
-        parse_cors_origins, require_admin_token, session_cookie, validate_admin_token,
-        AdminAuthConfig, AuthChallengeRequest, AuthLoginRequest,
+        parse_cors_origins, require_admin_token, resolve_admin_auth, session_cookie,
+        validate_admin_token, AdminAuthConfig, AuthChallengeRequest, AuthLoginRequest,
+        ADMIN_TOKEN_ENV, ADMIN_TOKEN_FILE_ENV, MAX_ADMIN_TOKEN_BYTES,
     };
     use crate::{
         auth::{AuthConfig, AuthService, CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME},
@@ -3516,7 +3635,7 @@ mod configuration_tests {
         middleware::from_fn,
         test as actix_test, web, App, HttpResponse,
     };
-    use std::{fs, sync::Arc};
+    use std::{env, fs, sync::Arc};
 
     #[test]
     fn api_bind_parser_accepts_ip_and_port() {
@@ -3607,6 +3726,130 @@ mod configuration_tests {
         assert!(error.contains("private administrator bearer token"));
         assert!(error.contains("openssl rand -hex 32"));
         assert!(error.contains("not a wallet key or public node identifier"));
+    }
+
+    fn admin_token_test_path(label: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "ultranet-admin-token-{label}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    fn write_admin_token_test_file(label: &str, contents: &[u8]) -> std::path::PathBuf {
+        use std::{fs::OpenOptions, io::Write};
+        let path = admin_token_test_path(label);
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&path).expect("test token file should open");
+        file.write_all(contents)
+            .expect("test token file should be writable");
+        path
+    }
+
+    #[test]
+    fn admin_token_file_source_accepts_one_terminal_newline() {
+        let token = "a".repeat(32);
+        let path = write_admin_token_test_file("newline", format!("{token}\n").as_bytes());
+        let config = resolve_admin_auth(Some(path.as_os_str()), Err(env::VarError::NotPresent))
+            .expect("a protected token file should be accepted");
+        assert_eq!(config.token, token.as_bytes());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn admin_token_file_source_rejects_legacy_environment_coexistence() {
+        let path = write_admin_token_test_file("coexistence", b"a");
+        let error = resolve_admin_auth(Some(path.as_os_str()), Ok("b".repeat(32)))
+            .expect_err("two token sources must fail closed")
+            .to_string();
+        assert!(error.contains(ADMIN_TOKEN_FILE_ENV));
+        assert!(error.contains(ADMIN_TOKEN_ENV));
+        assert!(!error.contains(&"b".repeat(32)));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn admin_token_auth_retains_legacy_environment_fallback() {
+        let token = "b".repeat(32);
+        let config = resolve_admin_auth(None, Ok(token.clone()))
+            .expect("legacy deployments should remain supported");
+        assert_eq!(config.token, token.as_bytes());
+    }
+
+    #[test]
+    fn admin_token_file_rejects_invalid_content_without_echoing_it() {
+        let cases: &[(&str, &[u8])] = &[
+            ("empty", b""),
+            ("whitespace", b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "),
+            ("short", b"short"),
+            ("placeholder", b"replace-with-a-token"),
+            ("invalid-utf8", &[0xff, 0xfe, 0xfd]),
+        ];
+
+        for (label, contents) in cases {
+            let path = write_admin_token_test_file(label, contents);
+            let result = resolve_admin_auth(Some(path.as_os_str()), Err(env::VarError::NotPresent));
+            assert!(result.is_err(), "{label} file must be rejected");
+            let error = result.unwrap_err().to_string();
+            assert!(error.contains(ADMIN_TOKEN_FILE_ENV));
+            assert!(!error.contains("replace-with-a-token"));
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn admin_token_file_rejects_oversized_and_relative_paths() {
+        let oversized = vec![b'a'; MAX_ADMIN_TOKEN_BYTES + 1];
+        let path = write_admin_token_test_file("oversized", &oversized);
+        let error = resolve_admin_auth(Some(path.as_os_str()), Err(env::VarError::NotPresent))
+            .expect_err("oversized token file must fail closed")
+            .to_string();
+        assert!(error.contains("too large"));
+        let _ = fs::remove_file(path);
+
+        let error = resolve_admin_auth(
+            Some(std::ffi::OsStr::new("relative-admin-token")),
+            Err(env::VarError::NotPresent),
+        )
+        .expect_err("relative token path must fail closed")
+        .to_string();
+        assert!(error.contains("absolute path"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn admin_token_file_rejects_unsafe_permissions_and_symlinks() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let path = write_admin_token_test_file("permissions", b"a".repeat(32).as_slice());
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644))
+            .expect("test permissions should change");
+        assert!(
+            resolve_admin_auth(Some(path.as_os_str()), Err(env::VarError::NotPresent),).is_err()
+        );
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640))
+            .expect("test permissions should change");
+        assert!(
+            resolve_admin_auth(Some(path.as_os_str()), Err(env::VarError::NotPresent),).is_err()
+        );
+        let _ = fs::remove_file(&path);
+
+        let target = write_admin_token_test_file("symlink-target", b"a".repeat(32).as_slice());
+        let link = admin_token_test_path("symlink");
+        symlink(&target, &link).expect("test symlink should be created");
+        assert!(
+            resolve_admin_auth(Some(link.as_os_str()), Err(env::VarError::NotPresent),).is_err()
+        );
+        let _ = fs::remove_file(link);
+        let _ = fs::remove_file(target);
     }
 
     #[test]

@@ -4439,9 +4439,9 @@ pub async fn run_node() -> Result<(), String> {
         .await
         .map_err(|error| format!("P2P node initialization failed: {error}"))?;
     p2p_node
-        .start_listening("/ip4/0.0.0.0/tcp/9000")
+        .start_listening()
         .map_err(|error| format!("P2P listen failed: {error}"))?;
-    println!("✅ P2P node is running on port 9000!");
+    println!("✅ P2P node is running on the configured P2P bind!");
     tokio::spawn(async move {
         if let Err(error) = p2p_node.run().await {
             eprintln!("❌ P2P node runtime error: {error}");

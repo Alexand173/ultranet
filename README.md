@@ -120,7 +120,7 @@ For local fixture testing only, set `ULTRANET_ENABLE_TEST_ANCHORING=true` on a d
 
 ### What is `ULTRANET_ADMIN_TOKEN`?
 
-Every node API requires `ULTRANET_ADMIN_TOKEN` to protect state-changing administrator operations such as mining, pruning, and AppChain management. It is a private bearer token for the node operator; it is **not** your wallet key, public node identifier, `DILITHIUM_PUB_KEY`, or a value that ordinary website users should share.
+Every node API requires a private administrator bearer token to protect state-changing operations such as mining, pruning, and AppChain management. Existing deployments use `ULTRANET_ADMIN_TOKEN`; the new disposable systemd staging unit uses `ULTRANET_ADMIN_TOKEN_FILE` with an encrypted credential projection. The token is **not** your wallet key, public node identifier, `DILITHIUM_PUB_KEY`, or a value that ordinary website users should share. Do not configure both token sources; the runtime rejects that ambiguous state.
 
 Create it locally, then place it only in your service environment or private `UltraNetNode.env` file:
 

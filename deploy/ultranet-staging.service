@@ -1,0 +1,89 @@
+# UltraNet disposable staging validator service template.
+# REVIEW ONLY: install only on the separately provisioned disposable test host.
+# This unit is not a production replacement and must not use production state,
+# genesis, peers, credentials, wallet funds, or the production validator group.
+# It requires the runtime support for ULTRANET_ADMIN_TOKEN_FILE,
+# ULTRANET_P2P_BIND, ULTRANET_BOOTNODES, ULTRANET_NETWORK_ID, and
+# ULTRANET_DISPOSABLE_MODE from the same locked source revision.
+
+[Unit]
+Description=UltraNet disposable staging validator
+Documentation=https://github.com/Alexand173/ultranet/blob/main/VALIDATOR_GUIDE.md
+After=network-online.target
+Wants=network-online.target
+
+StartLimitIntervalSec=5min
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=ultranet-staging
+Group=ultranet-staging
+SupplementaryGroups=
+WorkingDirectory=/opt/ultranet-staging/target/release
+EnvironmentFile=-/etc/ultranet-staging/ultranet.env
+
+# The admin token is projected by systemd into the protected credential
+# directory. The value never belongs in ultranet.env or ULTRANET_ADMIN_TOKEN.
+# %d expands to this unit's credential directory at runtime.
+LoadCredentialEncrypted=ultranet-staging-admin.token:/etc/ultranet-staging/secrets/ultranet-staging-admin.token.cred
+Environment=ULTRANET_ADMIN_TOKEN_FILE=%d/ultranet-staging-admin.token
+
+ExecStart=/opt/ultranet-staging/target/release/UltraNet
+
+StateDirectory=ultranet-staging
+StateDirectoryMode=0700
+UMask=0077
+LimitNOFILE=8192
+TasksMax=128
+MemoryAccounting=true
+# The current post-resize baseline is 7.6 GiB RAM. Keep these ceilings below
+# the guest limit, then re-review them if the provider plan changes. These
+# values intentionally leave host headroom and do not provision or require swap.
+MemoryHigh=6G
+MemoryMax=7G
+MemorySwapMax=0
+CPUWeight=50
+
+Restart=on-failure
+RestartSec=15s
+TimeoutStartSec=5min
+TimeoutStopSec=60s
+OOMPolicy=stop
+
+# The node-only gate must not permit external network access. The runtime
+# itself is also required to bind P2P to loopback in disposable mode.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=127.0.0.0/8 ::1
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# The staging service must not read production node/faucet state, deployment
+# files, website assets, signer stores, or the encrypted credential source.
+# systemd loads the named credential before applying this filesystem sandbox.
+InaccessiblePaths=/var/lib/ultranet /var/lib/ultranet-faucet /etc/ultranet /etc/ultranet-faucet /etc/ultranet-staging/secrets /opt/ultranet /opt/ultranet-faucet /opt/ultranet/public /root
+ReadOnlyPaths=/etc/ultranet-staging/ultranet.env /opt/ultranet-staging/target/release
+ReadWritePaths=/var/lib/ultranet-staging
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ultranet-staging
+
+[Install]
+WantedBy=multi-user.target

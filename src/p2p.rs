@@ -6,7 +6,9 @@ use futures::StreamExt;
 use libp2p::{
     core::upgrade::Version,
     gossipsub::{self, IdentTopic, MessageAuthenticity},
-    identify, identity, kad, mdns, noise, ping,
+    identify, identity, kad, mdns,
+    multiaddr::Protocol,
+    noise, ping,
     swarm::{Config as SwarmConfig, NetworkBehaviour, Swarm, SwarmEvent},
     tcp, yamux, Multiaddr, PeerId, Transport,
 };
@@ -458,31 +460,21 @@ fn parse_persistent_peer_targets(
     Ok(targets)
 }
 
-fn configured_persistent_peer_targets(local_peer_id: &PeerId) -> Vec<PersistentPeerTarget> {
+fn configured_persistent_peer_targets(
+    local_peer_id: &PeerId,
+) -> Result<Vec<PersistentPeerTarget>, String> {
     match std::env::var("ULTRANET_PERSISTENT_PEERS") {
         Ok(raw) if !raw.trim().is_empty() => {
-            match parse_persistent_peer_targets(&raw, local_peer_id) {
-                Ok(targets) => {
-                    println!(
-                        "🔒 Persistent validator dials configured: targets={}",
-                        targets.len()
-                    );
-                    targets
-                }
-                Err(error) => {
-                    eprintln!(
-                        "⚠️ Invalid ULTRANET_PERSISTENT_PEERS; persistent dials disabled: {error}"
-                    );
-                    Vec::new()
-                }
-            }
-        }
-        Ok(_) | Err(std::env::VarError::NotPresent) => Vec::new(),
-        Err(error) => {
-            eprintln!(
-                "⚠️ Cannot read ULTRANET_PERSISTENT_PEERS; persistent dials disabled: {error}"
+            let targets = parse_persistent_peer_targets(&raw, local_peer_id)?;
+            println!(
+                "🔒 Persistent validator dials configured: targets={}",
+                targets.len()
             );
-            Vec::new()
+            Ok(targets)
+        }
+        Ok(_) | Err(std::env::VarError::NotPresent) => Ok(Vec::new()),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err("ULTRANET_PERSISTENT_PEERS must be valid UTF-8".into())
         }
     }
 }
@@ -598,6 +590,7 @@ pub struct P2PNode {
     pub peer_id: PeerId,
     pub blockchain: Arc<TokioRwLock<UltraBlockchain>>,
     pub peer_manager: Arc<Mutex<PeerManager>>,
+    p2p_config: P2PConfig,
     persistent_dials: PersistentDialManager,
     pub running: bool,
 }
@@ -609,6 +602,188 @@ pub struct P2PNode {
 /// update this fallback if the bootstrap node intentionally rotates identity.
 pub const BOOTNODES: &[&str] =
     &["/ip4/167.233.161.115/tcp/9000/p2p/12D3KooWAa2qGYoTkke8Sdfixo1jLXiqCbNFksU1bUrYhNAoAjHb"];
+
+const P2P_BIND_ENV: &str = "ULTRANET_P2P_BIND";
+const BOOTNODES_ENV: &str = "ULTRANET_BOOTNODES";
+const NETWORK_ID_ENV: &str = "ULTRANET_NETWORK_ID";
+const DISPOSABLE_MODE_ENV: &str = "ULTRANET_DISPOSABLE_MODE";
+const DEFAULT_P2P_BIND: &str = "/ip4/0.0.0.0/tcp/9000";
+const DEFAULT_NETWORK_ID: &str = "ultranet-sovereign-mainnet";
+const DISPOSABLE_NETWORK_ID_PREFIX: &str = "ultranet-disposable-";
+
+#[derive(Debug, Clone)]
+struct P2PConfig {
+    network_id: String,
+    disposable_mode: bool,
+    listen_addr: Multiaddr,
+    bootnodes: Vec<Multiaddr>,
+    persistent_peers: Vec<PersistentPeerTarget>,
+}
+
+fn network_topic(network_id: &str) -> IdentTopic {
+    if network_id == DEFAULT_NETWORK_ID {
+        // Preserve the existing production topic for wire compatibility.
+        IdentTopic::new("ultra-net")
+    } else {
+        IdentTopic::new(format!("ultra-net/{network_id}"))
+    }
+}
+
+fn parse_network_id(raw: &str) -> Result<String, String> {
+    let network_id = raw.trim();
+    if network_id.is_empty() || network_id.len() > 64 {
+        return Err(format!(
+            "{NETWORK_ID_ENV} must contain 1 to 64 ASCII characters"
+        ));
+    }
+    if !network_id
+        .bytes()
+        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(&byte))
+    {
+        return Err(format!(
+            "{NETWORK_ID_ENV} must use lowercase ASCII letters, digits, '.', '_', or '-'"
+        ));
+    }
+    Ok(network_id.to_string())
+}
+
+fn parse_p2p_bind(raw: &str) -> Result<Multiaddr, String> {
+    let address = raw
+        .trim()
+        .parse::<Multiaddr>()
+        .map_err(|error| format!("{P2P_BIND_ENV} is not a valid multiaddress: {error}"))?;
+    let mut protocols = address.iter();
+    let valid = matches!(
+        (protocols.next(), protocols.next(), protocols.next()),
+        (
+            Some(Protocol::Ip4(_) | Protocol::Ip6(_)),
+            Some(Protocol::Tcp(_)),
+            None
+        )
+    );
+    if !valid {
+        return Err(format!(
+            "{P2P_BIND_ENV} must contain exactly an IP protocol followed by TCP"
+        ));
+    }
+    Ok(address)
+}
+
+fn p2p_bind_is_loopback(address: &Multiaddr) -> bool {
+    address
+        .iter()
+        .next()
+        .is_some_and(|protocol| match protocol {
+            Protocol::Ip4(ip) => ip.is_loopback(),
+            Protocol::Ip6(ip) => ip.is_loopback(),
+            _ => false,
+        })
+}
+
+fn parse_bootnodes(raw: &str) -> Result<Vec<Multiaddr>, String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            let address = entry
+                .parse::<Multiaddr>()
+                .map_err(|error| format!("{entry}: invalid bootnode multiaddress: {error}"))?;
+            if !matches!(address.iter().last(), Some(Protocol::P2p(_))) {
+                return Err(format!(
+                    "{entry}: bootnode address must end with /p2p/<PeerId>"
+                ));
+            }
+            Ok(address)
+        })
+        .collect()
+}
+
+fn parse_disposable_mode(raw: &str) -> Result<bool, String> {
+    match raw.trim() {
+        "true" | "TRUE" | "1" | "yes" | "YES" => Ok(true),
+        "false" | "FALSE" | "0" | "no" | "NO" => Ok(false),
+        _ => Err(format!("{DISPOSABLE_MODE_ENV} must be true or false")),
+    }
+}
+
+fn validate_p2p_config(
+    disposable_mode: bool,
+    network_id: &str,
+    bind: &Multiaddr,
+    bootnodes: &[Multiaddr],
+    persistent_peers: &[PersistentPeerTarget],
+) -> Result<(), String> {
+    if !disposable_mode {
+        return Ok(());
+    }
+
+    if !network_id.starts_with(DISPOSABLE_NETWORK_ID_PREFIX) || network_id == DEFAULT_NETWORK_ID {
+        return Err(format!(
+            "{NETWORK_ID_ENV} must start with {DISPOSABLE_NETWORK_ID_PREFIX} in disposable mode"
+        ));
+    }
+    if !p2p_bind_is_loopback(bind) {
+        return Err(format!(
+            "{P2P_BIND_ENV} must bind to loopback in disposable mode"
+        ));
+    }
+    if !bootnodes.is_empty() {
+        return Err(format!("{BOOTNODES_ENV} must be empty in disposable mode"));
+    }
+    if !persistent_peers.is_empty() {
+        return Err("ULTRANET_PERSISTENT_PEERS must be empty in disposable mode".into());
+    }
+    Ok(())
+}
+
+fn configured_p2p_config(local_peer_id: &PeerId) -> Result<P2PConfig, String> {
+    let disposable_mode = match std::env::var(DISPOSABLE_MODE_ENV) {
+        Ok(value) => parse_disposable_mode(&value)?,
+        Err(std::env::VarError::NotPresent) => false,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(format!("{DISPOSABLE_MODE_ENV} must be valid UTF-8"))
+        }
+    };
+    let network_id = match std::env::var(NETWORK_ID_ENV) {
+        Ok(value) => parse_network_id(&value)?,
+        Err(std::env::VarError::NotPresent) => DEFAULT_NETWORK_ID.to_string(),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(format!("{NETWORK_ID_ENV} must be valid UTF-8"))
+        }
+    };
+    let bind = match std::env::var(P2P_BIND_ENV) {
+        Ok(value) => parse_p2p_bind(&value)?,
+        Err(std::env::VarError::NotPresent) => parse_p2p_bind(DEFAULT_P2P_BIND)?,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(format!("{P2P_BIND_ENV} must be valid UTF-8"))
+        }
+    };
+    let bootnodes_raw = match std::env::var(BOOTNODES_ENV) {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) if disposable_mode => String::new(),
+        Err(std::env::VarError::NotPresent) => BOOTNODES.join(","),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(format!("{BOOTNODES_ENV} must be valid UTF-8"))
+        }
+    };
+    let bootnodes = parse_bootnodes(&bootnodes_raw)?;
+    let persistent_peers = configured_persistent_peer_targets(local_peer_id)?;
+    validate_p2p_config(
+        disposable_mode,
+        &network_id,
+        &bind,
+        &bootnodes,
+        &persistent_peers,
+    )?;
+
+    Ok(P2PConfig {
+        network_id,
+        disposable_mode,
+        listen_addr: bind,
+        bootnodes,
+        persistent_peers,
+    })
+}
 
 fn describe_disconnect_cause<E: std::fmt::Debug>(
     cause: Option<&libp2p::swarm::ConnectionError<E>>,
@@ -645,6 +820,8 @@ impl P2PNode {
             "🔑 Persistent P2P identity loaded: path={} peer={peer_id}",
             identity_path.display()
         );
+        let p2p_config = configured_p2p_config(&peer_id)
+            .map_err(|error| format!("invalid P2P configuration: {error}"))?;
 
         // 2. Transport (TCP + Noise autentikacija + Yamux multipleksiranje)
         let transport = tcp::tokio::Transport::default()
@@ -706,26 +883,30 @@ impl P2PNode {
             SwarmConfig::with_tokio_executor(),
         );
 
-        // 8. Subscribe na topic
-        let topic = IdentTopic::new("ultra-net");
+        // 8. Subscribe to a profile-specific topic. Disposable nodes cannot
+        // accidentally consume the production topic even if a peer is reached.
+        let topic = network_topic(&p2p_config.network_id);
         swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
-        let persistent_dials =
-            PersistentDialManager::new(configured_persistent_peer_targets(&peer_id));
+        let persistent_dials = PersistentDialManager::new(p2p_config.persistent_peers.clone());
 
         Ok(Self {
             swarm,
             peer_id,
             blockchain,
             peer_manager: Arc::new(Mutex::new(PeerManager::new())),
+            p2p_config,
             persistent_dials,
             running: true,
         })
     }
 
-    pub fn start_listening(&mut self, addr: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let addr: Multiaddr = addr.parse()?;
+    pub fn start_listening(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let addr = self.p2p_config.listen_addr.clone();
         self.swarm.listen_on(addr.clone())?;
-        println!("📡 P2P listening on: {}", addr);
+        println!(
+            "📡 P2P listening on: {} (network_id={}, disposable_mode={})",
+            addr, self.p2p_config.network_id, self.p2p_config.disposable_mode
+        );
         Ok(())
     }
 
@@ -751,11 +932,10 @@ impl P2PNode {
     ) -> Result<(), String> {
         let msg = NetworkMessage::Transaction(TransactionMessage { tx, zk_proof });
         let data = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-        let topic = IdentTopic::new("ultra-net");
         self.swarm
             .behaviour_mut()
             .gossipsub
-            .publish(topic, data)
+            .publish(network_topic(&self.p2p_config.network_id), data)
             .map_err(|e| e.to_string())?;
         println!("📤 Broadcasted transaction");
         Ok(())
@@ -768,11 +948,10 @@ impl P2PNode {
     ) -> Result<(), String> {
         let msg = NetworkMessage::Block(BlockMessage { block, zk_proof });
         let data = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-        let topic = IdentTopic::new("ultra-net");
         self.swarm
             .behaviour_mut()
             .gossipsub
-            .publish(topic, data)
+            .publish(network_topic(&self.p2p_config.network_id), data)
             .map_err(|e| e.to_string())?;
         println!("📤 Broadcasted block");
         Ok(())
@@ -999,8 +1178,11 @@ impl P2PNode {
             Ok(d) => d,
             Err(_) => return,
         };
-        let topic = IdentTopic::new("ultra-net");
-        let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, data);
+        let _ = self
+            .swarm
+            .behaviour_mut()
+            .gossipsub
+            .publish(network_topic(&self.p2p_config.network_id), data);
     }
 
     async fn sync_chain(&mut self) {
@@ -1029,8 +1211,11 @@ impl P2PNode {
                         Ok(d) => d,
                         Err(_) => continue,
                     };
-                    let topic = IdentTopic::new("ultra-net");
-                    let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, data);
+                    let _ = self
+                        .swarm
+                        .behaviour_mut()
+                        .gossipsub
+                        .publish(network_topic(&self.p2p_config.network_id), data);
                     break;
                 }
             }
@@ -1040,25 +1225,24 @@ impl P2PNode {
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         println!("🚀 P2P Node running!");
         println!("🔑 Peer ID: {}", self.peer_id);
-        println!("📋 Network: ultra-net");
+        println!("📋 Network: {}", self.p2p_config.network_id);
         println!();
 
-        // 1. Kademlia Bootstrap
-        for addr_str in BOOTNODES {
-            if let Ok(addr) = addr_str.parse::<Multiaddr>() {
-                if let Some(peer_id) = addr.iter().last().and_then(|p| {
-                    if let libp2p::multiaddr::Protocol::P2p(peer_id) = p {
-                        Some(peer_id)
-                    } else {
-                        None
-                    }
-                }) {
-                    self.swarm
-                        .behaviour_mut()
-                        .kademlia
-                        .add_address(&peer_id, addr.clone());
-                    println!("🚀 Added Bootnode: {}", peer_id);
+        // 1. Kademlia bootstrap. Disposable mode has no bootnodes by
+        // construction; production retains the checked-in default fallback.
+        for addr in &self.p2p_config.bootnodes {
+            if let Some(peer_id) = addr.iter().last().and_then(|protocol| {
+                if let Protocol::P2p(peer_id) = protocol {
+                    Some(peer_id)
+                } else {
+                    None
                 }
+            }) {
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(&peer_id, addr.clone());
+                println!("🚀 Added Bootnode: {}", peer_id);
             }
         }
         for target in self.persistent_dials.targets() {
@@ -1071,7 +1255,9 @@ impl P2PNode {
                 target.peer_id, target.address
             );
         }
-        let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
+        if !self.p2p_config.bootnodes.is_empty() || !self.p2p_config.persistent_peers.is_empty() {
+            let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
+        }
 
         let mut sync_timer = tokio::time::interval(Duration::from_secs(30));
         let mut discovery_timer = tokio::time::interval(Duration::from_secs(60));
@@ -1230,6 +1416,63 @@ mod tests {
                 .established_connections,
             0
         );
+    }
+
+    #[test]
+    fn network_profile_parser_preserves_production_topic_and_validates_disposable_mode() {
+        assert_eq!(network_topic(DEFAULT_NETWORK_ID).to_string(), "ultra-net");
+        assert_eq!(
+            network_topic("ultranet-disposable-review").to_string(),
+            "ultra-net/ultranet-disposable-review"
+        );
+        assert!(parse_network_id("UltraNet").is_err());
+        assert!(parse_network_id(" ").is_err());
+        assert!(parse_network_id("ultranet-disposable-review").is_ok());
+
+        let loopback = parse_p2p_bind("/ip4/127.0.0.1/tcp/19000").unwrap();
+        let public = parse_p2p_bind("/ip4/0.0.0.0/tcp/9000").unwrap();
+        let local_peer_id = PeerId::random();
+        let remote_peer_id = PeerId::random();
+        let remote_address = format!("/ip4/192.0.2.10/tcp/19000/p2p/{remote_peer_id}");
+        let persistent_peer = parse_persistent_peer_targets(&remote_address, &local_peer_id)
+            .expect("test persistent peer should parse");
+        let bootnode = parse_bootnodes(&format!("/ip4/192.0.2.11/tcp/19000/p2p/{remote_peer_id}"))
+            .expect("test bootnode should parse");
+
+        let public_error =
+            validate_p2p_config(true, "ultranet-disposable-review", &public, &[], &[])
+                .expect_err("disposable mode must reject public binds");
+        assert!(public_error.contains("loopback"));
+
+        let bootnode_error = validate_p2p_config(
+            true,
+            "ultranet-disposable-review",
+            &loopback,
+            &bootnode,
+            &[],
+        )
+        .expect_err("disposable mode must reject bootnodes");
+        assert!(bootnode_error.contains(BOOTNODES_ENV));
+
+        let peer_error = validate_p2p_config(
+            true,
+            "ultranet-disposable-review",
+            &loopback,
+            &[],
+            &persistent_peer,
+        )
+        .expect_err("disposable mode must reject persistent peers");
+        assert!(peer_error.contains("ULTRANET_PERSISTENT_PEERS"));
+
+        validate_p2p_config(true, "ultranet-disposable-review", &loopback, &[], &[])
+            .expect("loopback disposable profile should be accepted");
+    }
+
+    #[test]
+    fn p2p_bind_and_bootnode_parsers_reject_ambiguous_addresses() {
+        assert!(parse_p2p_bind("localhost:9000").is_err());
+        assert!(parse_p2p_bind("/ip4/127.0.0.1/tcp/19000/ws").is_err());
+        assert!(parse_bootnodes("/ip4/192.0.2.10/tcp/19000").is_err());
     }
 
     #[test]

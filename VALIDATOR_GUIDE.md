@@ -86,7 +86,7 @@ If your host is not x86_64, or you require a source build, continue with the com
 
 ### 2.4 Administrator token for ordinary operators
 
-`ULTRANET_ADMIN_TOKEN` is a private administrator bearer token required by the node API for state-changing operations such as mining, pruning, and AppChain management. It is not a wallet key, public node identifier, or `DILITHIUM_PUB_KEY`. Do not share it or place it in browser code.
+Existing deployments use `ULTRANET_ADMIN_TOKEN`, a private administrator bearer token required by the node API for state-changing operations such as mining, pruning, and AppChain management. The disposable systemd staging unit instead uses `ULTRANET_ADMIN_TOKEN_FILE` with an encrypted credential projection. The token is not a wallet key, public node identifier, or `DILITHIUM_PUB_KEY`; do not share it or place it in browser code, and do not configure both sources.
 
 Create a fresh 32-byte token locally:
 
