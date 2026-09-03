@@ -16,6 +16,8 @@ validator_dilithium5_key.json
 
 # Compiled files
 target/
+__pycache__/
+*.pyc
 *.rs.bk
 *.pdb
 *.log

@@ -17,7 +17,7 @@ Nothing in the public preflight enables intake or submits a claim. Do not run th
 
 The current status is therefore **node/faucet local preflight passed; public route and claims enablement blocked**.
 
-The follow-up VPS checks also confirmed NTP synchronization, four root-owned mode-`0600` encrypted credentials, loopback-only service listeners, inactive production services, and the same disabled public status. The faucet unit currently limits address families but does not enforce a destination-level outbound egress allowlist; this is a hard pre-canary gate, not an accepted production posture.
+The follow-up VPS checks also confirmed NTP synchronization, four root-owned mode-`0600` encrypted credentials, loopback-only service listeners, inactive production services, and the same disabled public status. The deployed faucet unit still has only the previously verified address-family restriction and no destination-level outbound egress allowlist. The checked-in unit now stages `IPAddressDeny=any` plus loopback allowances and an effective-policy guard, with the reviewed [`ultranet-faucet-staging-egress.py`](./ultranet-faucet-staging-egress.py) helper and [`ultranet-faucet-staging-egress-expiry.timer`](./ultranet-faucet-staging-egress-expiry.timer); those artifacts have not been applied to the VPS. Egress freshness/effectiveness remains a hard pre-canary gate.
 
 ## Safety invariants
 
@@ -196,17 +196,18 @@ Do not enable intake until all of the following are present in the private chang
 - real staging Turnstile hostname/secret verification;
 - staging signer/address and node account/fee verification;
 - separate Caddy/WAF/rate-limit/origin policy evidence;
+- effective systemd egress allowlist, resolver integrity, Cloudflare range freshness, expiry-monitor, and denied-destination negative-test evidence;
 - encrypted staging SQLite/WAL backup and a tested disable/stop rollback path;
 - exact binary checksum, source revision, unit revision, environment revision, and credential alias record;
 - an explicit written approval for **exactly one disposable claim**.
 
 Public status approval, node-only approval, or preview approval does not authorize a claim.
 
-### Hard security gates to add before the canary
+### Hard security gates required before the canary
 
-The following edges were identified during the follow-up review. They are hard pre-canary gates, not changes authorized by this document:
+The following edges were identified during the follow-up review. They are hard pre-canary gates. Their checked-in implementation is not authorization to apply policy or enable intake:
 
-- **Outbound egress:** the faucet unit restricts address families but does not restrict destination addresses. Require an independently enforced, reviewed egress policy or controlled proxy that permits loopback node access and the approved Turnstile Siteverify path only. Do not treat `RestrictAddressFamilies` as a destination allowlist.
+- **Outbound egress:** the staging service now has `IPAddressDeny=any` plus loopback allowances, with the reviewed `ultranet-faucet-staging-egress.py` helper generating a root-owned resolver/Cloudflare destination drop-in and expiring manifest. Require the helper's `--check --effective` result, fresh range/resolver approval, and the expiry monitor before a canary. Do not treat `RestrictAddressFamilies` as a destination allowlist; systemd still cannot enforce exact hostname/port egress, so this residual risk must be explicitly accepted or replaced with a dedicated local proxy.
 - **Proxy identity:** inspect the effective Caddy version and forwarded-header chain. Require strict trusted-proxy/XFF behavior and prove that forged `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`, and related headers cannot change abuse accounting or the Turnstile `remoteip` value. Client-supplied forwarding headers must remain stripped upstream.
 - **Path normalization:** test repeated slashes, dot segments, encoded separators, encoded `internal`, trailing-slash variants, and alternate-case paths at both Caddy and Actix. No normalized variant may reach a node or operator route. Keep `GET /api/faucet/claims` (without an ID) denied.
 - **Host, origin, and transport:** verify exact Host/SNI routing, certificate coverage, no alternate-host route, no direct IPv4/IPv6 origin, no public Caddy admin endpoint, and separate staging Caddy certificate/state storage. If HTTP/3 or 0-RTT is enabled, test or disable it for the canary so retries cannot bypass the operator-egress restriction.
@@ -215,6 +216,26 @@ The following edges were identified during the follow-up review. They are hard p
 - **Crash and log hygiene:** verify effective faucet core dumps are disabled or protected from secret-bearing collection. Confirm request bodies, CAPTCHA tokens, cookies, authorization headers, idempotency keys, signed envelopes, and secrets are absent from journals, edge logs, crash reports, `/proc`-visible environments, and temporary files.
 - **Backup consistency:** create a staging-only encrypted backup using a consistency-safe SQLite/WAL procedure, preserve hashes and metadata separately, and test the disabled/stop rollback before enabling intake.
 - **Disablement monitoring:** verify the private operator kill switch, service stop path, queue/budget alerts, node/hash/nonce reconciliation, and immediate disablement. Any mismatch is a permanent stop for this run.
+
+### Comprehensive gate evidence matrix
+
+Every row requires a private evidence record, an identified reviewer, and a tested stop action before the canary:
+
+| Gate | Required evidence | Stop condition |
+| --- | --- | --- |
+| Supply chain/identity | Locked source, binary, unit, helper, drop-in, host, signer, and address identities | Checksum, host, or staging/production identity mismatch |
+| DNS/resolver | Independent resolver agreement, no origin/AAAA/CNAME bypass, approved `/etc/resolv.conf` path | Split-horizon, poisoning indicator, direct origin, or unapproved resolver |
+| TLS/transport | Exact SNI/SAN, Full (strict), HTTP redirect, IPv4/IPv6 parity, HTTP/3/0-RTT decision | Wrong certificate, downgrade, origin disclosure, or replay bypass |
+| Edge proxy/WAF | Staging-only paths/methods, no-store, body limit, rate limits, trusted-proxy chain, Caddy admin isolation | Any normalized or alternate route reaches an upstream |
+| Application contract | Content type, body size, malformed input, address, CAPTCHA, method, and route rejection checks | Unexpected status, leaked internal error, or protected route reachability |
+| Client identity/abuse | Forged forwarding-header tests and edge/application limit reconciliation | Client can spoof IP/subnet identity or bypass abuse controls |
+| Turnstile/credentials | Exact hostname/action, atomic encrypted rotation, provider lifecycle, no plaintext/proc/log exposure | Provider ambiguity, leaked secret, stale projection, or fail-open error |
+| Process isolation/egress | Effective systemd properties, fresh manifest, current resolver/range checks, denied-destination test | Missing/stale/overbroad allowlist or production path access |
+| Storage/recovery | Consistent encrypted SQLite/WAL/SHM backup, copy integrity, tested disable/restore | Inconsistent backup, wrong owner/mode, or production overlap |
+| Economic/transaction | Amount, fee, reserve, cap, nonce, hash, source debit, recipient, budget, and SQLite reconciliation | Any mismatch, duplicate debit, or retry ambiguity |
+| Availability/resources | Queue, attempts, timeouts, body/concurrency limits, cgroup ceilings, OOM/core-dump review | Unexpected backlog, OOM, restart loop, or node-failure drift |
+| Privacy/observability | Redacted edge/journal/crash/proc/temp review and alerts for stale/mismatched state | Any request body, token, key, header, envelope, or secret exposure |
+| Approval/operations | Separate approvals, verified operator egress, abort authority, canary window, cleanup/rollback owner | Missing approval or inability to disable without production access |
 
 ## Phase D — one-claim canary
 
@@ -257,11 +278,12 @@ A successful canary still does not authorize production enablement. Production r
 - [ ] Strict HTTPS/TLS, Cloudflare Full (strict), Caddy separation, WAF path/method rules, no-store policy, rate limits, and origin controls are externally verified without a claim.
 - [ ] Local and public status report disabled intake, fixed amount, and six decimals; unsupported/internal routes, normalized variants, `OPTIONS`, and `TRACE` are blocked at the public boundary.
 - [ ] Exact Host/SNI, IPv4/IPv6, HTTP/3/0-RTT behavior, Caddy admin isolation, and staging certificate/state separation are verified.
-- [ ] Destination-level faucet egress, strict proxy client-IP trust, NTP synchronization, core-dump protection, and secret-free logs/temp/proc surfaces are evidenced.
+- [ ] Destination-level faucet egress is active and fresh, resolver/Cloudflare range provenance is recorded, the expiry monitor is installed, and strict proxy client-IP trust, NTP synchronization, core-dump protection, and secret-free logs/temp/proc surfaces are evidenced.
 - [ ] The real staging Turnstile secret replaces the disposable placeholder through an atomic encrypted-credential rotation and is bound to the exact staging hostname/action.
 - [ ] A staging-only consistency-safe SQLite/WAL backup and rollback path is recorded; binary, unit, environment, and credential metadata are reproducible.
 - [ ] A separate written approval authorizes exactly one disposable claim before any enable call.
 - [ ] The single canary reconciles claim, node, balance, nonce, fee, source debit, recipient balance, and SQLite state exactly.
 - [ ] Same-key replay produces no second payout; changed-destination replay returns `409`.
+- [ ] All thirteen hard-gate categories have evidence, an identified reviewer, and a tested stop action.
 - [ ] Intake is disabled immediately after the canary, with redacted evidence preserved.
 - [ ] No production endpoint, credential, state, proxy, DNS, firewall, service, or funds are touched.

@@ -20,6 +20,10 @@ SupplementaryGroups=
 WorkingDirectory=/opt/ultranet-faucet-staging
 EnvironmentFile=-/etc/ultranet-faucet-staging/faucet.env
 
+# Refuse startup unless the root-owned, non-secret destination policy is fresh
+# and matches the active drop-in. A missing helper/policy fails closed.
+ExecCondition=/usr/local/libexec/ultranet-faucet-staging-egress.py --check --effective
+
 # These encrypted credentials exist only on the staging host. The credential
 # names must match the aliases in deploy/faucet.env.staging.example.
 LoadCredentialEncrypted=faucet-staging-signer.json:/etc/ultranet-faucet-staging/secrets/faucet-staging-signer.json.cred
@@ -47,7 +51,11 @@ TimeoutStopSec=30s
 
 # The faucet needs loopback access to the staging node and HTTPS access to
 # the staging Turnstile endpoint; it does not need raw devices or privileges.
+# The generated drop-in adds resolver and Cloudflare destinations. systemd's
+# filter is destination-IP based, not a hostname or port firewall.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=127.0.0.0/8 ::1/128
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
@@ -70,7 +78,7 @@ AmbientCapabilities=
 # credential-source paths. systemd projects only the four named credentials
 # into $CREDENTIALS_DIRECTORY for the worker.
 InaccessiblePaths=-/var/lib/ultranet -/var/lib/ultranet-staging -/etc/ultranet -/etc/ultranet-staging -/etc/ultranet-faucet -/etc/ultranet-faucet-staging/secrets -/opt/ultranet -/opt/ultranet-staging -/opt/ultranet-faucet -/opt/ultranet-faucet-staging/public -/root
-ReadOnlyPaths=/etc/ultranet-faucet-staging/faucet.env
+ReadOnlyPaths=/etc/ultranet-faucet-staging/faucet.env /etc/ultranet-faucet-staging/egress
 ReadWritePaths=/var/lib/ultranet-faucet-staging
 
 StandardOutput=journal

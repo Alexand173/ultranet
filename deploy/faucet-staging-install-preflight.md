@@ -14,6 +14,9 @@ The faucet templates used below are:
 - [`faucet.env.staging.example`](./faucet.env.staging.example)
 - [`ultranet-faucet-staging.service`](./ultranet-faucet-staging.service)
 - [`Caddyfile.staging.example`](./Caddyfile.staging.example)
+- [`ultranet-faucet-staging-egress.py`](./ultranet-faucet-staging-egress.py)
+- [`ultranet-faucet-staging-egress-expiry.service`](./ultranet-faucet-staging-egress-expiry.service)
+- [`ultranet-faucet-staging-egress-expiry.timer`](./ultranet-faucet-staging-egress-expiry.timer)
 
 ## Safety gates
 
@@ -67,7 +70,7 @@ if test -n "$(git -C "$STAGING_SOURCE_DIR" status --porcelain --untracked-files=
 fi
 ```
 
-The checkout cleanliness check is a review gate, not a substitute for verifying the complete staging checkout. Build the node and faucet from this same revision:
+The checkout cleanliness check is a review gate, not a substitute for verifying the complete staging checkout. Build the node and faucet from this same revision. The egress helper is a separate root-owned deployment artifact and must be reviewed and checked at the same source revision:
 
 ```bash
 cd "$STAGING_SOURCE_DIR"
@@ -266,14 +269,53 @@ sudo install -o root -g root -m 0644 \
   "$STAGING_SOURCE_DIR/deploy/Caddyfile.staging.example" \
   /etc/caddy/Caddyfile.staging
 
+# Install the non-secret egress validator and the fail-closed expiry monitor.
+# The refresh command is intentionally operator-run; it is not a timer and it
+# never runs while the faucet service is active.
+sudo install -d -o root -g root -m 0755 /usr/local/libexec
+sudo install -o root -g root -m 0755 \
+  "$STAGING_SOURCE_DIR/deploy/ultranet-faucet-staging-egress.py" \
+  /usr/local/libexec/ultranet-faucet-staging-egress.py
+sudo install -o root -g root -m 0644 \
+  "$STAGING_SOURCE_DIR/deploy/ultranet-faucet-staging-egress-expiry.service" \
+  /etc/systemd/system/ultranet-faucet-staging-egress-expiry.service
+sudo install -o root -g root -m 0644 \
+  "$STAGING_SOURCE_DIR/deploy/ultranet-faucet-staging-egress-expiry.timer" \
+  /etc/systemd/system/ultranet-faucet-staging-egress-expiry.timer
+sudo install -d -o root -g root -m 0755 \
+  /etc/ultranet-faucet-staging/egress
+
+# The refresh command must run from a private root maintenance shell while
+# the faucet is stopped and intake is disabled. It is not a service timer.
+# Initial policy creation requires explicit private approval for the published
+# Cloudflare ranges and the resolver destinations observed on this host.
+# This writes only root-owned, non-secret range/manifest/drop-in metadata.
+sudo systemctl stop ultranet-faucet-staging.service
+sudo grep -Eq '^FAUCET_ENABLED=false$' /etc/ultranet-faucet-staging/faucet.env
+sudo /usr/local/libexec/ultranet-faucet-staging-egress.py \
+  --refresh --approve-range-change --approve-resolver-change
+
 sudo systemd-analyze verify \
   /etc/systemd/system/ultranet-staging.service \
-  /etc/systemd/system/ultranet-faucet-staging.service
+  /etc/systemd/system/ultranet-faucet-staging.service \
+  /etc/systemd/system/ultranet-faucet-staging-egress-expiry.service \
+  /etc/systemd/system/ultranet-faucet-staging-egress-expiry.timer
 sudo caddy validate \
   --config /etc/caddy/Caddyfile.staging \
   --adapter caddyfile
 sudo systemctl daemon-reload
+sudo /usr/local/libexec/ultranet-faucet-staging-egress.py \
+  --check --effective
+sudo systemctl enable --now ultranet-faucet-staging-egress-expiry.timer
 ```
+
+The refresh helper is intentionally not attached to a timer: it fetches external
+policy data and requires a private operator review when resolver or Cloudflare
+ranges change. To refresh later, stop the faucet, verify `FAUCET_ENABLED=false`,
+run the helper with `--approve-range-change` and/or `--approve-resolver-change`
+only when the change record authorizes it, then run `daemon-reload`,
+`--check --effective`, and restart the faucet while it remains disabled. If the
+manifest expires, the expiry timer invokes `--enforce` and stops the faucet.
 
 Keep the staging Caddy route separate from production. The staging Caddy service must be a separately provisioned unit whose `ExecStart` loads `/etc/caddy/Caddyfile.staging` (or an explicitly reviewed effective config that imports it). Do not overwrite `/etc/caddy/Caddyfile` on the production origin. Before any public reload, configure the separate Cloudflare proxied DNS record, Full (strict) TLS, managed WAF, no-store cache bypass, read/write limits, Turnstile hostname/action, temporary canary restriction, and origin firewall policy.
 
@@ -298,7 +340,11 @@ sudo systemctl --no-pager --full status ultranet-faucet-staging.service || true
 
 sudo systemd-analyze verify \
   /etc/systemd/system/ultranet-staging.service \
-  /etc/systemd/system/ultranet-faucet-staging.service
+  /etc/systemd/system/ultranet-faucet-staging.service \
+  /etc/systemd/system/ultranet-faucet-staging-egress-expiry.service \
+  /etc/systemd/system/ultranet-faucet-staging-egress-expiry.timer
+sudo /usr/local/libexec/ultranet-faucet-staging-egress.py \
+  --check --effective
 
 sudo -u ultranet-faucet-staging bash -c \
   'set -a; . /etc/ultranet-faucet-staging/faucet.env; set +a; \

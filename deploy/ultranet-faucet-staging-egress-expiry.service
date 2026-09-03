@@ -1,0 +1,36 @@
+# Fail-closed monitor for the staging faucet destination policy.
+# Install only on the staging VPS after the egress helper and policy manifest
+# have been reviewed. This unit never changes DNS, Caddy, UFW, or production.
+
+[Unit]
+Description=Fail closed stale UltraNet staging faucet egress policy
+After=ultranet-faucet-staging.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/libexec/ultranet-faucet-staging-egress.py --enforce
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+ReadOnlyPaths=/etc/ultranet-faucet-staging/egress
+ReadWritePaths=
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ultranet-faucet-staging-egress

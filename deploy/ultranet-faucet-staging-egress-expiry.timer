@@ -1,0 +1,15 @@
+# Periodically stop the staging faucet if its destination policy is stale.
+# Persistent=false avoids surprise catch-up execution after downtime.
+
+[Unit]
+Description=Periodic staging faucet egress policy expiry check
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+AccuracySec=30s
+Persistent=false
+Unit=ultranet-faucet-staging-egress-expiry.service
+
+[Install]
+WantedBy=timers.target
