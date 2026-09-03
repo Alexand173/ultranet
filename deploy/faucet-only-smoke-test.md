@@ -236,7 +236,7 @@ If the preview was terminated forcefully and its directory remains, inspect the 
 
 ## Phase 2 — optional disposable-node integration test
 
-Do not begin Phase 2 merely because Phase 1 passed. This VPS has only 1.9 GiB RAM, one vCPU, and no swap; it may not be able to build or sustain a validator.
+Do not begin Phase 2 merely because Phase 1 passed. The resized VPS has 7.6 GiB RAM, 4 vCPUs, and no swap: it is an 8-GiB-class experiment host, not sustained validator capacity. First-run TFHE key generation observed during the node-only preflight can consume about 6.7 GiB before network listeners appear, so the 7 GiB service ceiling remains a hard safety gate.
 
 Phase 2 requires a separate written capacity decision and all of these prerequisites:
 
@@ -248,7 +248,7 @@ Phase 2 requires a separate written capacity decision and all of these prerequis
 - Outbound Turnstile access and an exact non-production widget/hostname/action if testing the normal `serve` path. If strict no-external-connectivity is required, stop after Phase 1; the current runtime does not provide a production-like local CAPTCHA mode for `serve`.
 - Explicit approval to create a disposable claim. A real-node claim is not implied by preview approval.
 
-The current node startup also creates a libp2p listener with a hard-coded `0.0.0.0:9000` bind. An empty `ULTRANET_PERSISTENT_PEERS` value does not prevent that listener or all peer-discovery behavior. A disposable-node deployment therefore needs a separately reviewed host firewall/network policy that blocks unneeded external TCP/UDP `9000` traffic and prevents production peer connectivity. The node's ZK and recursive-ZK initialization also makes the current 1.9-GiB host unsuitable as an assumed full-node build/runtime target.
+The locked runtime accepts `ULTRANET_P2P_BIND` and, in disposable mode, rejects any non-loopback bind, bootnode, or persistent peer. The staging environment therefore uses `/ip4/127.0.0.1/tcp/19000`; it must not fall back to the production `/ip4/0.0.0.0/tcp/9000` default. A separately reviewed host network policy is still required to prevent production peer connectivity and to verify that no public `9000` listener is exposed. Groth16, recursive-ZK, and TFHE initialization must also complete within the reviewed memory envelope before the node is treated as ready.
 
 If any prerequisite is missing, record Phase 2 as blocked. Do not point the faucet at a remote node to bypass the loopback validation; `FAUCET_NODE_API_BASE_URL` is required to target loopback.
 
@@ -266,12 +266,14 @@ steps are completed in order:
    `ULTRANET_ADMIN_TOKEN_FILE`, `ULTRANET_P2P_BIND`, empty bootnodes, and the
    disposable network profile. Keep the node admin token out of the faucet.
 4. Apply a separately reviewed host network policy. The node must not reach the
-   production bootnode or expose P2P publicly; UFW is currently inactive and
-   the node's historical default was a `0.0.0.0:9000` listener.
+   production bootnode or expose P2P publicly; UFW is currently inactive. The
+   staging unit's deny-all address policy and runtime loopback bind are
+   defense-in-depth, not a replacement for the host network decision.
 5. Run the node-only preflight: configuration, file-backed admin auth, fresh
    state/identity, loopback API, loopback P2P bind, empty peer/bootstrap set,
    `/api/validate`, six-decimal accounting, no production log references, and
-   service-user filesystem isolation.
+   service-user filesystem isolation. The runtime must finish its cryptographic
+   initialization before the API/P2P assertions can pass.
 6. Keep the faucet disabled and stop here unless every node-only assertion
    passes. A separate written approval is required before loading non-production
    faucet credentials or enabling intake for one claim.
@@ -284,35 +286,46 @@ sustained validator environment or compile the full workspace there by default.
 
 ### Node-only preflight attempt status
 
-A non-mutating node-only preflight was run on 2026-09-03. It stopped before any
-installation or service start because the required provider confirmation and
-staging artifacts were not present in the execution environment.
+A node-only installation and runtime preflight was run on 2026-09-03 after the
+post-resize baseline. It used the locked revision
+`5b616469ffab3718d3de5102937a81338e255638`, transferred only the release node
+artifact and non-secret staging templates, and created only staging-scoped
+service/state paths and an encrypted staging admin credential.
 
 Observed gates:
 
 - Provider CLI/API access and provider credentials were not available locally;
   the guest measurements confirm the enlarged profile, but the provider-side
   CPX32 server/resize record remains an out-of-band verification item.
-- The VPS still had no `/opt/ultranet-staging/target/release/UltraNet`, staging
-  environment file, encrypted admin credential, staging state directory, or
-  installed `ultranet-staging.service`.
-- UFW was inactive and the nftables ruleset was empty. Only SSH and local
-  resolver/DHCP listeners were present.
-- Production and staging UltraNet/faucet units were inactive or not found.
+- The host identity remained `ubuntu-2gb-nbg1-2` at `2.28.61.71`, with 4 vCPUs,
+  7.6 GiB RAM, no swap, and no pre-existing UltraNet/faucet/Caddy listeners.
+- The first staging start exposed a clean-host systemd namespace issue because
+  absent production paths were listed as mandatory `InaccessiblePaths`. The
+  reviewed unit was corrected to use systemd's ignored-missing-path form, then
+  committed as `45013e032ec37a65b08f8d2eb7143a508a8e4082`.
+- Static staging checks passed: the node artifact checksum matched
+  `e4eaba83dbc18eebf9b1a5088ae7c0697b4a6323f2a3e4c4f1187c465e51e871`, the
+  environment contained no admin token assignment or production path, the
+  encrypted credential projected successfully, and service/state ownership and
+  modes matched the reviewed unit.
+- The node started under the deny-all/loopback policy and remained stable, but
+  first-run TFHE key generation held approximately 6.72 GiB with no API or P2P
+  listener after a bounded observation window. The node was stopped cleanly
+  before any faucet action; no claim, faucet credential, firewall, DNS, Caddy,
+  production service, or production state was touched.
 
-No binary was copied, source was built on the VPS, state or credentials were
-created, systemd was changed, firewall rules were changed, a node was started,
-or faucet/production connectivity was enabled. Phase 2 remains blocked until
-provider identity is confirmed, artifacts are built from one locked revision,
-and the reviewed node network policy and credential-install procedure are
-explicitly approved.
+Phase 2 is explicitly blocked at the cryptographic-initialization capacity gate.
+Do not raise `MemoryMax`, add swap, or copy generated cryptographic state as an
+unreviewed workaround. Re-run on a separately approved host with sufficient
+headroom, or obtain a written capacity exception and a reviewed key-generation
+procedure before attempting final staging initialization.
 
 ### Phase 2 setup order when unblocked
 
 1. Choose a larger disposable host or obtain an explicit capacity exception. Use the existing 8-GiB validator profile as the minimum practical reference for a controlled node experiment; 32 GiB remains the documented recommendation for sustained validator workloads. Do not add swap or relax limits as an unreviewed workaround.
 2. Build `UltraNet` and `ultranet-faucet` on a stronger controlled machine from the same clean locked revision. Record both artifact checksums and copy only the release binaries.
-3. Create a dedicated disposable node account, state directory, and unit. Set `ULTRANET_DB_PATH` to that directory, `ULTRANET_API_BIND=127.0.0.1:8081`, `ULTRANET_PAUSE_ON_ERROR=false`, and an exact non-wildcard local CORS origin if one is needed. Generate a node-only `ULTRANET_ADMIN_TOKEN` separately; never give it to the faucet.
-4. Start with no `ULTRANET_PERSISTENT_PEERS`, a fresh node database, a fresh node P2P identity, no production genesis/storage/peers, and the reviewed firewall policy for the node's `0.0.0.0:9000` listener. Verify `/api/validate` before starting the faucet.
+3. Create a dedicated disposable node account, state directory, and unit. Set `ULTRANET_DB_PATH` to that directory, `ULTRANET_API_BIND=127.0.0.1:8081`, `ULTRANET_PAUSE_ON_ERROR=false`, and an exact non-wildcard local CORS origin if one is needed. Generate a node-only admin token into the protected maintenance path, encrypt it with the host credential key, and expose it only through `ULTRANET_ADMIN_TOKEN_FILE`; never set or give `ULTRANET_ADMIN_TOKEN` to the faucet.
+4. Start with no `ULTRANET_PERSISTENT_PEERS`, a fresh node database, a fresh node P2P identity, no production genesis/storage/peers, `ULTRANET_DISPOSABLE_MODE=true`, `ULTRANET_NETWORK_ID=ultranet-disposable-review`, and `ULTRANET_P2P_BIND=/ip4/127.0.0.1/tcp/19000`. Verify `/api/validate` only after cryptographic initialization completes and before starting the faucet.
 5. Create a separate faucet account/state directory and four encrypted faucet credentials. Generate a fresh signer-derived address and set it in a dedicated environment file with `FAUCET_NODE_API_BASE_URL=http://127.0.0.1:8081`, loopback bind, `FAUCET_ENABLED=false`, a small disposable daily cap, and the exact approved non-production Turnstile hostname.
 6. Install the faucet under its dedicated user and unit, run `check-config`, verify service-user filesystem isolation, and confirm the local status endpoint reports disabled before any enablement.
 7. Obtain explicit approval for one disposable claim, enable only the disposable faucet, perform the exact reconciliation/idempotency assertions below, disable intake immediately, preserve redacted evidence, and remove the disposable state.
