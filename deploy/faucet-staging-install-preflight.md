@@ -17,6 +17,7 @@ The faucet templates used below are:
 - [`ultranet-faucet-staging-egress.py`](./ultranet-faucet-staging-egress.py)
 - [`ultranet-faucet-staging-egress-expiry.service`](./ultranet-faucet-staging-egress-expiry.service)
 - [`ultranet-faucet-staging-egress-expiry.timer`](./ultranet-faucet-staging-egress-expiry.timer)
+- [`faucet-staging-egress-review.md`](./faucet-staging-egress-review.md) — deferred review-only installation block and architecture decision
 
 ## Safety gates
 
