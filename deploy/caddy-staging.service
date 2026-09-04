@@ -1,0 +1,77 @@
+# Hardened staging-only Caddy service.
+# Do not install this unit on the production origin.
+
+[Unit]
+Description=Caddy web server (UltraNet staging)
+Documentation=https://caddyserver.com/docs/
+After=network-online.target
+Wants=network-online.target
+
+StartLimitIntervalSec=5min
+StartLimitBurst=3
+
+[Service]
+Type=notify
+User=caddy
+Group=caddy
+SupplementaryGroups=
+WorkingDirectory=/var/lib/caddy-staging
+UMask=0027
+
+# Keep staging certificate/data/config state separate from the package and
+# production Caddy state under /var/lib/caddy.
+Environment=HOME=/var/lib/caddy-staging
+Environment=XDG_DATA_HOME=/var/lib/caddy-staging/.local/share
+Environment=XDG_CONFIG_HOME=/var/lib/caddy-staging/.config
+
+ExecStart=/usr/bin/caddy run --config /etc/caddy/Caddyfile.staging --adapter caddyfile
+ExecReload=/usr/bin/caddy reload --config /etc/caddy/Caddyfile.staging --adapter caddyfile --force
+
+TimeoutStartSec=30s
+TimeoutStopSec=10s
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=1048576
+LimitNPROC=512
+TasksMax=256
+
+# Caddy needs only low-port binding; do not grant a general capability set.
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+
+# The staging process must not read the production Caddy config or state.
+InaccessiblePaths=-/etc/caddy/Caddyfile -/var/lib/caddy -/root
+ReadOnlyPaths=/etc/caddy/Caddyfile.staging
+ReadWritePaths=/var/lib/caddy-staging /var/log/caddy-staging
+StateDirectory=caddy-staging
+StateDirectoryMode=0750
+LogsDirectory=caddy-staging
+LogsDirectoryMode=0750
+RuntimeDirectory=caddy-staging
+RuntimeDirectoryMode=0750
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=caddy-staging
+
+[Install]
+WantedBy=multi-user.target

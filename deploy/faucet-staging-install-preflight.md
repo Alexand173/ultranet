@@ -13,6 +13,7 @@ The faucet templates used below are:
 
 - [`faucet.env.staging.example`](./faucet.env.staging.example)
 - [`ultranet-faucet-staging.service`](./ultranet-faucet-staging.service)
+- [`caddy-staging.service`](./caddy-staging.service)
 - [`Caddyfile.staging.example`](./Caddyfile.staging.example)
 - [`ultranet-faucet-staging-egress.py`](./ultranet-faucet-staging-egress.py)
 - [`ultranet-faucet-staging-egress-expiry.service`](./ultranet-faucet-staging-egress-expiry.service)
@@ -265,6 +266,9 @@ sudo stat -c '%n %U:%G %a' \
 sudo install -o root -g root -m 0644 \
   "$STAGING_SOURCE_DIR/deploy/ultranet-faucet-staging.service" \
   /etc/systemd/system/ultranet-faucet-staging.service
+sudo install -o root -g root -m 0644 \
+  "$STAGING_SOURCE_DIR/deploy/caddy-staging.service" \
+  /etc/systemd/system/caddy-staging.service
 
 sudo install -o root -g root -m 0644 \
   "$STAGING_SOURCE_DIR/deploy/Caddyfile.staging.example" \
