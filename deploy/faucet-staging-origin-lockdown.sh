@@ -455,7 +455,7 @@ allow_cloudflare_ranges() {
             [[ -n "$cidr" ]] || continue
             for port in 80 443; do
                 if ! ufw status | grep -F "$cidr" | grep -Fq "${port}/tcp"; then
-                    if ! ufw --force allow from "$cidr" to any port "$port" proto tcp comment 'Cloudflare staging web origin'; then
+                    if ! ufw allow from "$cidr" to any port "$port" proto tcp comment 'Cloudflare staging web origin'; then
                         fail_check "could not add Cloudflare rule $cidr:$port"
                     fi
                 fi
