@@ -21,6 +21,67 @@ const PROPOSAL_CHAIN_ID = 0;
 const PROPOSAL_DOMAIN = "UltraNet/transaction-signing-envelope/v2";
 const textEncoder = new TextEncoder();
 
+export const VALIDATOR_PROPOSAL_MAX_AGE_SECONDS = 3_600;
+export const VALIDATOR_PROPOSAL_FUTURE_TOLERANCE_SECONDS = 60;
+
+export type ValidatorProposalTimestampClassification =
+  | "fresh"
+  | "future_within_tolerance"
+  | "future"
+  | "stale"
+  | "invalid";
+
+export interface ValidatorProposalTimestampDiagnostic {
+  event: "validator_proposal_timestamp";
+  proposal_timestamp: number | null;
+  client_timestamp: number;
+  age_seconds: number | null;
+  classification: ValidatorProposalTimestampClassification;
+}
+
+export function getValidatorProposalTimestampDiagnostic(
+  proposalTimestamp: unknown,
+  clientTimestamp = Math.floor(Date.now() / 1000),
+): ValidatorProposalTimestampDiagnostic {
+  if (
+    typeof proposalTimestamp !== "number" ||
+    !Number.isSafeInteger(proposalTimestamp) ||
+    proposalTimestamp < 0
+  ) {
+    return {
+      event: "validator_proposal_timestamp",
+      proposal_timestamp: null,
+      client_timestamp: clientTimestamp,
+      age_seconds: null,
+      classification: "invalid",
+    };
+  }
+
+  const ageSeconds = clientTimestamp - proposalTimestamp;
+  let classification: ValidatorProposalTimestampClassification = "fresh";
+  if (ageSeconds > VALIDATOR_PROPOSAL_MAX_AGE_SECONDS) {
+    classification = "stale";
+  } else if (ageSeconds < -VALIDATOR_PROPOSAL_FUTURE_TOLERANCE_SECONDS) {
+    classification = "future";
+  } else if (ageSeconds < 0) {
+    classification = "future_within_tolerance";
+  }
+
+  return {
+    event: "validator_proposal_timestamp",
+    proposal_timestamp: proposalTimestamp,
+    client_timestamp: clientTimestamp,
+    age_seconds: ageSeconds,
+    classification,
+  };
+}
+
+export function logValidatorProposalTimestampDiagnostic(
+  diagnostic: ValidatorProposalTimestampDiagnostic,
+): void {
+  console.info("[UltraNet] redacted validator proposal timestamp diagnostic", diagnostic);
+}
+
 function appendBytes(target: number[], bytes: Uint8Array): void {
   for (const byte of bytes) target.push(byte);
 }

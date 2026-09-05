@@ -12,7 +12,12 @@ import {
   getUltraWalletProvider,
   isSignedValidatorProposal,
 } from "@/lib/ultra-wallet";
-import { normalizeProposalPublicKey, validateProposalPublicKey } from "@/lib/validator-signing";
+import {
+  getValidatorProposalTimestampDiagnostic,
+  logValidatorProposalTimestampDiagnostic,
+  normalizeProposalPublicKey,
+  validateProposalPublicKey,
+} from "@/lib/validator-signing";
 import { useWalletSession } from "@/components/wallet/WalletSessionProvider";
 import WalletConnectionStatus from "@/components/wallet/WalletConnectionStatus";
 import ProposalWalletPrerequisite from "@/components/wallet/ProposalWalletPrerequisite";
@@ -117,6 +122,10 @@ export default function SwarmOnboarding() {
       if (!isSignedValidatorProposal(signedProposal)) {
         throw new Error("Wallet returned an incomplete signed proposal.");
       }
+
+      logValidatorProposalTimestampDiagnostic(
+        getValidatorProposalTimestampDiagnostic(signedProposal.timestamp),
+      );
 
       const response = await fetch(`${API_BASE_URL}/api/governance/propose`, {
         method: "POST",

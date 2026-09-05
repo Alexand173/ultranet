@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildValidatorProposalDigest,
   createLocalValidatorProvider,
+  getValidatorProposalTimestampDiagnostic,
   normalizeProposalPublicKey,
+  VALIDATOR_PROPOSAL_FUTURE_TOLERANCE_SECONDS,
+  VALIDATOR_PROPOSAL_MAX_AGE_SECONDS,
   validateProposalPublicKey,
 } from "./validator-signing";
 import { ULTRA_WALLET_SIGN_VALIDATOR_PROPOSAL, ULTRA_WALLET_SIGNING_ENVELOPE_VERSION } from "./ultra-wallet";
@@ -29,6 +32,35 @@ describe("validator proposal public-key validation", () => {
     ["a value with non-hex characters", `${"ab".repeat(2_591)}gg`],
   ])("rejects %s", (_label, value) => {
     expect(validateProposalPublicKey(value)).toBeTruthy();
+  });
+});
+
+describe("validator proposal timestamp diagnostics", () => {
+  const clientTimestamp = 1_800_000_000;
+
+  it.each([
+    ["fresh", clientTimestamp, "fresh"],
+    ["future within tolerance", clientTimestamp + 1, "future_within_tolerance"],
+    ["future beyond tolerance", clientTimestamp + VALIDATOR_PROPOSAL_FUTURE_TOLERANCE_SECONDS + 1, "future"],
+    ["stale", clientTimestamp - VALIDATOR_PROPOSAL_MAX_AGE_SECONDS - 1, "stale"],
+  ] as const)("classifies a %s timestamp without payload data", (_label, proposalTimestamp, classification) => {
+    expect(getValidatorProposalTimestampDiagnostic(proposalTimestamp, clientTimestamp)).toEqual({
+      event: "validator_proposal_timestamp",
+      proposal_timestamp: proposalTimestamp,
+      client_timestamp: clientTimestamp,
+      age_seconds: clientTimestamp - proposalTimestamp,
+      classification,
+    });
+  });
+
+  it("marks malformed timestamp values invalid and redacted", () => {
+    expect(getValidatorProposalTimestampDiagnostic("1700000000", clientTimestamp)).toEqual({
+      event: "validator_proposal_timestamp",
+      proposal_timestamp: null,
+      client_timestamp: clientTimestamp,
+      age_seconds: null,
+      classification: "invalid",
+    });
   });
 });
 
