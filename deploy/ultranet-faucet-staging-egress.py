@@ -201,11 +201,7 @@ def resolver_policy(approve_change: bool) -> tuple[list[ipaddress._BaseAddress],
         approved = []
     if set(configured) != set(approved) and not approve_change:
         fail("resolver configuration changed or has not been approved")
-    resolver_bytes = (
-        "# Root-approved resolver destinations used by the staging egress policy.\n"
-        + "\n".join(str(address) for address in configured)
-        + "\n"
-    ).encode("ascii")
+    resolver_bytes = render_resolver_allowlist(configured)
     return configured, resolver_bytes
 
 
