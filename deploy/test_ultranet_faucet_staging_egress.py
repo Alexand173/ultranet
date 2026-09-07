@@ -56,6 +56,14 @@ class EgressPolicyTests(unittest.TestCase):
             b"127.0.0.53\n2001:4860:4860::8888\n",
         )
 
+    def test_effective_allowlist_accepts_equivalent_systemd_normalization(self) -> None:
+        expected = {"127.0.0.0/8", "127.0.0.53/32", "::1/128"}
+        actual = {"127.0.0.0/8", "::1/128"}
+        self.assertTrue(MODULE.allowlists_have_same_coverage(expected, actual))
+        self.assertFalse(
+            MODULE.allowlists_have_same_coverage(expected, {"0.0.0.0/0", "::1/128"})
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

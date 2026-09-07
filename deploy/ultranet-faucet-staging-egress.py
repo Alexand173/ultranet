@@ -570,6 +570,40 @@ def effective_systemd_policy() -> tuple[set[str], set[str]]:
     return show("IPAddressAllow"), show("IPAddressDeny")
 
 
+def allowlists_have_same_coverage(expected: set[str], actual: set[str]) -> bool:
+    try:
+        expected_networks = {
+            ipaddress.ip_network(value, strict=True) for value in expected
+        }
+        actual_networks = {
+            ipaddress.ip_network(value, strict=True) for value in actual
+        }
+    except ValueError as error:
+        fail(f"effective systemd IPAddressAllow contains an invalid range: {error}")
+
+    # systemd may canonicalize a more-specific entry under an already-allowed
+    # containing network (for example 127.0.0.53/32 under 127.0.0.0/8). Reject
+    # any broader or unrelated effective destination while accepting equivalent
+    # coverage after that normalization.
+    actual_is_not_broader = all(
+        any(
+            network.version == expected_network.version
+            and network.subnet_of(expected_network)
+            for expected_network in expected_networks
+        )
+        for network in actual_networks
+    )
+    expected_is_not_missing = all(
+        any(
+            network.version == actual_network.version
+            and network.subnet_of(actual_network)
+            for actual_network in actual_networks
+        )
+        for network in expected_networks
+    )
+    return actual_is_not_broader and expected_is_not_missing
+
+
 def check_policy(
     effective: bool = False, resolve_current_turnstile: bool = True
 ) -> dict[str, object]:
@@ -588,7 +622,7 @@ def check_policy(
     if effective:
         actual_allow, actual_deny = effective_systemd_policy()
         expected_allow = {str(value) for value in manifest["allowlist"]}
-        if actual_allow != expected_allow:
+        if not allowlists_have_same_coverage(expected_allow, actual_allow):
             fail("effective systemd IPAddressAllow does not match the manifest")
         if "any" not in actual_deny and not {"0.0.0.0/0", "::/0"}.issubset(actual_deny):
             fail("effective systemd IPAddressDeny is not deny-all")
