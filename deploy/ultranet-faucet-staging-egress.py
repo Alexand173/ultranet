@@ -313,6 +313,10 @@ def render_ranges(networks: list[ipaddress._BaseNetwork]) -> bytes:
     return ("\n".join(str(network) for network in networks) + "\n").encode("ascii")
 
 
+def render_resolver_allowlist(addresses: list[ipaddress._BaseAddress]) -> bytes:
+    return ("\n".join(str(address) for address in addresses) + "\n").encode("ascii")
+
+
 def parse_generated_dropin(value: str) -> list[str]:
     allowlist: list[str] = []
     section: str | None = None

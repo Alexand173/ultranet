@@ -46,6 +46,16 @@ class EgressPolicyTests(unittest.TestCase):
         self.assertNotIn(MODULE.TURNSTILE_HOSTNAME, allowlist)
         self.assertIn("127.0.0.53/32", allowlist)
 
+    def test_resolver_allowlist_is_rendered_as_ascii_lines(self) -> None:
+        addresses = [
+            MODULE.ipaddress.ip_address("127.0.0.53"),
+            MODULE.ipaddress.ip_address("2001:4860:4860::8888"),
+        ]
+        self.assertEqual(
+            MODULE.render_resolver_allowlist(addresses),
+            b"127.0.0.53\n2001:4860:4860::8888\n",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
