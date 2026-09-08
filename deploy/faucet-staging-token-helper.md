@@ -177,11 +177,20 @@ Keep `FAUCET_ENABLED=false`. Do not call an internal enable/disable endpoint as 
 
 The following log lines have been observed during staging deployments and are not deployment failures. Do not respond to them by enabling claims, changing production Caddy, or weakening origin controls:
 
-- `Caddyfile input is not formatted; run the 'caddy fmt' command to fix inconsistencies` — cosmetic formatting only.
+- `Caddyfile input is not formatted; run the 'caddy fmt' command to fix inconsistencies` — the tracked template and live staging copy were normalized with Caddy 2.6.2 `caddy fmt`; this historical warning is retained for log interpretation and is cosmetic if it reappears on an older copy.
 - `failed to sufficiently increase receive buffer size ... wanted: 2048 kiB, got: 416 kiB` — HTTP/3 UDP buffer sizing; requires a host-level `net.core.rmem_max`/`wmem_max` change to fully resolve and does not affect HTTP/1.1 or HTTP/2 traffic.
 - `no OCSP stapling for [...]: no OCSP server specified in certificate` — expected for the current certificate issuance path.
 
 Treat any other error-level log line, and any of the three lines above appearing together with a failed `systemctl is-active`, as a real failure requiring rollback.
+
+## Minor self-review observations
+
+- The formatter warning was a source/configuration hygiene issue only. The canonical template is now Caddy-formatted; future live updates must install the reviewed template, run `caddy validate`, and reload only `caddy-staging.service`.
+- The Turnstile interactive check remains pending from an independent browser/network because the automated environment cannot reach `challenges.cloudflare.com`. This is the expected fail-closed behavior; claim intake must remain disabled until the documented no-claim check passes.
+- The HTTP/3 receive-buffer warning is optional host tuning, not a route or availability defect for HTTP/1.1/HTTP/2. Do not make kernel changes as part of this deployment review.
+- The OCSP message is certificate metadata behavior for the current issuance path. It is not evidence of a Caddy control-plane or origin-isolation failure.
+- A separate origin-lockdown review records Cloudflare returning `405` for `TRACE` while the Caddy fallback returns `404`. Treat that as an edge-policy verification item, not a formatting issue, and do not mark the exact-status gate passed until the documented edge decision is completed.
+- The historical disabled-only preflight records that no staging Caddy service existed at that earlier checkpoint. Treat that statement as historical evidence; use this runbook and the current VPS/service attestation as the source of truth for the deployed Caddy state.
 
 ## Self-review checklist
 

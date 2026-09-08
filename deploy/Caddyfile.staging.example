@@ -13,86 +13,86 @@
 # Keep Caddy's control API available only to the local staging service manager.
 # Never bind this endpoint to a public or wildcard address.
 {
-    admin 127.0.0.1:2019
+	admin 127.0.0.1:2019
 }
 
 (cloudflare-trusted-proxy) {
-    trusted_proxies 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+	trusted_proxies 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
 }
 
 faucet-staging.ultranetwork.cc {
-    request_body {
-        max_size 16KB
-    }
+	request_body {
+		max_size 16KB
+	}
 
-    # Exact-match static assets for the token-only staging helper. Install the
-    # files under the root-owned/caddy-readable directory documented in
-    # faucet-staging-token-helper.md. This route exposes no credentials or API.
-    @staging_token_helper path /staging-token.html /staging-token.css /staging-token.js
-    handle @staging_token_helper {
-        root * /var/www/faucet-staging
-        file_server
-    }
+	# Exact-match static assets for the token-only staging helper. Install the
+	# files under the root-owned/caddy-readable directory documented in
+	# faucet-staging-token-helper.md. This route exposes no credentials or API.
+	@staging_token_helper path /staging-token.html /staging-token.css /staging-token.js
+	handle @staging_token_helper {
+		root * /var/www/faucet-staging
+		file_server
+	}
 
-    header {
-        X-Content-Type-Options "nosniff"
-        Referrer-Policy "no-referrer"
-        Permissions-Policy "camera=(), microphone=(), geolocation=()"
-        Cross-Origin-Resource-Policy "same-origin"
-        Cache-Control "no-store"
-        -Server
-    }
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Cross-Origin-Resource-Policy "same-origin"
+		Cache-Control "no-store"
+		-Server
+	}
 
-    @faucet_create {
-        method POST
-        path /api/faucet/claims
-    }
+	@faucet_create {
+		method POST
+		path /api/faucet/claims
+	}
 
-    @faucet_read {
-        method GET
-        path /api/faucet/status /api/faucet/claims/*
-    }
+	@faucet_read {
+		method GET
+		path /api/faucet/status /api/faucet/claims/*
+	}
 
-    handle @faucet_create {
-        reverse_proxy 127.0.0.1:8090 {
-            import cloudflare-trusted-proxy
-            # The faucet has no public session/auth boundary. Never forward
-            # browser credentials or client-selected proxy identity headers.
-            header_up -Authorization
-            header_up -Cookie
-            header_up -X-UltraNet-CSRF
-            header_up -CF-Connecting-IP
-            header_up -Forwarded
-            header_up -X-Forwarded-Host
-            header_up -X-Forwarded-Proto
-            header_up -X-Real-IP
-            transport http {
-                dial_timeout 2s
-                response_header_timeout 20s
-            }
-        }
-    }
+	handle @faucet_create {
+		reverse_proxy 127.0.0.1:8090 {
+			import cloudflare-trusted-proxy
+			# The faucet has no public session/auth boundary. Never forward
+			# browser credentials or client-selected proxy identity headers.
+			header_up -Authorization
+			header_up -Cookie
+			header_up -X-UltraNet-CSRF
+			header_up -CF-Connecting-IP
+			header_up -Forwarded
+			header_up -X-Forwarded-Host
+			header_up -X-Forwarded-Proto
+			header_up -X-Real-IP
+			transport http {
+				dial_timeout 2s
+				response_header_timeout 20s
+			}
+		}
+	}
 
-    handle @faucet_read {
-        reverse_proxy 127.0.0.1:8090 {
-            import cloudflare-trusted-proxy
-            header_up -Authorization
-            header_up -Cookie
-            header_up -X-UltraNet-CSRF
-            header_up -CF-Connecting-IP
-            header_up -Forwarded
-            header_up -X-Forwarded-Host
-            header_up -X-Forwarded-Proto
-            header_up -X-Real-IP
-            transport http {
-                dial_timeout 2s
-                response_header_timeout 20s
-            }
-        }
-    }
+	handle @faucet_read {
+		reverse_proxy 127.0.0.1:8090 {
+			import cloudflare-trusted-proxy
+			header_up -Authorization
+			header_up -Cookie
+			header_up -X-UltraNet-CSRF
+			header_up -CF-Connecting-IP
+			header_up -Forwarded
+			header_up -X-Forwarded-Host
+			header_up -X-Forwarded-Proto
+			header_up -X-Real-IP
+			transport http {
+				dial_timeout 2s
+				response_header_timeout 20s
+			}
+		}
+	}
 
-    # Never proxy /internal/*, unsupported methods, or unknown paths.
-    handle {
-        respond "Not found" 404
-    }
+	# Never proxy /internal/*, unsupported methods, or unknown paths.
+	handle {
+		respond "Not found" 404
+	}
 }
