@@ -25,7 +25,7 @@ Environment=XDG_DATA_HOME=/var/lib/caddy-staging/.local/share
 Environment=XDG_CONFIG_HOME=/var/lib/caddy-staging/.config
 
 ExecStart=/usr/bin/caddy run --config /etc/caddy/Caddyfile.staging --adapter caddyfile
-ExecReload=/usr/bin/caddy reload --config /etc/caddy/Caddyfile.staging --adapter caddyfile --force
+ExecReload=/usr/bin/caddy reload --config /etc/caddy/Caddyfile.staging --adapter caddyfile --address 127.0.0.1:2019 --force
 
 TimeoutStartSec=30s
 TimeoutStopSec=10s

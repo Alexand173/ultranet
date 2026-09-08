@@ -46,6 +46,9 @@ website/crypto/ultra-dilithium5/build/
 *.html
 *.html:Zone.Identifier
 *:Zone.Identifier
+!staging-token.html
+!staging-token.css
+!staging-token.js
 *.mat
 *.txt
 !release/windows/README-WINDOWS.txt
