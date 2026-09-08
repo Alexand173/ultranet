@@ -136,7 +136,7 @@ Do not use a local `127.0.0.1` preview as proof of Turnstile validity; the helpe
 
 ## Remaining Turnstile verification
 
-The automated checks above cannot exercise Cloudflare Turnstile. During this deployment, the automation network could not reach `https://challenges.cloudflare.com`, so the widget failed closed with "Turnstile could not load. Stop and check the staging host/network." That is the helper behaving correctly under a network that cannot reach the challenge endpoint, not a route or origin failure. The following interactive steps remain and must be completed from an independent browser/network before this helper is considered fully verified. Do not submit a claim during this procedure.
+The automated checks above cannot exercise Cloudflare Turnstile. An earlier automated run could not reach `https://challenges.cloudflare.com`, so the widget failed closed with "Turnstile could not load. Stop and check the staging host/network." A later browser retry in the current environment failed before the staging document loaded with `ERR_NETWORK_CHANGED`; it produced no challenge request and no claim request. The helper is behaving fail-closed, but the interactive gate remains pending. Complete the following from an independent browser/network before this helper is considered fully verified. Do not submit a claim during this procedure.
 
 1. From a normal browser on a network that is not restricted from reaching Cloudflare, open only `https://faucet-staging.ultranetwork.cc/staging-token.html`.
 2. Confirm the address bar shows the exact approved hostname over HTTPS, with no redirect to a different host.
@@ -149,6 +149,22 @@ The automated checks above cannot exercise Cloudflare Turnstile. During this dep
 9. Record the outcome as `turnstile_interactive_check=passed` only if every step above succeeded; otherwise record `turnstile_interactive_check=blocked_by_network` or the specific failure, and do not proceed to enable claim intake.
 
 This interactive check is a prerequisite for, but is not itself, approval to enable `FAUCET_ENABLED` or run the canary claim procedure.
+
+## Automated environment connectivity diagnosis
+
+The current workstation diagnosis is local to the browser environment, not a staging-origin failure:
+
+- `/etc/hosts` contains duplicate `127.0.0.1 faucet-staging.ultranetwork.cc` entries, so the browser never reaches Cloudflare or the staging origin and reports `ERR_NETWORK_CHANGED`/timeouts.
+- The staging VPS resolves the hostname to Cloudflare IPv4 and IPv6 addresses, reaches the staging URL over both families, and reports `egress_policy=passed`.
+- A non-mutating IPv4 `curl --resolve` probe reached the helper with HTTP `200`, and following redirects for the Turnstile script reached HTTP `200`. This confirms reachability only; it is not an interactive Turnstile pass.
+
+Safe remediation plan:
+
+1. Remove the stale local `/etc/hosts` entries for the staging hostname, or use an approved resolver policy that returns the public Cloudflare addresses. Do not point the browser at the VPS origin, change staging DNS/Caddy, or use a production hostname.
+2. Flush the local/WSL resolver state and restart the browser after the override is removed. Verify that normal DNS no longer returns `127.0.0.1` for the staging hostname.
+3. Reopen the exact HTTPS helper URL and repeat the no-claim steps above. Use `--resolve` only as a diagnostic; it cannot substitute for normal browser DNS during the interactive gate.
+4. If normal DNS is correct but the browser still cannot load the page or challenge, repeat from an independent network without the local proxy/VPN restriction and record the concrete browser/network error.
+5. Keep `turnstile_interactive_check` blocked and `FAUCET_ENABLED=false` until the widget is completed, reset/expiry is verified, and the no-claim network evidence is captured.
 
 ## Rollback
 
@@ -186,7 +202,12 @@ Treat any other error-level log line, and any of the three lines above appearing
 ## Minor self-review observations
 
 - The formatter warning was a source/configuration hygiene issue only. The canonical template is now Caddy-formatted; future live updates must install the reviewed template, run `caddy validate`, and reload only `caddy-staging.service`.
-- The Turnstile interactive check remains pending from an independent browser/network because the automated environment cannot reach `challenges.cloudflare.com`. This is the expected fail-closed behavior; claim intake must remain disabled until the documented no-claim check passes.
+- The Turnstile interactive check remains pending from an independent browser/network because the current automated browser is intercepted by duplicate local `/etc/hosts` entries. The helper is fail-closed; claim intake must remain disabled until the documented no-claim check passes.
+- The shell evidence repeatedly begins with `setlocale: LC_ALL: cannot change locale (en_US.UTF-8)`. This is operator-shell locale configuration noise, not a Caddy/faucet service warning; normalize the maintenance user's locale separately if cleaner logs are required.
+- Caddy access records marked `level=error` were reviewed and are predominantly deliberate `404` responses for scanner requests such as `/robots.txt`, `/sitemap.xml`, `/.env.dist`, encoded paths, and `/sign-in` probes. They did not reach the upstream and do not indicate a service error, but a future logging policy could lower the severity for expected fallback 404s.
+- HTTP requests historically received Caddy's automatic `308` redirect with `Server: Caddy`; HTTPS helper responses apply `-Server` and the reviewed security headers. Hiding the redirect-server metadata is optional hardening, not a claim or origin-isolation blocker.
+- The Caddy admin log reports `enforce_origin=false`, but the endpoint is bound only to `127.0.0.1:2019` and the loopback-only listener check passes. Keep the network binding as the primary boundary and never expose the admin endpoint publicly.
+- Historical recovery logs contain interim states with `admin off`, a root-owned `0644` Caddyfile, and helper assets removed. The final reviewed deployment restored loopback admin, `root:caddy 0640` configuration ownership, the static assets, and the disabled-intake/egress gates; do not treat those interim states as the current attestation.
 - The HTTP/3 receive-buffer warning is optional host tuning, not a route or availability defect for HTTP/1.1/HTTP/2. Do not make kernel changes as part of this deployment review.
 - The OCSP message is certificate metadata behavior for the current issuance path. It is not evidence of a Caddy control-plane or origin-isolation failure.
 - A separate origin-lockdown review records Cloudflare returning `405` for `TRACE` while the Caddy fallback returns `404`. Treat that as an edge-policy verification item, not a formatting issue, and do not mark the exact-status gate passed until the documented edge decision is completed.
