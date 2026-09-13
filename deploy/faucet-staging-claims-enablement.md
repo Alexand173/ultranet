@@ -13,11 +13,18 @@ Nothing in the public preflight enables intake or submits a claim. Do not run th
 - Environment: `FAUCET_ENABLED=false`, staging-only state path and signer address, exact `faucet-staging.ultranetwork.cc` Turnstile hostname, no `ULTRANET_ADMIN_TOKEN`.
 - State: zero queue depth, zero reserved/confirmed budget, zero claims, no observed OOM, and no production/node path access under the faucet service UID.
 - Public route: **not provisioned**. `faucet-staging.ultranetwork.cc` remained unresolved during the follow-up DNS recheck at 17:22 UTC; no HTTPS or public-route request was sent. No `caddy-staging.service` or `/etc/caddy/Caddyfile.staging` exists on the VPS.
-- Turnstile: the current encrypted value is a disposable local-preflight placeholder. It proves credential projection and startup only; it is not a provider-issued secret and must be replaced before any claim test.
+- Turnstile: the encrypted staging credential was rotated through the approved host-key alias and passed disabled startup projection checks. Provider Siteverify acceptance is not proven until a separately approved canary; no claim test has been run.
 
-The current status is therefore **node/faucet local preflight passed; public route and claims enablement blocked**.
+The current status is therefore **node/faucet local preflight and credential rotation passed; public route, provider acceptance, and claims enablement remain blocked**.
 
-The follow-up VPS checks also confirmed NTP synchronization, four root-owned mode-`0600` encrypted credentials, loopback-only service listeners, inactive production services, and the same disabled public status. The deployed faucet unit still has only the previously verified address-family restriction and no destination-level outbound egress allowlist. The checked-in unit now stages `IPAddressDeny=any` plus loopback allowances and an effective-policy guard, with the reviewed [`ultranet-faucet-staging-egress.py`](./ultranet-faucet-staging-egress.py) helper and [`ultranet-faucet-staging-egress-expiry.timer`](./ultranet-faucet-staging-egress-expiry.timer); those artifacts have not been applied to the VPS. Egress freshness/effectiveness remains a hard pre-canary gate.
+The follow-up VPS checks also confirmed NTP synchronization, four root-owned mode-`0600` encrypted credentials, loopback-only service listeners, inactive production services, and the same disabled public status. The reviewed [`ultranet-faucet-staging-egress.py`](./ultranet-faucet-staging-egress.py) helper, `IPAddressDeny=any` policy, generated Cloudflare/resolver allowlist, and [`ultranet-faucet-staging-egress-expiry.timer`](./ultranet-faucet-staging-egress-expiry.timer) are now applied on the VPS; the 2026-09-13 attestation passed effective-policy and unit checks. Egress freshness/effectiveness remains a hard pre-canary gate. The live unit also contains an untracked `99-canary-override.conf` that adds `ExecCondition=/bin/true`; its provenance and disposition remain unresolved. The host credential-store warning and partial TPM capability remain separate at-rest protection gates.
+
+## Latest browser evidence — 2026-09-12
+
+- The Turnstile Success screenshot proves the callback reached the helper and enabled the submit control, but it is not an approval to submit a claim.
+- A prior browser Network screenshot shows one attempted `POST /api/faucet/claims` returning `403 Forbidden` from the Cloudflare edge. The visible recipient and idempotency value are intentionally not recorded. The rejection is fail-closed, with no evidence of `202 Accepted`, a claim ID, transaction hash, or payout; that session's no-claim gate remains a historical failure.
+- A fresh controlled Reset verification reported zero `POST /api/faucet/claims` requests during Reset, Turnstile reset to `Verify you are human`, the submit button disabled, local storage empty, the faucet inactive, port `8090` closed, no recent restarts, and no recent faucet backend log entries.
+- Record `turnstile_interactive_check=passed (controlled Reset procedure)` for the fresh run only. This does not authorize credential rotation, intake enablement, or the canary; `FAUCET_ENABLED=false` remains required.
 
 ## Safety invariants
 
@@ -148,7 +155,7 @@ Do not run `systemctl reload`, `systemctl restart`, or any production Caddy comm
 
 ## Phase B — replace preflight credentials
 
-Before any enablement approval, replace the disposable Turnstile placeholder with a real secret from a separately provisioned staging widget:
+Before any enablement approval, retain the rotated staging credential and complete provider-side verification for the separately provisioned staging widget:
 
 - allowed hostname: `faucet-staging.ultranetwork.cc`;
 - action: `faucet_claim`;
@@ -216,6 +223,7 @@ The following edges were identified during the follow-up review. They are hard p
 - **Crash and log hygiene:** verify effective faucet core dumps are disabled or protected from secret-bearing collection. Confirm request bodies, CAPTCHA tokens, cookies, authorization headers, idempotency keys, signed envelopes, and secrets are absent from journals, edge logs, crash reports, `/proc`-visible environments, and temporary files.
 - **Backup consistency:** create a staging-only encrypted backup using a consistency-safe SQLite/WAL procedure, preserve hashes and metadata separately, and test the disabled/stop rollback before enabling intake.
 - **Disablement monitoring:** verify the private operator kill switch, service stop path, queue/budget alerts, node/hash/nonce reconciliation, and immediate disablement. Any mismatch is a permanent stop for this run.
+- **Live unit drift and credential at rest:** reconcile the untracked `99-canary-override.conf` before any canary, and remediate or explicitly risk-accept the host credential-store media/TPM finding. Neither item is satisfied by the successful disabled restart.
 
 ### Comprehensive gate evidence matrix
 
@@ -279,7 +287,7 @@ A successful canary still does not authorize production enablement. Production r
 - [ ] Local and public status report disabled intake, fixed amount, and six decimals; unsupported/internal routes, normalized variants, `OPTIONS`, and `TRACE` are blocked at the public boundary.
 - [ ] Exact Host/SNI, IPv4/IPv6, HTTP/3/0-RTT behavior, Caddy admin isolation, and staging certificate/state separation are verified.
 - [ ] Destination-level faucet egress is active and fresh, resolver/Cloudflare range provenance is recorded, the expiry monitor is installed, and strict proxy client-IP trust, NTP synchronization, core-dump protection, and secret-free logs/temp/proc surfaces are evidenced.
-- [ ] The real staging Turnstile secret replaces the disposable placeholder through an atomic encrypted-credential rotation and is bound to the exact staging hostname/action.
+- [x] The real staging Turnstile secret replaced the disposable placeholder through an atomic encrypted-credential rotation; exact provider hostname/action acceptance remains a separate gate.
 - [ ] A staging-only consistency-safe SQLite/WAL backup and rollback path is recorded; binary, unit, environment, and credential metadata are reproducible.
 - [ ] A separate written approval authorizes exactly one disposable claim before any enable call.
 - [ ] The single canary reconciles claim, node, balance, nonce, fee, source debit, recipient balance, and SQLite state exactly.
