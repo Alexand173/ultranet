@@ -210,7 +210,7 @@ Do not enable intake until all of the following are present in the private chang
 - exact binary checksum, source revision, unit revision, environment revision, and credential alias record;
 - an explicit written approval for **exactly one disposable claim**.
 
-Public status approval, node-only approval, or preview approval does not authorize a claim.
+Public status approval, node-only approval, or preview approval does not authorize a claim. Use the [staging one-claim approval request](../docs/runbooks/faucet-staging-one-claim-approval-request.md) as the review template; a signed written approval must exist before any enablement or claim execution.
 
 ### Hard security gates required before the canary
 
