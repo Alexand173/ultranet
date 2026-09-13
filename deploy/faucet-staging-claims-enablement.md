@@ -19,6 +19,8 @@ The current status is therefore **node/faucet local preflight and credential rot
 
 The follow-up VPS checks also confirmed NTP synchronization, four root-owned mode-`0600` encrypted credentials, loopback-only service listeners, inactive production services, and the same disabled public status. The reviewed [`ultranet-faucet-staging-egress.py`](./ultranet-faucet-staging-egress.py) helper, `IPAddressDeny=any` policy, generated Cloudflare/resolver allowlist, and [`ultranet-faucet-staging-egress-expiry.timer`](./ultranet-faucet-staging-egress-expiry.timer) are now applied on the VPS; the 2026-09-13 attestation passed effective-policy and unit checks. Egress freshness/effectiveness remains a hard pre-canary gate. The untracked `99-canary-override.conf` was captured with its exact hash/directives, removed under separate approval, and the effective unit was reverified without starting the faucet. The host credential-store warning and partial TPM capability remain separate at-rest protection gates.
 
+The final local health check confirmed the validator active, the faucet inactive and disabled, `FAUCET_ENABLED=false`, port `8090` closed, loopback-only validator listeners on `127.0.0.1:8081` and `127.0.0.1:19000`, staging Caddy active, production Caddy inactive, Caddy validation passed, and `systemd-analyze verify` passed for all staging units. All four encrypted faucet credentials remain `root:root` mode `0600`; replacement-host encrypted storage and recovery evidence are still required before the credential-store gate can close.
+
 ## Latest browser evidence — 2026-09-12
 
 - The Turnstile Success screenshot proves the callback reached the helper and enabled the submit control, but it is not an approval to submit a claim.
