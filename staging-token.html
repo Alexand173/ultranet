@@ -4,7 +4,6 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="referrer" content="no-referrer">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; img-src 'self' data:; style-src 'self'; font-src 'self'">
     <title>UltraNet staging claim helper</title>
     <link rel="stylesheet" href="./staging-token.css">
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
@@ -16,8 +15,8 @@
         <div class="eyebrow">STAGING ONLY</div>
         <h1 id="page-title">One-claim helper</h1>
         <p class="intro">
-          This page submits one approved faucet request after the private operator procedure has enabled intake.
-          It cannot enable or disable the faucet.
+          This page submits one operator-scoped development test request after the private operator procedure has enabled intake.
+          It cannot enable or disable the faucet. Reset is available only before submission.
         </p>
 
         <form id="claim-form" novalidate>
@@ -46,7 +45,8 @@
 
           <div class="notice" role="note">
             The verification token stays in memory and is never displayed, logged, or stored. The server chooses the
-            fixed amount, fee, nonce, and transaction fields.
+            fixed amount, fee, nonce, and transaction fields. After one attempt, do not retry or reload to resubmit,
+            even after an error or timeout. Follow the private operator procedure.
           </div>
 
           <div class="actions">

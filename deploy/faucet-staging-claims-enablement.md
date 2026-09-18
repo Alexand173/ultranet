@@ -2,9 +2,13 @@
 
 This is the handoff procedure for the disposable faucet on the separately provisioned staging VPS. It is intentionally split into a **read-only public preflight** and a later **one-claim enablement ceremony**.
 
-Nothing in the public preflight enables intake or submits a claim. Do not run the enablement section until the public checks, real staging credentials, backup, and a separate written one-claim approval are complete.
+Nothing in the public preflight enables intake or submits a claim. Do not run the enablement section until the public checks, real staging credentials, backup, and operator readiness for the recorded one-claim development test are complete.
 
-## Current recorded state — 2026-09-03
+## Historical recorded state — 2026-09-03
+
+The dated observations below are not fresh evidence for the September 18 development test. Later September 13 notes supersede the early service/public-route state; all technical gates still require revalidation. The [operator test record](../docs/runbooks/faucet-staging-one-claim-test-record.md) replaces the withdrawn, incorrect approval record. Owner/operator Vladan Jotov records readiness and technical evidence; no independent reviewer or signature is required for this development test. The fixed window is `2026-09-18T15:00:00Z`–`2026-09-18T17:00:00Z`; no automatic extension or inferred readiness is permitted.
+
+For `ULTRANET-STG-TEST-20260918-01`, references below to an approved canary mean the operator-scoped development test after technical checks pass, not the withdrawn approval/signature. Historical risk-acceptance statements must be verified against valid operator evidence, never the withdrawn record. The owner reports a one-validator development network and zero current `$Ultra` value; this test does not establish multi-validator or production readiness.
 
 - Host: `ubuntu-2gb-nbg1-2`, `2.28.61.71`; production origin remains `167.233.161.115`.
 - Validator: `ultranet-staging.service`, loopback API `127.0.0.1:8081`, loopback P2P `/ip4/127.0.0.1/tcp/19000`.
@@ -15,11 +19,11 @@ Nothing in the public preflight enables intake or submits a claim. Do not run th
 - Public route: **not provisioned**. `faucet-staging.ultranetwork.cc` remained unresolved during the follow-up DNS recheck at 17:22 UTC; no HTTPS or public-route request was sent. No `caddy-staging.service` or `/etc/caddy/Caddyfile.staging` exists on the VPS.
 - Turnstile: the encrypted staging credential was rotated through the approved host-key alias and passed disabled startup projection checks. Provider Siteverify acceptance is not proven until a separately approved canary; no claim test has been run.
 
-The current status is therefore **node/faucet local preflight and credential rotation passed; public route, provider acceptance, and claims enablement remain blocked**.
+The historical preflight conclusion was **node/faucet local preflight and credential rotation passed; public route, provider acceptance, and claims enablement blocked**. Later notes describe public-route progress; they do not close all current execution gates.
 
-The follow-up VPS checks also confirmed NTP synchronization, four root-owned mode-`0600` encrypted credentials, loopback-only service listeners, inactive production services, and the same disabled public status. The reviewed [`ultranet-faucet-staging-egress.py`](./ultranet-faucet-staging-egress.py) helper, `IPAddressDeny=any` policy, generated Cloudflare/resolver allowlist, and [`ultranet-faucet-staging-egress-expiry.timer`](./ultranet-faucet-staging-egress-expiry.timer) are now applied on the VPS; the 2026-09-13 attestation passed effective-policy and unit checks. Egress freshness/effectiveness remains a hard pre-canary gate. The untracked `99-canary-override.conf` was captured with its exact hash/directives, removed under separate approval, and the effective unit was reverified without starting the faucet. The host credential-store warning and partial TPM capability are formally accepted for exactly one disposable staging canary only; TPM2/LUKS-backed protection remains required for production or long-lived staging.
+The follow-up VPS checks also confirmed NTP synchronization, four root-owned mode-`0600` encrypted credentials, loopback-only service listeners, inactive production services, and the same disabled public status. The reviewed [`ultranet-faucet-staging-egress.py`](./ultranet-faucet-staging-egress.py) helper, `IPAddressDeny=any` policy, generated Cloudflare/resolver allowlist, and [`ultranet-faucet-staging-egress-expiry.timer`](./ultranet-faucet-staging-egress-expiry.timer) were recorded as applied on the VPS; the 2026-09-13 attestation passed effective-policy and unit checks. Egress freshness/effectiveness remains a hard pre-canary gate. The untracked `99-canary-override.conf` was captured with its exact hash/directives, removed under separate approval, and the effective unit was reverified without starting the faucet. The historical note asserted acceptance of the host credential-store warning and partial TPM capability for one canary. That assertion is not a current disposition: verify remediation or valid bounded private operator risk evidence without relying on the withdrawn approval. TPM2/LUKS-backed protection remains required for production or long-lived staging.
 
-The final local health check confirmed the validator active, the faucet inactive and disabled, `FAUCET_ENABLED=false`, port `8090` closed, loopback-only validator listeners on `127.0.0.1:8081` and `127.0.0.1:19000`, staging Caddy active, production Caddy inactive, Caddy validation passed, and `systemd-analyze verify` passed for all staging units. All four encrypted faucet credentials remain `root:root` mode `0600`; replacement-host encrypted storage and recovery evidence are still required before the credential-store gate can close.
+The historical final local health check confirmed the validator active, the faucet inactive and disabled, `FAUCET_ENABLED=false`, port `8090` closed, loopback-only validator listeners on `127.0.0.1:8081` and `127.0.0.1:19000`, staging Caddy active, production Caddy inactive, Caddy validation passed, and `systemd-analyze verify` passed for all staging units. All four encrypted faucet credentials were `root:root` mode `0600`. Fresh credential-protection/recovery evidence or a valid bounded private operator risk disposition remains required; this record neither requires a replacement host for the disposable test nor asserts acceptance of the existing host.
 
 ## Latest browser evidence — 2026-09-12
 
@@ -41,7 +45,15 @@ Keep these invariants true in every section:
 
 ## Phase A — public non-claim preflight
 
-Run this only after an operator has provisioned the separate public infrastructure. All checks in this phase are read-only.
+Run this only after an operator has provisioned the separate public infrastructure. All probes in this phase are read-only; this phase never starts a service. Distinguish these states:
+
+| State | Permitted evidence | Not established |
+| --- | --- | --- |
+| Faucet stopped, port 8090 closed | Static helper/TLS and denied-route checks, fresh host/listener attestation | Disabled application contract or Siteverify acceptance |
+| Explicitly scoped bounded validation, faucet running with intake disabled | Local/public disabled JSON contract and upstream-dependent lookups | Claim authority or provider acceptance |
+| Separately scoped one-claim window | Phase D admission, monitoring and reconciliation | Production readiness or another request |
+
+A public upstream `502` is compatible with a stopped faucet only when fresh host/listener evidence corroborates it; it is not a passed disabled-status gate. Unexpected responses require investigation. Deferred application checks remain pending, not waived. Never start the faucet merely to replace a `502` with `200`.
 
 ### A1. DNS identity
 
@@ -69,7 +81,11 @@ Do not create or edit DNS records in this procedure.
 
 ### A2. TLS and public status
 
-Require strict certificate verification. Do not use `-k` or bypass hostname verification:
+Require strict certificate verification. Do not use `-k` or bypass hostname verification. With the faucet stopped, verify TLS using the static helper route; do not run the disabled JSON assertion below.
+
+**The following application-contract check requires explicitly scoped bounded disabled-running validation.** Use [rotation Section 8](../docs/runbooks/faucet-staging-turnstile-rotation.md#8-disabled-validation-and-projection-check) for its guarded start/local-check/EXIT-stop lifecycle. Include this external check and A3's upstream lookups within that same bounded session, before its cleanup exits, with a private completion/failure signal and a fixed cutoff. Do not leave a service running while waiting indefinitely for an external operator. Verify stop independently on success, failure or cutoff. Missing validation scope or coordination leaves these gates pending; it does not permit an unguarded start.
+
+During that validation only:
 
 ```bash
 curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
@@ -109,11 +125,8 @@ status_code() {
   printf '\n'
 }
 
-# Public read-only contract.
-status_code "$BASE/api/faucet/status"                         # 200
-status_code "$BASE/api/faucet/claims/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" # 404
-
-# Edge/Caddy deny boundary. These must be 404, not 401/200.
+# Edge/Caddy deny boundary, including while the faucet is stopped.
+# These must be 404, not 401/200/502.
 status_code "$BASE/internal/status"                          # 404
 status_code "$BASE/api/account/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" # 404
 status_code "$BASE/api/transaction/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" # 404
@@ -121,6 +134,8 @@ status_code -X POST "$BASE/api/faucet/status"                # 404
 status_code -X PUT "$BASE/api/faucet/claims"                 # 404
 status_code "$BASE/api/faucet/unknown"                       # 404
 ```
+
+Only during A2's explicitly scoped bounded disabled-running session, also require `GET /api/faucet/status` to return `200` with its disabled contract and `GET /api/faucet/claims/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` to return `404` for that nonexistent claim. These upstream-dependent checks are deferred while the faucet is stopped. A `502` is not a passed missing-claim check. Record and compare actual codes; comments in a command block are not assertions.
 
 Do **not** send `POST /api/faucet/claims` as a disabled-state test. The public boundary is proven by the allowlist and unsupported-route checks; claim admission is reserved for the separately approved canary.
 
@@ -176,28 +191,20 @@ Use a root-only plaintext staging directory only during the encryption ceremony.
 
 For a rotation after the staging hostname is active, keep intake disabled and follow this fail-closed sequence:
 
-1. Create or verify a separate Turnstile widget for exactly `faucet-staging.ultranetwork.cc` and action `faucet_claim`. Never reuse the production secret.
+1. Verify the existing staging-only Turnstile widget's allowed hostname `faucet-staging.ultranetwork.cc`. Verify `faucet_claim` separately in the helper render and server-side validation configuration, not as a presumed dashboard setting. Provider-side secret rotation is required; widget creation or a sitekey change needs separate approval. Never reuse the production secret.
 2. Encrypt the new secret with the staging host credential key and the unchanged alias `faucet-staging-turnstile.secret` into a temporary same-filesystem `.cred` path. Do not pass the secret as a command argument or place it in `faucet.env`, an environment variable, shell history, chat, logs, screenshots, or a repository file.
 3. Confirm only the temporary encrypted file's name, owner/group, mode, and checksum. Keep the old encrypted credential in a root-only rollback location until disabled restart checks and the approved canary decision are complete.
 4. Atomically rename the new encrypted file over `/etc/ultranet-faucet-staging/secrets/faucet-staging-turnstile.secret.cred`; preserve `root:root` and mode `0600`. Do not change the unit alias or environment alias.
-5. The running process retains the old systemd projection. Restart only `ultranet-faucet-staging.service` while intake is disabled. `daemon-reload` is unnecessary unless the unit or mapping changed. If startup fails, atomically restore the old encrypted artifact and restart disabled.
-6. Run the checks below, including `check-config`, disabled status, unauthenticated internal status, credential metadata, isolation, loopback listeners, OOM/core-dump state, and redacted logs. `check-config` proves configuration and alias wiring, not that Cloudflare accepts the new secret.
-7. Only a separately approved one-claim canary with a fresh single-use Turnstile token can validate provider acceptance. If it fails, disable/stop intake and restore the prior encrypted artifact if required; never substitute production credentials.
-8. Destroy the old encrypted rollback artifact and temporary operator materials only after the private rollback window ends, and record metadata without retaining plaintext.
+5. The running process retains the old systemd projection. Stop the faucet, then use only the explicitly authorized, bounded [disabled-validation procedure](../docs/runbooks/faucet-staging-turnstile-rotation.md#8-disabled-validation-and-projection-check), including failure cleanup and verified shutdown. `daemon-reload` is unnecessary unless a separately approved unit/mapping change occurred. Do not automatically restart after a failure.
+6. Check `check-config`, disabled status, credential metadata, isolation, loopback listeners, OOM/core-dump state, and privately reviewed/redacted logs. `check-config` proves configuration and alias wiring, not that Cloudflare accepts the new secret.
+7. Only a separately approved one-claim canary with a fresh single-use Turnstile token can validate provider acceptance. On failure, disable/stop intake and preserve state. An encrypted rollback file does not restore provider validity after revocation; never reactivate a compromised or revoked secret, retry the claim, or substitute production credentials.
+8. Apply the approved retention/disposal decision to old encrypted artifacts only after the private rollback window ends. Clean protected plaintext and temporary operator materials on failure as well as success; retain only permitted metadata.
 
-Restart with `FAUCET_ENABLED=false` and rerun:
+For post-canary work, follow [rotation and closeout](../docs/runbooks/faucet-staging-turnstile-rotation.md#13-post-canary-rotation-and-closeout), including actual provider-side rotation and old-secret invalidation tracking. Re-encryption alone does not revoke a Cloudflare secret.
 
-```bash
-sudo systemd-analyze verify \
-  /etc/systemd/system/ultranet-staging.service \
-  /etc/systemd/system/ultranet-faucet-staging.service
-sudo systemctl restart ultranet-faucet-staging.service
-sudo -u ultranet-faucet-staging /opt/ultranet-faucet-staging/ultranet-faucet check-config
-```
+Recheck all local gates from [faucet-staging-install-preflight.md](./faucet-staging-install-preflight.md): signer/address, node chain and six decimals, fee estimate, zero active queue/reservations, disabled status, operator authentication, isolation, loopback listeners, `MemorySwapMax=0`, clock synchronization, core-dump/log hygiene, and zero OOM events. Zero claims/confirmed budget is an unused-preflight baseline only; after a canary preserve its reconciled claim and expected confirmed budget with no new transactions or nonce changes. Never reset state to manufacture zero counters.
 
-Recheck all local gates from [faucet-staging-install-preflight.md](./faucet-staging-install-preflight.md): signer/address, node chain and six decimals, fee estimate, zero queue/budget, disabled public status, operator authentication, isolation, loopback listeners, `MemorySwapMax=0`, clock synchronization, core-dump/log hygiene, and zero OOM events.
-
-## Phase C — backup and explicit claim approval
+## Phase C — backup and operator test readiness
 
 Do not enable intake until all of the following are present in the private change record:
 
@@ -208,9 +215,9 @@ Do not enable intake until all of the following are present in the private chang
 - effective systemd egress allowlist, resolver integrity, Cloudflare range freshness, expiry-monitor, and denied-destination negative-test evidence;
 - encrypted staging SQLite/WAL backup and a tested disable/stop rollback path;
 - exact binary checksum, source revision, unit revision, environment revision, and credential alias record;
-- an explicit written approval for **exactly one disposable claim**.
+- the operator's test reference, window, and readiness confirmation for **exactly one disposable claim**.
 
-Public status approval, node-only approval, or preview approval does not authorize a claim. Use the [staging one-claim approval request](../docs/runbooks/faucet-staging-one-claim-approval-request.md) as the review template; a signed written approval must exist before any enablement or claim execution.
+Public status checks, node-only checks, or preview checks do not establish claim readiness. Use the [staging one-claim test record](../docs/runbooks/faucet-staging-one-claim-test-record.md); Vladan Jotov records the technical checks and readiness before enablement. No independent-review attestation or signed approval record is required for this development test. A test record alone is not evidence that the gates passed.
 
 ### Hard security gates required before the canary
 
@@ -221,15 +228,15 @@ The following edges were identified during the follow-up review. They are hard p
 - **Path normalization:** test repeated slashes, dot segments, encoded separators, encoded `internal`, trailing-slash variants, and alternate-case paths at both Caddy and Actix. No normalized variant may reach a node or operator route. Keep `GET /api/faucet/claims` (without an ID) denied.
 - **Host, origin, and transport:** verify exact Host/SNI routing, certificate coverage, no alternate-host route, no direct IPv4/IPv6 origin, no public Caddy admin endpoint, and separate staging Caddy certificate/state storage. If HTTP/3 or 0-RTT is enabled, test or disable it for the canary so retries cannot bypass the operator-egress restriction.
 - **WAF and cache policy:** use staging-specific expressions, not production-host rules copied broadly. Verify edge method/path blocking, no-store cache bypass, IPv4/IPv6 coverage, read/write limits, and the temporary operator-egress block without logging request bodies or secrets.
-- **Clock and replay:** require synchronized system time before Turnstile or idempotency testing. Use a fresh high-entropy idempotency key, keep it out of logs, and verify same-key replay returns the original claim while a changed destination returns `409`.
+- **Clock and replay:** require synchronized system time, a fresh high-entropy idempotency key, and privately recorded evidence that same-key replay returns the original claim while a changed destination returns `409`. This evidence must come from prior approved tests or separately authorized testing; the September 18 single-request scope does not include extra replay POSTs. Missing evidence still blocks the canary.
 - **Crash and log hygiene:** verify effective faucet core dumps are disabled or protected from secret-bearing collection. Confirm request bodies, CAPTCHA tokens, cookies, authorization headers, idempotency keys, signed envelopes, and secrets are absent from journals, edge logs, crash reports, `/proc`-visible environments, and temporary files.
 - **Backup consistency:** create a staging-only encrypted backup using a consistency-safe SQLite/WAL procedure, preserve hashes and metadata separately, and test the disabled/stop rollback before enabling intake.
 - **Disablement monitoring:** verify the private operator kill switch, service stop path, queue/budget alerts, node/hash/nonce reconciliation, and immediate disablement. Any mismatch is a permanent stop for this run.
-- **Live unit drift and credential at rest:** the untracked `99-canary-override.conf` was removed under separate approval and the effective egress guard was reverified without starting the faucet. The host credential-store media/TPM risk is formally accepted for exactly one disposable staging canary only; TPM2/LUKS-backed protection remains required for production or long-lived staging. The successful disabled restart and override removal do not authorize a canary by themselves.
+- **Live unit drift and credential at rest:** the historical check recorded removal of `99-canary-override.conf` and reverified effective egress without starting the faucet. Recheck drift and require credential-store remediation or a valid bounded private operator risk disposition for this test; historical acceptance wording and the withdrawn approval are not evidence. TPM2/LUKS-backed protection remains required for production or long-lived staging. Disabled restart and override removal alone do not authorize a canary.
 
 ### Comprehensive gate evidence matrix
 
-Every row requires a private evidence record, an identified reviewer, and a tested stop action before the canary:
+Every row requires a private evidence record checked by the operator, Vladan Jotov, and a tested stop action before the canary. No separate independent reviewer is assigned for this development test:
 
 | Gate | Required evidence | Stop condition |
 | --- | --- | --- |
@@ -245,27 +252,31 @@ Every row requires a private evidence record, an identified reviewer, and a test
 | Economic/transaction | Amount, fee, reserve, cap, nonce, hash, source debit, recipient, budget, and SQLite reconciliation | Any mismatch, duplicate debit, or retry ambiguity |
 | Availability/resources | Queue, attempts, timeouts, body/concurrency limits, cgroup ceilings, OOM/core-dump review | Unexpected backlog, OOM, restart loop, or node-failure drift |
 | Privacy/observability | Redacted edge/journal/crash/proc/temp review and alerts for stale/mismatched state | Any request body, token, key, header, envelope, or secret exposure |
-| Approval/operations | Separate approvals, verified operator egress, abort authority, canary window, cleanup/rollback owner | Missing approval or inability to disable without production access |
+| Test operations | Operator test reference/readiness, verified operator egress, abort authority, test window, cleanup/rollback responsibility | Missing readiness/evidence, expired window, or inability to disable without production access |
 
 ## Phase D — one-claim canary
 
-Run only after the claim approval is recorded and the temporary Cloudflare operator-egress restriction is active. Keep the configured daily cap at the staging value of `3,030,000` base units and keep the minimum reserve unchanged.
+Run only after the operator's test readiness and all technical evidence are recorded, the test window is open, and the temporary Cloudflare operator-egress restriction is active. Keep the configured daily cap at the staging value of `3,030,000` base units and keep the minimum reserve unchanged.
+
+Use one controlled helper session. Its attempt lock, the daily cap and the operator-egress restriction are not durable/server-side exactly-one admission enforcement. No reload/new-tab resubmission or retry after an HTTP rejection, malformed response, timeout or network error is included. Offline helper tests do not prove server replay behavior or live readiness.
+
+`202 Accepted` is admission, not confirmation. Disabling prevents queued selection and new payout start (`src/faucet/store.rs`, `src/faucet/service.rs`), so do not disable on the normal path solely because admission succeeded. It cannot guarantee cancellation of an in-flight transaction; pending polling may continue while running disabled. `/internal/reconcile` invokes worker logic and can submit while enabled: it is not a read-only status check. The backend's existing bounded same-envelope submission behavior is distinct from an extra public claim POST and does not authorize extra manual worker runs. On failure, ambiguity, timeout or window end, disable/stop immediately and preserve unresolved state; never re-enable/restart just to drain the queue.
 
 1. Confirm the faucet is still `enabled=false`, queue/budget counters are zero, and the node is healthy.
 2. Enable intake once through the protected staging operator procedure. Never paste the operator token into a command, log, or chat transcript.
 3. Submit exactly one request to a fresh, approved, non-faucet destination using a fresh high-entropy `Idempotency-Key`. The browser/request supplies only the destination and CAPTCHA token; the server chooses amount, fee, nonce, timestamp, nullifier, gas fields, and signature.
 4. Require `202 Accepted`, one claim ID, fixed amount `1,000,000`, display amount `1.000000`, and no private or signed material in the response.
-5. Poll the claim until `confirmed`, or stop and disable intake if it becomes inconsistent or times out.
+5. Poll the claim until `confirmed`, or disable intake and stop on inconsistency, timeout, or the approved window end—whichever comes first. At cutoff preserve unresolved state for reconciliation without another claim or unapproved restart.
 6. Reconcile exactly across:
    - public claim status and transaction hash;
    - node transaction status, fee, nonce, and source debit;
    - source account balance and recipient balance;
    - faucet SQLite claim/payout/budget records;
    - no duplicate debit or second payout.
-7. Replay the same destination/CAPTCHA/idempotency key and require the original claim ID with no second debit.
-8. Replay the same idempotency key with a different valid destination and require `409 Conflict`.
-9. Disable intake immediately through the protected staging operator procedure. Confirm public status and operator status report disabled, zero active queue, and the expected confirmed budget.
-10. Remove the temporary operator-egress exception only after reconciliation evidence is preserved.
+7. Do not issue additional replay POSTs or changed-destination tests under `ULTRANET-STG-TEST-20260918-01`. Same-key/no-second-debit and changed-destination/`409` evidence must come from previously approved tests or a separately authorized test scope. Missing mandatory replay evidence remains a blocker, not a waived or passed gate.
+8. Disable intake immediately through the protected staging operator procedure. Confirm disabled runtime status, zero active queue/reservations, and the expected confirmed budget; assert persisted `FAUCET_ENABLED=false`, stop the faucet, and verify inactive state and closed port `8090`.
+9. Immediately follow the [post-canary rotation and closeout procedure](../docs/runbooks/faucet-staging-turnstile-rotation.md#13-post-canary-rotation-and-closeout). No additional claim or Siteverify probe is authorized to validate the replacement secret.
+10. Remove the temporary operator-egress exception only under its approved cleanup procedure after disablement and reconciliation evidence are preserved; do not broaden unrelated policy.
 
 Stop immediately and keep intake disabled for any duplicate payout, hash mismatch, nonce drift, unexpected fee, address mismatch, provider failure, leaked secret, public internal route, origin bypass, OOM event, or database inconsistency.
 
@@ -277,8 +288,8 @@ If any gate fails:
 2. Stop `ultranet-faucet-staging.service` and preserve the staging SQLite/WAL state.
 3. Preserve only redacted logs, public response fields, checksums, status codes, and reconciliation evidence.
 4. Restore `FAUCET_ENABLED=false` and verify the persisted service state is disabled before any restart.
-5. Remove only the disposable staging state/credentials named in the approved rollback record.
-6. Never restore over `/var/lib/ultranet`, switch to production credentials, or point the faucet at a remote node.
+5. Preserve completed or uncertain claim state. Do not reset/restore SQLite, balances, or nonce to erase a claim, and never retry on an ambiguous result. Disposal applies only to artifacts explicitly named in a separately approved retention/cleanup record after reconciliation; never delete evidence to satisfy zero counters.
+6. Never restore over `/var/lib/ultranet`, switch to production credentials, or point the faucet at a remote node. Credential rollback cannot undo provider revocation: unknown, revoked, or compromised secrets stay out of use. Secret-exposure containment follows the private incident procedure immediately while stopped, without waiting for financial reconciliation.
 
 A successful canary still does not authorize production enablement. Production requires its own signer, backup, WAF, monitoring, firewall, and canary approval.
 
@@ -286,14 +297,15 @@ A successful canary still does not authorize production enablement. Production r
 
 - [ ] Staging DNS resolves only through the approved public route and never to the production origin.
 - [ ] Strict HTTPS/TLS, Cloudflare Full (strict), Caddy separation, WAF path/method rules, no-store policy, rate limits, and origin controls are externally verified without a claim.
-- [ ] Local and public status report disabled intake, fixed amount, and six decimals; unsupported/internal routes, normalized variants, `OPTIONS`, and `TRACE` are blocked at the public boundary.
+- [ ] Local/public disabled-contract and missing-claim checks pass within explicitly scoped bounded disabled validation, followed by verified shutdown; stopped-upstream `502` is not a substitute. Unsupported/internal routes, normalized variants, `OPTIONS`, and `TRACE` are blocked at the public boundary.
 - [ ] Exact Host/SNI, IPv4/IPv6, HTTP/3/0-RTT behavior, Caddy admin isolation, and staging certificate/state separation are verified.
 - [ ] Destination-level faucet egress is active and fresh, resolver/Cloudflare range provenance is recorded, the expiry monitor is installed, and strict proxy client-IP trust, NTP synchronization, core-dump protection, and secret-free logs/temp/proc surfaces are evidenced.
 - [x] The real staging Turnstile secret replaced the disposable placeholder through an atomic encrypted-credential rotation; exact provider hostname/action acceptance remains a separate gate.
 - [ ] A staging-only consistency-safe SQLite/WAL backup and rollback path is recorded; binary, unit, environment, and credential metadata are reproducible.
-- [ ] A separate written approval authorizes exactly one disposable claim before any enable call.
+- [ ] Operator test reference, window, and readiness for exactly one disposable claim are recorded before any enable call.
 - [ ] The single canary reconciles claim, node, balance, nonce, fee, source debit, recipient balance, and SQLite state exactly.
-- [ ] Same-key replay produces no second payout; changed-destination replay returns `409`.
-- [ ] All thirteen hard-gate categories have evidence, an identified reviewer, and a tested stop action.
+- [ ] Prior approved or separately authorized replay evidence proves same-key replay has no second payout and changed-destination replay returns `409`; no replay POST is included in the September 18 single-request scope.
+- [ ] Post-canary provider rotation/invalidation, protected local replacement, baseline-preserving disabled validation, and final stopped-state evidence are recorded under the rotation runbook.
+- [ ] All thirteen hard-gate categories have operator-checked evidence and a tested stop action.
 - [ ] Intake is disabled immediately after the canary, with redacted evidence preserved.
 - [ ] No production endpoint, credential, state, proxy, DNS, firewall, service, or funds are touched.

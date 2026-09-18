@@ -2,10 +2,15 @@
   "use strict";
 
   const APPROVED_HOSTNAME = "faucet-staging.ultranetwork.cc";
-  const TURNSTILE_SITE_KEY = "0x4AAAAAAEgF5I0TO-1amwb7";
+  const TURNSTILE_SITE_KEY = "0x4AAAAAAEqF5I0TO-lamwb7";
   const TURNSTILE_ACTION = "faucet_claim";
   const CLAIM_ENDPOINT = "/api/faucet/claims";
+  const CLAIM_REQUEST_TIMEOUT_MS = 15000;
   const ADDRESS_PATTERN = /^[0-9a-f]{64}$/;
+  const CLAIM_ID_PATTERN = /^[0-9a-f]{32}$/;
+  const STOP_INSTRUCTION = "Do not retry or reload to resubmit. Follow the private operator stop and reconciliation procedure.";
+  const UNCERTAIN_MESSAGE = `Request outcome is uncertain. ${STOP_INSTRUCTION}`;
+  const CONTRACT_MESSAGE = `The claim response did not match the expected contract. ${STOP_INSTRUCTION}`;
 
   const form = document.getElementById("claim-form");
   const recipientInput = document.getElementById("recipient");
@@ -16,8 +21,16 @@
 
   let turnstileWidgetId = null;
   let verificationToken = null;
-  let requestInFlight = false;
-  let claimSubmitted = false;
+  let resettingVerification = false;
+  // Monotonic for this loaded page only; not durable/server-side enforcement.
+  let attemptStarted = false;
+  let phase = "idle";
+
+  function isApprovedLocation() {
+    return window.location.protocol === "https:"
+      && window.location.hostname === APPROVED_HOSTNAME
+      && (window.location.port === "" || window.location.port === "443");
+  }
 
   function setStatus(message, tone = "") {
     status.textContent = message;
@@ -28,18 +41,31 @@
     }
   }
 
-  function clearVerification(resetWidget = true) {
-    verificationToken = null;
-    if (resetWidget && turnstileWidgetId !== null && window.turnstile) {
-      window.turnstile.reset(turnstileWidgetId);
-    }
-    updateSubmitState();
+  function updateControls() {
+    const addressIsValid = ADDRESS_PATTERN.test(recipientInput.value.trim());
+    submitButton.disabled = attemptStarted || phase !== "idle" || !isApprovedLocation()
+      || !addressIsValid || !verificationToken;
+    recipientInput.disabled = attemptStarted;
+    resetButton.disabled = attemptStarted;
+    form.setAttribute("aria-busy", phase === "submitting" ? "true" : "false");
   }
 
-  function updateSubmitState() {
-    const addressIsValid = ADDRESS_PATTERN.test(recipientInput.value.trim());
-    submitButton.disabled =
-      requestInFlight || claimSubmitted || !addressIsValid || !verificationToken;
+  function clearVerification(resetWidget = true) {
+    verificationToken = null;
+    resettingVerification = true;
+    let resetSucceeded = true;
+    try {
+      if (resetWidget && turnstileWidgetId !== null && window.turnstile) {
+        window.turnstile.reset(turnstileWidgetId);
+      }
+    } catch {
+      resetSucceeded = false;
+    } finally {
+      verificationToken = null;
+      resettingVerification = false;
+      updateControls();
+    }
+    return resetSucceeded;
   }
 
   function validateRecipient() {
@@ -62,53 +88,84 @@
       window.crypto.getRandomValues(bytes);
       return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
     }
-    throw new Error("Secure randomness is unavailable in this browser.");
+    throw new Error("Secure randomness is unavailable.");
   }
 
   function safeFailureMessage(responseStatus) {
+    let reason;
     switch (responseStatus) {
       case 400:
-        return "The claim request was rejected as invalid.";
+        reason = "The claim request was rejected as invalid.";
+        break;
+      case 403:
+        reason = "The claim request was forbidden.";
+        break;
       case 409:
-        return "This request conflicts with an existing claim or request key.";
+        reason = "This request conflicts with an existing claim or request key.";
+        break;
       case 422:
-        return "Turnstile verification was rejected. Verify again and retry.";
+        reason = "Turnstile verification was rejected.";
+        break;
       case 429:
-        return "The request was rate limited. Stop and follow the approved canary procedure.";
+        reason = "The request was rate limited.";
+        break;
       case 503:
-        return "The faucet is unavailable or disabled.";
+        reason = "The faucet is unavailable or disabled.";
+        break;
       default:
-        return "The claim request failed. Stop and review the private canary record.";
+        reason = "The claim request failed.";
     }
+    return `${reason} ${STOP_INSTRUCTION}`;
+  }
+
+  function canHandleVerification() {
+    return !attemptStarted && !resettingVerification && isApprovedLocation();
   }
 
   function renderTurnstile() {
-    if (!window.turnstile || turnstileWidgetId !== null) return;
-    if (window.location.protocol !== "https:" || window.location.hostname !== APPROVED_HOSTNAME) {
+    if (!window.turnstile || turnstileWidgetId !== null || attemptStarted) return;
+    if (!isApprovedLocation()) {
       setStatus(`Open this helper only at https://${APPROVED_HOSTNAME}.`, "error");
+      updateControls();
       return;
     }
 
-    turnstileWidgetId = window.turnstile.render(turnstileContainer, {
-      sitekey: TURNSTILE_SITE_KEY,
-      action: TURNSTILE_ACTION,
-      callback(token) {
-        verificationToken = typeof token === "string" && token.length > 0 ? token : null;
-        setStatus(verificationToken ? "Verification complete. Ready for one approved claim." : "Verification failed.", verificationToken ? "success" : "error");
-        updateSubmitState();
-      },
-      "expired-callback"() {
-        clearVerification(false);
-        setStatus("Verification expired. Complete Turnstile again.", "warning");
-      },
-      "error-callback"() {
-        clearVerification(false);
-        setStatus("Turnstile could not load. Stop and check the staging host/network.", "error");
-      },
-    });
+    try {
+      turnstileWidgetId = window.turnstile.render(turnstileContainer, {
+        sitekey: TURNSTILE_SITE_KEY,
+        action: TURNSTILE_ACTION,
+        // Keep the token out of Turnstile's default hidden form input.
+        "response-field": false,
+        callback(token) {
+          if (!canHandleVerification()) return;
+          verificationToken = typeof token === "string" && token.length > 0 ? token : null;
+          setStatus(verificationToken ? "Verification complete. Ready for one operator-scoped test request." : "Verification failed.", verificationToken ? "success" : "error");
+          updateControls();
+        },
+        "expired-callback"() {
+          if (!canHandleVerification()) return;
+          clearVerification(false);
+          setStatus("Verification expired. Complete Turnstile again before submitting.", "warning");
+        },
+        "error-callback"() {
+          if (!canHandleVerification()) return;
+          clearVerification(false);
+          setStatus("Turnstile could not load. Stop and check the staging host/network.", "error");
+        },
+      });
+    } catch {
+      clearVerification(false);
+      setStatus("Turnstile could not load. Stop and check the staging host/network.", "error");
+    }
   }
 
   function waitForTurnstile(attempt = 0) {
+    if (attemptStarted) return;
+    if (!isApprovedLocation()) {
+      setStatus(`Open this helper only at https://${APPROVED_HOSTNAME}.`, "error");
+      updateControls();
+      return;
+    }
     if (window.turnstile) {
       renderTurnstile();
       return;
@@ -120,76 +177,146 @@
     window.setTimeout(() => waitForTurnstile(attempt + 1), 200);
   }
 
+  function isRecord(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function validClaim(payload, address) {
+    const claim = isRecord(payload) && payload.success === true ? payload.data : null;
+    return isRecord(claim)
+      && typeof claim.claim_id === "string" && CLAIM_ID_PATTERN.test(claim.claim_id)
+      && claim.address === address && claim.status === "queued"
+      && claim.amount_base_units === 1000000 && claim.amount_ultra === "1.000000"
+      && claim.decimals === 6 && Number.isSafeInteger(claim.retry_after_seconds)
+      && claim.retry_after_seconds >= 0;
+  }
+
+  function finishAttempt(nextPhase, message) {
+    // An abort/timeout remains authoritative even if a promise settles later.
+    if (phase !== "submitting") return;
+    phase = nextPhase;
+    verificationToken = null;
+    setStatus(message, nextPhase === "accepted" ? "success" : "error");
+    updateControls();
+  }
+
   async function submitClaim(event) {
     event.preventDefault();
-    if (requestInFlight || claimSubmitted) return;
-
-    const address = validateRecipient();
-    if (!address || !verificationToken) {
-      if (!verificationToken) setStatus("Complete Turnstile verification before submitting.", "warning");
-      updateSubmitState();
+    if (attemptStarted || phase !== "idle") return;
+    if (!isApprovedLocation()) {
+      clearVerification(false);
+      setStatus(`Open this helper only at https://${APPROVED_HOSTNAME}.`, "error");
       return;
     }
 
-    requestInFlight = true;
-    updateSubmitState();
-    setStatus("Submitting the single approved claim request…");
+    const address = validateRecipient();
+    if (!address || !verificationToken) {
+      if (address && !verificationToken) setStatus("Complete Turnstile verification before submitting.", "warning");
+      updateControls();
+      return;
+    }
 
+    let controller;
+    let idempotencyKey;
+    let body;
     try {
-      const idempotencyKey = makeIdempotencyKey();
+      controller = new window.AbortController();
+      idempotencyKey = makeIdempotencyKey();
+      body = JSON.stringify({ address, captcha_token: verificationToken });
+    } catch {
+      clearVerification(false);
+      setStatus("Required secure browser capabilities are unavailable. No request was sent. Stop and review the browser configuration.", "error");
+      return;
+    }
+
+    attemptStarted = true;
+    phase = "submitting";
+    verificationToken = null;
+    updateControls();
+    setStatus("Submitting the single operator-scoped test request…");
+
+    let timeoutId;
+    try {
+      timeoutId = window.setTimeout(() => {
+        if (phase !== "submitting") return;
+        finishAttempt("stopped", UNCERTAIN_MESSAGE);
+        controller.abort();
+      }, CLAIM_REQUEST_TIMEOUT_MS);
+
       const response = await fetch(CLAIM_ENDPOINT, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Idempotency-Key": idempotencyKey,
         },
-        body: JSON.stringify({ address, captcha_token: verificationToken }),
+        body,
         credentials: "same-origin",
         cache: "no-store",
+        mode: "same-origin",
+        redirect: "error",
+        signal: controller.signal,
       });
+      if (phase !== "submitting") return;
 
-      if (!response.ok) {
-        throw new Error(safeFailureMessage(response.status));
+      if (response.status !== 202) {
+        finishAttempt("stopped", response.ok ? CONTRACT_MESSAGE : safeFailureMessage(response.status));
+        return;
+      }
+      const mediaType = (response.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
+      if (mediaType !== "application/json") {
+        finishAttempt("stopped", CONTRACT_MESSAGE);
+        return;
       }
 
-      const payload = await response.json();
-      const claim = payload && payload.success === true ? payload.data : null;
-      if (!claim || claim.amount_base_units !== 1000000 || claim.amount_ultra !== "1.000000" || claim.decimals !== 6) {
-        throw new Error("The faucet returned an unexpected claim contract. Stop immediately.");
+      let payload;
+      try {
+        payload = await response.json();
+      } catch {
+        finishAttempt("stopped", CONTRACT_MESSAGE);
+        return;
+      }
+      if (phase !== "submitting") return;
+      if (!validClaim(payload, address)) {
+        finishAttempt("stopped", CONTRACT_MESSAGE);
+        return;
       }
 
-      claimSubmitted = true;
-      const claimId = typeof claim.claim_id === "string" ? claim.claim_id : "created";
-      setStatus(`Claim queued: ${claimId}. Disable intake and reconcile through the private operator procedure.`, "success");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "The claim request failed. Stop and review the canary record.", "error");
+      finishAttempt("accepted", `Claim accepted: ${payload.data.claim_id}. Acceptance is not payout confirmation. Follow the private operator monitoring and reconciliation procedure; do not submit again.`);
+    } catch {
+      finishAttempt("stopped", UNCERTAIN_MESSAGE);
     } finally {
-      requestInFlight = false;
-      clearVerification(true);
-      updateSubmitState();
+      window.clearTimeout(timeoutId);
+      verificationToken = null;
+      updateControls();
     }
   }
 
-  function resetForm() {
-    claimSubmitted = false;
-    requestInFlight = false;
+  function resetForm(event) {
+    if (attemptStarted) {
+      event.preventDefault();
+      return;
+    }
     recipientInput.setAttribute("aria-invalid", "false");
-    clearVerification(true);
-    setStatus("Complete Turnstile verification before submitting.");
-    updateSubmitState();
+    const resetSucceeded = clearVerification(true);
+    setStatus(resetSucceeded
+      ? "Complete Turnstile verification before submitting."
+      : "Turnstile could not reset. Stop and check the staging host/network.", resetSucceeded ? "" : "error");
   }
 
   recipientInput.addEventListener("input", () => {
+    if (attemptStarted) return;
     recipientInput.setAttribute(
       "aria-invalid",
       ADDRESS_PATTERN.test(recipientInput.value.trim()) ? "false" : "true",
     );
-    updateSubmitState();
+    updateControls();
   });
   form.addEventListener("submit", submitClaim);
-  resetButton.addEventListener("click", resetForm);
+  form.addEventListener("reset", resetForm);
   window.addEventListener("load", () => waitForTurnstile());
   window.addEventListener("beforeunload", () => {
     verificationToken = null;
+    updateControls();
   });
+  updateControls();
 })();
