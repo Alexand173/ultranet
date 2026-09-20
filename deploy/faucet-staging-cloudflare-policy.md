@@ -19,6 +19,21 @@ This document defines the Cloudflare-side policy for `faucet-staging.ultranetwor
 
 Never combine the staging hostname with the production hostname in a permissive expression. Never expose the staging origin directly as a DNS-only route.
 
+### Web Analytics / Insights — explicit staging disablement
+
+Cloudflare Web Analytics is not controlled by Caddy or the repository. For the proxied staging hostname, the operator must open **Web Analytics → Manage site → Advanced options** and set the automatic setup to **Disable**. Do not install a manual Web Analytics snippet in the helper or any staging page.
+
+Required evidence before a browser gate or canary:
+
+- the exact staging hostname's Web Analytics setting is visibly **Disabled** in an approved read-only dashboard view, or the exact staging hostname is absent from the authenticated Web Analytics sites inventory and is recorded as not configured;
+- the helper source and served HTML contain no `static.cloudflareinsights.com` or `beacon.min.js` reference;
+- the browser network panel shows no request to `static.cloudflareinsights.com` during page load, Turnstile rendering, input, or Reset;
+- the origin response retains `Cache-Control: no-store, no-transform` as defense in depth against intermediary payload transformation.
+
+The origin header and CSP are not proof that the Cloudflare control-plane setting is disabled. If the dashboard state cannot be verified, keep this gate blocked and do not add `static.cloudflareinsights.com` to the CSP. A blocked beacon request is evidence of an attempted injection, not a pass.
+
+If an authenticated Web Analytics sites inventory lists the parent zone or other hostnames but does not list the exact `faucet-staging.ultranetwork.cc` hostname, record the exact staging site as **not configured / closed** rather than inferring its state from the parent hostname. Do not click **Add site** or **Update** as part of this read-only check. The no-beacon browser check remains required, and the parent hostname's analytics setting is a separate scope. Cloudflare Web Analytics automatic setup is **Disabled** only when the exact staging-host control-plane evidence visibly shows that state; an absent exact-host entry is recorded as **not configured / closed**, not as a false Disabled selection.
+
 ## Required Cloudflare configuration
 
 ### DNS
@@ -151,7 +166,7 @@ The policy must not cache:
 - claim status;
 - claim admission responses.
 
-The origin must continue to send `Cache-Control: no-store`. Verify `CF-Cache-Status` and redacted headers; no dynamic response may be served from cache.
+The origin must continue to send `Cache-Control: no-store, no-transform`. Verify `CF-Cache-Status` and redacted headers; no dynamic response may be served from cache. `no-transform` is defense in depth against payload rewriting and does not replace the Web Analytics **Disable** control-plane setting.
 
 ### 5. Rate limiting
 
@@ -193,7 +208,9 @@ Use an approved read-only dashboard session or read-only API token. Preserve onl
 - [ ] TRACE custom response is supported, correctly ordered, or fallback is explicitly accepted.
 - [ ] General staging path/method block is exact-host scoped.
 - [ ] Managed WAF is active without broad Allow/Skip bypass.
-- [ ] Cache bypass and origin `no-store` are verified.
+- [x] Web Analytics exact-host disposition is **CLOSED / NOT CONFIGURED** because the authenticated sites inventory contains no `faucet-staging.ultranetwork.cc` entry.
+- [ ] Independent browser verification observes no request to `static.cloudflareinsights.com` or `beacon.min.js` during page load, Turnstile rendering, input, or Reset.
+- [ ] Cache bypass and origin `no-store, no-transform` are verified.
 - [ ] Staging POST/read rate limits are active and have no normalization bypass.
 - [ ] Turnstile hostname/action are exact and the secret remains staging-only.
 - [ ] Cloudflare Security Events and Caddy logs contain no request bodies or secrets.

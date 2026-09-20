@@ -206,6 +206,8 @@ Recheck all local gates from [faucet-staging-install-preflight.md](./faucet-stag
 
 ## Phase C — backup and operator test readiness
 
+Use the current [`staging gated readiness packet`](../docs/runbooks/faucet-staging-gated-readiness.md) to prepare and record the credential-store, encrypted SQLite/WAL/SHM backup/recovery, replay-evidence, Web Analytics, and fresh-window gates. Use the private [`credential-store disposition draft`](../docs/runbooks/faucet-staging-credential-store-disposition-draft.md) and [`fresh-window record draft`](../docs/runbooks/faucet-staging-fresh-window-record-draft.md) for sign-off preparation. These documents are not approvals and do not authorize a service start, claim, replay POST, or window extension.
+
 Do not enable intake until all of the following are present in the private change record:
 
 - successful Phase A public checks;
@@ -217,7 +219,7 @@ Do not enable intake until all of the following are present in the private chang
 - exact binary checksum, source revision, unit revision, environment revision, and credential alias record;
 - the operator's test reference, window, and readiness confirmation for **exactly one disposable claim**.
 
-Public status checks, node-only checks, or preview checks do not establish claim readiness. Use the [staging one-claim test record](../docs/runbooks/faucet-staging-one-claim-test-record.md); Vladan Jotov records the technical checks and readiness before enablement. No independent-review attestation or signed approval record is required for this development test. A test record alone is not evidence that the gates passed.
+Public status checks, node-only checks, or preview checks do not establish claim readiness. Use the [staging one-claim test record](../docs/runbooks/faucet-staging-one-claim-test-record.md); Vladan Jotov records the technical checks and readiness before enablement. No independent reviewer is required for this development test, but the current owner-signed credential disposition and fresh-window record remain mandatory. A test record alone is not evidence that the gates passed.
 
 ### Hard security gates required before the canary
 
@@ -273,7 +275,7 @@ Use one controlled helper session. Its attempt lock, the daily cap and the opera
    - source account balance and recipient balance;
    - faucet SQLite claim/payout/budget records;
    - no duplicate debit or second payout.
-7. Do not issue additional replay POSTs or changed-destination tests under `ULTRANET-STG-TEST-20260918-01`. Same-key/no-second-debit and changed-destination/`409` evidence must come from previously approved tests or a separately authorized test scope. Missing mandatory replay evidence remains a blocker, not a waived or passed gate.
+7. Do not issue additional replay POSTs or changed-destination tests under the expired September 18 scope or any new window unless separately authorized. Same-key/no-second-debit and changed-destination/`409` evidence must come from previously approved tests or a separately authorized test scope. Missing mandatory replay evidence remains a blocker, not a waived or passed gate.
 8. Disable intake immediately through the protected staging operator procedure. Confirm disabled runtime status, zero active queue/reservations, and the expected confirmed budget; assert persisted `FAUCET_ENABLED=false`, stop the faucet, and verify inactive state and closed port `8090`.
 9. Immediately follow the [post-canary rotation and closeout procedure](../docs/runbooks/faucet-staging-turnstile-rotation.md#13-post-canary-rotation-and-closeout). No additional claim or Siteverify probe is authorized to validate the replacement secret.
 10. Remove the temporary operator-egress exception only under its approved cleanup procedure after disablement and reconciliation evidence are preserved; do not broaden unrelated policy.
@@ -301,7 +303,7 @@ A successful canary still does not authorize production enablement. Production r
 - [ ] Exact Host/SNI, IPv4/IPv6, HTTP/3/0-RTT behavior, Caddy admin isolation, and staging certificate/state separation are verified.
 - [ ] Destination-level faucet egress is active and fresh, resolver/Cloudflare range provenance is recorded, the expiry monitor is installed, and strict proxy client-IP trust, NTP synchronization, core-dump protection, and secret-free logs/temp/proc surfaces are evidenced.
 - [x] The real staging Turnstile secret replaced the disposable placeholder through an atomic encrypted-credential rotation; exact provider hostname/action acceptance remains a separate gate.
-- [ ] A staging-only consistency-safe SQLite/WAL backup and rollback path is recorded; binary, unit, environment, and credential metadata are reproducible.
+- [x] A staging-only consistency-safe SQLite/WAL backup and rollback path is recorded; binary, unit, environment, and credential metadata are reproducible.
 - [ ] Operator test reference, window, and readiness for exactly one disposable claim are recorded before any enable call.
 - [ ] The single canary reconciles claim, node, balance, nonce, fee, source debit, recipient balance, and SQLite state exactly.
 - [ ] Prior approved or separately authorized replay evidence proves same-key replay has no second payout and changed-destination replay returns `409`; no replay POST is included in the September 18 single-request scope.

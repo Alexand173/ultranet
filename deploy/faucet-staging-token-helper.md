@@ -44,7 +44,7 @@ handle @staging_token_helper {
 
 The matcher is exact-path scoped. It does not publish the node API, faucet listener, `/internal/*`, Caddy admin, signer, credential directory, or arbitrary filesystem paths. The existing API handlers and final `404` remain unchanged.
 
-The Caddy site block sends the helper CSP as an HTTP response header. The policy allows same-origin assets and only the Cloudflare Turnstile origin (`https://challenges.cloudflare.com`) for its script, frame, and network requirements. It intentionally excludes `static.cloudflareinsights.com`; do not widen the policy to accommodate an analytics beacon. `frame-ancestors` is kept in the response header because a CSP meta tag cannot enforce that directive.
+The Caddy site block sends the helper CSP as an HTTP response header. The policy allows same-origin assets and only the Cloudflare Turnstile origin (`https://challenges.cloudflare.com`) for its script, frame, and network requirements. It intentionally excludes `static.cloudflareinsights.com`; do not widen the policy to accommodate an analytics beacon. The staging origin also sends `Cache-Control: no-store, no-transform` so intermediaries are instructed not to rewrite the helper payload; this is defense in depth, not a substitute for disabling Web Analytics in Cloudflare's staging-host settings. `frame-ancestors` is kept in the response header because a CSP meta tag cannot enforce that directive.
 
 ## Staging Caddy control plane
 
@@ -135,10 +135,14 @@ curl --fail --silent --show-error --head \
   "https://$HOST/staging-token.js"
 
 EXPECTED_CSP="default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; img-src 'self' data:; style-src 'self'; font-src 'self'"
+EXPECTED_CACHE_CONTROL='no-store, no-transform'
 curl --fail --silent --show-error --dump-header - \
   "https://$HOST/staging-token.html" --output /dev/null \
   | tr -d '\r' \
+  | tee /tmp/staging-token.headers \
   | grep -Fxi -- "content-security-policy: $EXPECTED_CSP"
+grep -Fxi -- "cache-control: $EXPECTED_CACHE_CONTROL" /tmp/staging-token.headers
+rm -f /tmp/staging-token.headers
 
 # The asset route must not expose arbitrary files or internal controls.
 test "$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
@@ -164,7 +168,7 @@ A fresh controlled Reset verification later reported zero `POST /api/faucet/clai
 
 Before repeating the browser check, verify in Cloudflare that the current public sitekey in `staging-token.js` (`0x4AAAAAAEqF5I0TO-lamwb7`) is valid for the exact hostname `faucet-staging.ultranetwork.cc` and action `faucet_claim`. If Cloudflare reports `400020`, treat it as an invalid or unauthorized sitekey configuration: correct the Turnstile dashboard entry or replace the public sitekey in the helper after review. Do not change the hostname guard and do not enable claims while this check is unresolved.
 
-Also verify that Cloudflare Web Analytics/Insights injection is disabled for `faucet-staging.ultranetwork.cc`. A blocked request for `https://static.cloudflareinsights.com/beacon.min.js` is expected only when an unapproved analytics injection remains enabled; do not respond by adding that origin to the helper CSP.
+Also verify in Cloudflare **Web Analytics → Manage site → Advanced options** that automatic setup is set to **Disable** for `faucet-staging.ultranetwork.cc`. This control-plane setting cannot be changed by Caddy or the helper repository. A blocked request for `https://static.cloudflareinsights.com/beacon.min.js` means an injection was attempted; it is not a pass. Do not respond by adding that origin to the helper CSP. The staging origin's `Cache-Control: no-store, no-transform` header is defense in depth only.
 
 1. From a normal browser on a network that is not restricted from reaching Cloudflare, open only `https://faucet-staging.ultranetwork.cc/staging-token.html`.
 2. Confirm the address bar shows the exact approved hostname over HTTPS, with no redirect to a different host.
@@ -265,8 +269,8 @@ Passing these checks establishes only the covered client behavior. It does not p
 - [ ] Acceptance is not described as confirmation; failures/timeouts direct private stop/reconciliation without resubmission.
 - [ ] The exact staging hostname guard and `faucet_claim` action remain present.
 - [x] Cloudflare confirms the final public sitekey `0x4AAAAAAEqF5I0TO-lamwb7` for the exact staging hostname; the final real-key browser request returned no `400020`.
-- [ ] Cloudflare Web Analytics/Insights injection is disabled for staging; no `static.cloudflareinsights.com` request is expected.
-- [ ] The strict CSP is present as an HTTP response header and excludes unapproved analytics origins.
+- [ ] Cloudflare Web Analytics/Insights automatic setup is **Disabled** for staging; no `static.cloudflareinsights.com` request is observed.
+- [ ] The strict CSP is present as an HTTP response header, excludes unapproved analytics origins, and the origin sends `Cache-Control: no-store, no-transform`.
 - [ ] The route exposes only three exact static asset paths.
 - [ ] The static directory is root-owned and caddy-readable but not caddy-writable.
 - [ ] Caddy remains the staging unit, binds admin only to loopback, and is validated before restart.

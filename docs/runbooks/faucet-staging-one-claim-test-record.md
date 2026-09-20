@@ -30,13 +30,17 @@ The timestamp and window are supplied test metadata, not evidence of readiness, 
 
 These are the runbook's intended staging identifiers, not fresh observations. Never substitute a production host, service, signer, credential, endpoint, or state path.
 
+The remaining private gates are prepared in [`faucet-staging-gated-readiness.md`](./faucet-staging-gated-readiness.md). That packet is not a readiness approval and does not select or extend a test window.
+
+Use the [`credential-store disposition draft`](./faucet-staging-credential-store-disposition-draft.md) and [`fresh-window record draft`](./faucet-staging-fresh-window-record-draft.md) for private completion. Neither draft is an approval until Vladan Jotov completes the fields and signs through the approved private record system.
+
 ## Operator checks before testing
 
 - [ ] Verify host, staging isolation, hostname, widget, helper/server action `faucet_claim`, and binary/unit/environment identities.
 - [ ] Record fresh evidence for all technical gates in [the claims handoff](../../deploy/faucet-staging-claims-enablement.md#phase-c--backup-and-operator-test-readiness), including egress/expiry, proxy/WAF boundaries, clock, replay-test evidence, and credential protection.
 - [ ] Confirm the private operator procedure, immediate disable/stop, and recovery access work. Record readiness and its actual UTC timestamp.
-- [ ] Capture consistent staging SQLite/WAL backup and baseline claim, budget, balance, fee, nonce, and node state.
-- [ ] Review actual credential-store risk and its disposition privately; do not infer risk acceptance from the withdrawn approval record or from zero token value. Missing protection or a valid bounded operator risk disposition remains a stop condition.
+- [x] Capture consistent staging SQLite/WAL backup and baseline queue, budget, balance, fee, nonce, and node state; no claim was executed by this capture.
+- [ ] Complete and privately sign the [`credential-store disposition draft`](./faucet-staging-credential-store-disposition-draft.md); do not infer risk acceptance from the withdrawn approval record or from zero token value. Missing protection or a valid bounded operator risk disposition remains a stop condition.
 - [ ] Select a fresh disposable recipient and high-entropy idempotency key privately. Never record them or tokens, credentials, signer material, or signed envelopes here.
 - [ ] Confirm intake remains disabled until all checks pass and the recorded test window is open.
 
