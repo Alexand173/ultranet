@@ -87,9 +87,9 @@ The former window is closed. A new window has been selected in the private draft
 ```text
 Test reference: ULTRANET-STG-TEST-20260920-01
 Owner/operator: Vladan Jotov
-Window start UTC: 2026-09-20T10:00:00Z
-Window end UTC: 2026-09-20T10:30:00Z
-Fixed cutoff UTC: 2026-09-20T10:25:00Z
+Window start UTC: 2026-09-20T11:00:00Z
+Window end UTC: 2026-09-20T13:00:00Z
+Fixed cutoff UTC: 2026-09-20T12:55:00Z
 Readiness confirmed UTC: NOT CONFIRMED — pending completion of all independent gates
 Readiness record/reference: ULTRANET-STG-READY-20260920-01
 Abort authority and recovery path: Vladan Jotov; Hetzner console + verified SSH key

@@ -23,7 +23,7 @@ Owner/operator: Vladan Jotov
 Host identity confirmed UTC: <actual UTC timestamp after independent host verification>
 Source revision confirmed: bbfe78a6e776aff32d4d9d0312e8c4ae3b771b3e
 Disposition created UTC: 2026-09-20T09:14:17Z
-Disposition expires UTC: 2026-09-20T10:25:00Z
+Disposition expires UTC: 2026-09-20T12:55:00Z
 Retention/disposal decision reference: <private retention/disposal decision reference>
 ```
 

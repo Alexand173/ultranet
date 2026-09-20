@@ -14,9 +14,9 @@ This record replaces no prior approval and does not extend the expired `2026-09-
 ```text
 Test reference: ULTRANET-STG-TEST-20260920-01
 Owner/operator: Vladan Jotov
-Window start UTC: 2026-09-20T10:00:00Z
-Window end UTC: 2026-09-20T10:30:00Z
-Fixed cutoff UTC: 2026-09-20T10:25:00Z
+Window start UTC: 2026-09-20T11:00:00Z
+Window end UTC: 2026-09-20T13:00:00Z
+Fixed cutoff UTC: 2026-09-20T12:55:00Z
 Readiness confirmed UTC: NOT CONFIRMED — pending completion of all independent gates
 Readiness record/reference: ULTRANET-STG-READY-20260920-01
 Credential disposition reference: ULTRANET-STG-CRED-RISK-20260920-01
@@ -90,7 +90,7 @@ No claim result, payout result, Siteverify result, recipient, idempotency key, s
 ```text
 Owner name: Vladan Jotov
 Selected reference: ULTRANET-STG-TEST-20260920-01
-Selected window/cutoff: 2026-09-20T10:00:00Z–2026-09-20T10:30:00Z; cutoff 2026-09-20T10:25:00Z
+Selected window/cutoff: 2026-09-20T11:00:00Z–2026-09-20T13:00:00Z; cutoff 2026-09-20T12:55:00Z
 Exactly-one-claim boundary accepted: yes
 No-retry/no-replay/no-extension boundary accepted: yes
 Readiness record reviewed UTC: <actual owner review UTC after all gates pass>
