@@ -8,7 +8,7 @@
 
 UltraNet has progressed from an initial Rust node repository to a substantial, multi-component project: it has a published v7.1.7 multi-platform node release, a Next.js website and wallet flows, validator proposal/approval tooling, a persistent node/API, a faucet implementation and a carefully isolated staging process. The repository also contains integration/unit tests, deployment templates, and detailed operator documentation. The latest CI changes are committed at `9381e1a`; the Windows test and release-version checks shown in the owner-provided GitHub Actions screenshot are green.
 
-That is meaningful engineering progress, but **it is not yet sufficient evidence for describing UltraNet as a mature, decentralized, economically validated L1**. The public API currently reports a very small observed chain (2 blocks, 1 transaction), zero ZK proofs/verifications and no AppChain activity. It reports six validator records, but the public page says per-validator identity, stake, and ping details are not exposed, and the approval service could not confirm. These observations do not prove independent validator operation or robust consensus.
+That is meaningful engineering progress, but **it is not yet sufficient evidence for describing UltraNet as a mature, decentralized, economically validated L1**. The public API currently reports a very small observed chain (2 blocks, 1 transaction), zero ZK proofs/verifications and no AppChain activity. It reports six validator records, but the owner clarifies that there is only one real regular validator; the other configured validator entries are demos, not real people. Per-validator identity, stake, and ping details are not exposed on the public page, and the approval service could not confirm. This roster clarification is operator-provided rather than independently verified. These observations do not prove independent validator operation or robust consensus.
 
 The staging faucet's last checked-in readiness state is **PREPARED — NOT PASSED**: encrypted backup/restore passed, but credential disposition and replay evidence were blocked, fresh no-beacon evidence was still required, and the selected September 20 window was unsigned/inactive. That window has now passed. Its present-day runtime status has not been refreshed in this report; therefore, do not infer that a new test is authorized or that the service state is currently verified.
 
@@ -58,7 +58,7 @@ Repository claims below are checked against code and documentation where possibl
 
 | Observation | Snapshot | Proper interpretation |
 | --- | --- | --- |
-| [`/api/stats`](https://api.ultranetwork.cc/api/stats) | `chain_length=2`, `total_blocks=2`, `total_transactions=1`, `validator_count=6`, `total_weight=501`, `mempool_size=2`, `zk_proofs=0`, `zk_verifications=0`, `stm_total_executions=0`. | The endpoint reports very low observed activity. It does not prove transaction diversity, validator independence, or cryptographic correctness. |
+| [`/api/stats`](https://api.ultranetwork.cc/api/stats) | `chain_length=2`, `total_blocks=2`, `total_transactions=1`, `validator_count=6`, `total_weight=501`, `mempool_size=2`, `zk_proofs=0`, `zk_verifications=0`, `stm_total_executions=0`. | `validator_count=6` is not six real operators. The owner clarifies that the five validator entries in the genesis configuration are demos, not real people; the network has one regular validator whom the owner, acting as genesis sovereign, approved. The owner role is not counted here as a second regular validator. This is operator-provided context, not independently verified by the endpoint. The other metrics still indicate very low observed activity and do not prove transaction diversity or cryptographic correctness. |
 | [`/dashboard`](https://api.ultranetwork.cc/dashboard) | Height 2, TPS 0.00, zero active AppChains, and no recent AppChain finalizations; per-validator identity/stake/ping is not exposed, and approval-service confirmation failed on the fetched page. | Improve data freshness, availability, and transparency before using this as adoption or decentralization evidence. |
 | [`/api/validate`](https://api.ultranetwork.cc/api/validate) | Returns `valid: true`. | A positive application response is useful but is not an external audit or a proof of distributed finality. |
 | [`/api/manifest`](https://api.ultranetwork.cc/api/manifest) | Returns static protocol fields including six decimals, genesis allocation, reward, and consensus label. | A manifest is not itself a live supply, price, performance, or validator attestation. The latency field is hard-coded in the API handler and needs benchmark provenance. |
@@ -180,6 +180,27 @@ Until the relevant exit criteria are met:
 - state clearly that validator admission is currently sovereign-approved and that decentralization is a goal, not an established result;
 - distinguish native token balances from circulating supply, market cap, and investor ownership rights.
 
+## Addendum — fresh P0 evidence and aggregate-signature trace (2026-09-24 14:19 UTC)
+
+This read-only follow-up supplements the public snapshot above; it does not alter the original report date or imply independent node verification.
+
+### Fresh public observations
+
+- At 14:19 UTC, [`/api/stats`](https://api.ultranetwork.cc/api/stats) still reported `chain_length=2`, `total_blocks=2`, and `total_transactions=1`. Its `genesis_time=1789194163` converts to `2026-09-12T06:22:43Z`.
+- [`/api/block/1`](https://api.ultranetwork.cc/api/block/1) returned block index `1` at `2026-08-30T16:48:43Z` with `aggregated_signature: null`. The block contains one `StandardTransfer`: 1,000,000,000 base units (1,000 `$ULTRA` at six decimals), with a 10,000,000-base-unit fee. It is a sovereign-to-faucet funding transfer, not evidence of broader user activity. The faucet account endpoint, fetched at 14:04 UTC, reported 1,000.001000 `$ULTRA`; that balance is 0.001 `$ULTRA` above the block's transfer amount and is not reconciled by the observations reviewed here. Do not describe it as a matching transfer balance or assume a fee credit.
+- The block's timestamp is nearly 25 days older than this observation. Compared with the earlier fetched block-0 timestamp (`2026-08-30T14:50:35Z`), the API `genesis_time` is also inconsistent with the block timestamp chronology. Treat these API values as stale/inconsistent telemetry, not a fresh chain-health attestation.
+
+### What `aggregated_signature: null` means in the current implementation
+
+The observed `null` is expected from the current code path, but it is not evidence that aggregate signing succeeded or that a block-level BLS certificate exists:
+
+1. [`UltraBlock`](../src/lib.rs#L1013-L1024) makes the field optional. Genesis blocks and normally produced L1 blocks initialize it to `None` ([genesis](../src/lib.rs#L1704-L1715), [block production](../src/lib.rs#L2852-L2864)); the other in-repository construction sites do likewise.
+2. The BLS aggregation function exists ([`aggregate_signatures`](../src/lib.rs#L431-L481)), but there is no call site that assigns its result to a block. The producer calculates the block hash and proceeds into DAG insertion and validation without populating the field.
+3. Block validation only invokes `verify_aggregated` when the option is `Some`; when it is `None`, it logs that aggregation is unavailable and skips that check ([validation](../src/lib.rs#L3239-L3249)). Thus, absence does not fail the BLS-validation branch; the remaining validation continues.
+4. The API serializes the block directly with `serde_json::to_value` ([`get_block`](../src/api.rs#L973-L982)). Since the optional field is not configured to be omitted when absent, `None` appears as JSON `null`.
+
+**Conclusion:** `null` is the expected serialization of the current unpopulated optional field, not an API transport artifact. The repository does not establish that skipping this BLS check is an intentional consensus-policy decision: the aggregation path is unwired, and absence is accepted by this validation branch. This does not, by itself, prove that no other authentication/finality mechanism exists, but it means this field provides no block-level aggregate-signature evidence for the observed block. Keep consensus/finality claims gated pending an end-to-end review of signer collection, quorum rules, certificate assignment, verification, persistence, and multi-node/adversarial tests.
+
 ## Sources reviewed
 
 ### Repository
@@ -197,9 +218,11 @@ Until the relevant exit criteria are met:
 - [UltraNet homepage](https://ultranetwork.cc/)
 - [Public dashboard](https://api.ultranetwork.cc/dashboard)
 - [Public stats API](https://api.ultranetwork.cc/api/stats)
+- [Public block 1 API](https://api.ultranetwork.cc/api/block/1)
 - [Public chain validation API](https://api.ultranetwork.cc/api/validate)
 - [Public protocol manifest API](https://api.ultranetwork.cc/api/manifest)
 - [Public sovereign account API](https://api.ultranetwork.cc/api/account/3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c)
+- [Public faucet account API](https://api.ultranetwork.cc/api/account/787e68b2c5ac93d3eaaa5db72ab4bb0404e1ef3f4315e0c83d557a09d800a358)
 - [Public AI history API](https://api.ultranetwork.cc/api/ai/history)
 
 This report makes no changes to source code, runtime state, token balances, credentials, or network configuration.
