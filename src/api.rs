@@ -44,6 +44,9 @@ use std::{
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, Zeroizing};
 
+#[path = "local_validator_snapshot.rs"]
+mod local_validator_snapshot;
+
 // ===== STRUKTURE ZA API =====
 
 // NAPOMENA O BEZBEDNOSTI: privatni ključ NIKADA ne putuje na server. Klijent
@@ -3457,6 +3460,8 @@ fn configure_admin_routes(cfg: &mut web::ServiceConfig) {
 
 pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Result<()> {
     let api_bind = configured_api_bind()?;
+    let local_snapshot_enabled = local_validator_snapshot::configured_enabled()?;
+    local_validator_snapshot::validate_listener_bind(local_snapshot_enabled, &api_bind)?;
     let cors_origins = configured_cors_origins()?;
     let admin_auth = web::Data::new(configured_admin_auth()?);
     let auth_config = AuthConfig::from_env()
@@ -3512,6 +3517,9 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
     );
     println!("   GET  /api/governance/proposals - List pending proposals");
     println!("   GET  /api/governance/approvals - List durable approval journal");
+    if local_snapshot_enabled {
+        println!("   GET  /api/local/validator-snapshot - Redacted local validator snapshot");
+    }
 
     println!();
 
@@ -3610,6 +3618,7 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
             .route("/api/ai/history", web::get().to(get_ai_history))
             .route("/api/zk/progress", web::get().to(get_zk_progress))
             .route("/api/search/{query}", web::get().to(search))
+            .configure(|config| local_validator_snapshot::configure(config, local_snapshot_enabled))
     })
     .bind(api_bind)?
     .run()
