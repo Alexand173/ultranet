@@ -1,12 +1,14 @@
 # Staging gated readiness packet
 
-**Status:** PREPARED — NOT PASSED
-**Scope:** maintenance-only preparation for the isolated staging faucet
-**Prior test reference:** `ULTRANET-STG-TEST-20260920-01` (draft window expired; do not use or extend)
-**Owner/operator:** Vladan Jotov
-**Staging host:** `ubuntu-2gb-nbg1-2`
-**Staging hostname:** `faucet-staging.ultranetwork.cc`
-**Faucet unit:** `ultranet-faucet-staging.service`
+| Readiness packet | Value |
+| --- | --- |
+| Status | **PREPARED — NOT PASSED** |
+| Scope | Maintenance-only preparation for the isolated staging faucet |
+| Prior test reference | `ULTRANET-STG-TEST-20260920-01` (draft window expired; do not use or extend) |
+| Owner/operator | Vladan Jotov |
+| Staging host | `ubuntu-2gb-nbg1-2` |
+| Staging hostname | `faucet-staging.ultranetwork.cc` |
+| Faucet unit | `ultranet-faucet-staging.service` |
 
 This packet prepares the remaining private gates. It does not enable intake, start the faucet, submit a claim, call Siteverify, run replay POSTs, mutate credentials, create a backup, change Cloudflare state, or extend the expired test window.
 
@@ -121,6 +123,17 @@ Complete these gates in order. Keep evidence in the approved private record syst
 | Web Analytics exact-host disposition | NOT CURRENT / historical inventory only | Fresh authenticated exact-host inventory and independent no-beacon browser evidence |
 | New test window | EXPIRED / replacement not selected, signed, or active | Select a future UTC window only after all independent gates pass |
 | Intake | CLOSED | Keep `FAUCET_ENABLED=false`; no enable call |
+
+## Redacted reference review — 2026-09-26
+
+Reviewed the repository coordination records only; they are not private-system evidence:
+
+- The credential disposition remains `DRAFT — NOT SIGNED — NOT ACTIVE`; current host/recovery, retention, and signed-disposition fields are incomplete.
+- The private sign-off checklist records credential disposition blocked and replay outside scope. Its September 20 window/backup references are historical, not current readiness evidence.
+- The fresh-window draft still contains the expired September 20 window and no readiness confirmation or owner signature.
+- The one-claim record says readiness and results are not recorded; it does not evidence a claim or successful canary.
+
+No current signed disposition, separately approved replay result, current no-beacon evidence, or fresh signed window was found in reviewed repository records or available attachments. No blocked gate is promoted. Backup/recovery remains passed only for the historical session pending applicability confirmation. Overall status remains **PREPARED — NOT PASSED**; intake stays closed.
 
 ## Definition of done
 
