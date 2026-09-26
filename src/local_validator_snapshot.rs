@@ -749,10 +749,16 @@ mod tests {
         let body = response.text().await.unwrap();
         let snapshot: serde_json::Value = serde_json::from_str(&body).unwrap();
 
-        assert!(snapshot["persisted_validators"]["total"].as_u64().unwrap() >= 1);
+        // UltraBlockchain::new creates five bootstrap validators; this fixture adds one to each view.
+        assert_eq!(snapshot["persisted_validators"]["total"], 6);
+        assert_eq!(snapshot["in_memory_validators"]["total"], 6);
         assert_eq!(snapshot["pending_proposals"]["total"], 1);
         assert_eq!(snapshot["approval_journal"]["total"], 1);
         assert_eq!(snapshot["block_history"]["total_blocks"], 2);
+        assert_eq!(
+            snapshot["consistency"]["block_height_stable_during_capture"],
+            true
+        );
         assert_eq!(snapshot["consistency"]["cross_tree_snapshot_atomic"], false);
         assert_eq!(
             snapshot["pending_proposals"]["entries"][0]["public_key_bytes"],
@@ -799,6 +805,17 @@ mod tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let incorrect_token = actix_test::call_service(
+            &app,
+            actix_test::TestRequest::get()
+                .uri(ROUTE)
+                .peer_addr("127.0.0.1:50000".parse().unwrap())
+                .insert_header(("Authorization", format!("Bearer {}", "b".repeat(32))))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(incorrect_token.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[actix_web::test]

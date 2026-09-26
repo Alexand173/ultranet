@@ -2,7 +2,7 @@
 
 **Status:** PREPARED — NOT PASSED
 **Scope:** maintenance-only preparation for the isolated staging faucet
-**Test reference:** `ULTRANET-STG-TEST-20260920-01` (selected draft window; not signed or active)
+**Prior test reference:** `ULTRANET-STG-TEST-20260920-01` (draft window expired; do not use or extend)
 **Owner/operator:** Vladan Jotov
 **Staging host:** `ubuntu-2gb-nbg1-2`
 **Staging hostname:** `faucet-staging.ultranetwork.cc`
@@ -82,51 +82,56 @@ Before a canary, provide either prior approved evidence or a separately scoped r
 
 ## Gate 4 — fresh operator-selected test window
 
-The former window is closed. A new window has been selected in the private draft, but it remains unsigned and inactive until all independent gates pass:
+The window recorded in the earlier draft (`2026-09-20T11:00:00Z`–`2026-09-20T13:00:00Z`, cutoff `2026-09-20T12:55:00Z`) has expired. Do not use it, infer a replacement, or treat its draft reference as readiness confirmation. A new operator-selected future UTC window and fixed cutoff must be recorded privately only after the independent technical gates are current.
 
-```text
-Test reference: ULTRANET-STG-TEST-20260920-01
-Owner/operator: Vladan Jotov
-Window start UTC: 2026-09-20T11:00:00Z
-Window end UTC: 2026-09-20T13:00:00Z
-Fixed cutoff UTC: 2026-09-20T12:55:00Z
-Readiness confirmed UTC: NOT CONFIRMED — pending completion of all independent gates
-Readiness record/reference: ULTRANET-STG-READY-20260920-01
-Abort authority and recovery path: Vladan Jotov; Hetzner console + verified SSH key
-```
+Use [`faucet-staging-fresh-window-record-draft.md`](./faucet-staging-fresh-window-record-draft.md) as a template. Its September 20 values are stale; completing the checked-in template alone is not a signed record or permission to enable intake. Record the fresh test reference, window/cutoff, readiness timestamp, recovery reference, abort authority, and one-claim/no-retry/no-extension conditions in the approved private system.
 
-Use [`faucet-staging-fresh-window-record-draft.md`](./faucet-staging-fresh-window-record-draft.md) to complete the new private window record. Do not infer or extend the expired window; this draft does not authorize intake.
+The fresh window and readiness record require current evidence for all of the following:
 
-The new window is not valid until all of the following are checked in the private record:
-
-- [ ] Credential-store gate passed or the bounded one-test risk disposition is explicit and current.
-- [ ] Consistent encrypted SQLite/WAL/SHM backup and disposable restore passed.
-- [ ] Replay evidence is prior-approved or separately scoped; no extra replay POST is smuggled into the one-claim window.
-- [ ] Current egress/expiry/timer, host identity, binary/source/unit/environment and public route evidence is fresh.
-- [ ] Cloudflare Web Analytics automatic setup is **Disabled** for the staging hostname, or the exact staging hostname is absent from the authenticated Web Analytics site inventory and recorded as not configured; no `static.cloudflareinsights.com` request is observed.
+- [ ] Credential-store remediation or a current, signed, bounded one-test risk disposition with independent recovery and explicit retention/cutoff/stop terms.
+- [ ] Encrypted SQLite/WAL/SHM backup and disposable restore pass and still apply to the current source and live-state baseline; if state or identity changed, repeat only under a separately approved quiesced procedure.
+- [ ] Replay evidence is prior-approved and still applicable, or a separate replay scope has been explicitly approved and reconciled. No replay POST is included in the one-claim window by default.
+- [ ] Host identity, source/binary/unit/environment/credential aliases, effective egress and expiry timer, DNS/TLS/WAF/Caddy/origin boundaries, resolver/range evidence, and all applicable hard pre-canary gates are freshly verified.
+- [ ] Web Analytics exact-host disposition and independent no-beacon browser evidence are current; September 19 inventory evidence is historical, not current proof.
 - [ ] Independent recovery access and immediate disable/stop authority are tested.
-- [ ] Operator confirms exactly one disposable claim, no retry, no reload/new-tab resubmission, no changed-destination test, and no automatic extension.
+- [ ] Owner accepts exactly one disposable claim, no retry/replay/reload/new-tab resubmission/changed-destination test, and no automatic extension.
 
 **Stop at cutoff:** disable/stop through the private staging procedure, verify `FAUCET_ENABLED=false`, inactive service and closed port, preserve unresolved state, and do not resubmit or restart merely to drain or hide an uncertain result.
+
+## Ordered path to a readiness-only PASSED status
+
+Complete these gates in order. Keep evidence in the approved private record system where required; this repository may hold only redacted status and references, never signatures, secrets, recipient/idempotency values, raw requests, or signed envelopes.
+
+1. **Reconfirm scope and preserve the stop state.** Treat the prior window and all historical host/provider observations as stale unless independently reconfirmed. Keep intake disabled, the faucet stopped, port `8090` closed, and production excluded. No remote action is authorized by this checklist.
+2. **Close Gate 1 — credential-store protection/disposition.** Either remediate to provider-approved encrypted-at-rest or TPM2/LUKS-backed protection and independently test recovery, or have the owner complete and sign a narrowly bounded private risk disposition for exactly one disposable staging test. Refresh host/device/store metadata, four encrypted credential metadata/hashes, plaintext/temp absence, recovery test, scope, expiry, retention, and stop authority. The checked-in disposition draft is not approval; the September 20 timestamps and references must not be reused as current evidence.
+3. **Revalidate Gate 2 — backup/recovery applicability.** The September 20 encrypted backup and disposable restore are recorded as historically passed, not automatically current for a later test. Privately confirm host/source/database identity and that the live state has not changed in a way that invalidates its baseline. If freshness or consistency is uncertain, stop and obtain separate approval for a staging-only quiesced SQLite/WAL/SHM capture and disposable restore. Never overwrite live state; preserve checksums and restore comparisons privately.
+4. **Close Gate 3 — replay/idempotency.** Supply prior-approved evidence that same-key/same-request returns the original result without a second side effect and changed-destination reuse returns the documented `409`, with reconciliation and redacted results; otherwise, obtain a separate explicit test scope, recipient isolation, stop action, and rollback/reconciliation procedure before any replay request. Do not perform replay as part of this packet or the one-claim window. Missing or ambiguous replay evidence keeps this gate blocked.
+5. **Refresh the technical pre-canary gates.** Complete current staging identity, binary/source/unit/environment, egress/resolver and expiry monitoring, public route/TLS/WAF/Caddy/origin, proxy identity/path-normalization, Turnstile hostname/action and secret provenance, no-beacon analytics, log/core/temp/proc hygiene, recovery, disabled/stop monitoring, and all applicable rows in [`faucet-staging-claims-enablement.md`](../../deploy/faucet-staging-claims-enablement.md). Historical egress ended September 21 and the Web Analytics inventory dates to September 19; neither is current proof. Any host maintenance, provider change, or live validation requires its own explicit approval and bounded procedure.
+6. **Select and sign a genuinely fresh window privately.** Only after Gates 1–3 and current technical gates are evidenced, have the owner choose future UTC start/end and a cutoff before the end, complete the fresh private test record, confirm independent recovery/abort authority, and sign through the approved private system. Do not put signature material in the repository or infer dates.
+7. **Record readiness, not execution.** The owner reviews every gate and records a fresh readiness timestamp/reference privately. Update this packet to **PASSED** only when its checklist is backed by current evidence and the private records are signed and independently recoverable; keep a redacted reference only. This status means readiness to consider exactly one disposable staging claim within the signed window—it does not start the faucet, enable intake, authorize replay, or establish claim success or production readiness. The claim requires a separate exact-window go/no-go and every hard pre-canary gate.
+8. **Retain the stop boundary.** If any check expires, conflicts, fails, or lacks evidence, leave the packet **NOT PASSED**, intake closed, `FAUCET_ENABLED=false`, service inactive, port closed, and escalate through the independent recovery path. Do not retry, reset counters, restore over live state, extend a window, or treat a historical approval artifact as authority.
 
 ## Current decision
 
 | Gate | Status | Next evidence |
 | --- | --- | --- |
-| Credential-store | BLOCKED / disposition not current | Remediation or bounded private risk record |
-| Backup/recovery | PASSED / encrypted restore and live-state invariance verified | Retain private artifact, checksum, recovery result and cleanup record |
-| Replay evidence | BLOCKED / outside current scope | Prior-approved evidence or separate replay scope |
-| Web Analytics exact-host disposition | CLOSED / staging hostname not configured | Authenticated inventory evidence plus fresh no-beacon browser evidence |
-| New test window | SELECTED / NOT SIGNED / NOT ACTIVE | Owner signature, readiness timestamp and remaining gate evidence |
+| Credential-store | BLOCKED / disposition not current | Remediate and independently recover, or sign a new bounded private risk disposition |
+| Backup/recovery | PASSED HISTORICALLY / fresh-window applicability pending | Current identity/state comparison; separately approved refresh if stale or uncertain |
+| Replay evidence | BLOCKED / outside current scope | Prior-approved applicable evidence or a separately scoped replay test and reconciliation |
+| Web Analytics exact-host disposition | NOT CURRENT / historical inventory only | Fresh authenticated exact-host inventory and independent no-beacon browser evidence |
+| New test window | EXPIRED / replacement not selected, signed, or active | Select a future UTC window only after all independent gates pass |
 | Intake | CLOSED | Keep `FAUCET_ENABLED=false`; no enable call |
 
 ## Definition of done
 
 - [ ] Credential-store protection or bounded one-test disposition is current, private and independently recoverable.
-- [x] Encrypted SQLite/WAL/SHM backup restores into a disposable path and matches the baseline without touching live state.
+- [x] Historical encrypted SQLite/WAL/SHM backup and disposable-restore procedure passed without touching live state.
+- [ ] The historical backup is confirmed applicable to the fresh test identity and state, or a separately approved quiesced backup/restore is performed and verified.
 - [ ] Replay evidence is valid, separately authorized where necessary, and proves no duplicate side effect.
-- [ ] Cloudflare Web Analytics automatic setup is disabled for the exact staging hostname, or the exact staging hostname is absent from the authenticated inventory and recorded as not configured; no beacon request is observed; the origin emits `no-store, no-transform`.
-- [ ] A new operator-selected window, fixed cutoff, readiness timestamp and abort path are recorded.
+- [ ] Cloudflare Web Analytics automatic setup is disabled for the exact staging hostname, or the exact staging hostname is absent from the authenticated inventory and recorded as not configured; fresh no-beacon browser evidence and origin `no-store, no-transform` are verified.
+- [ ] All applicable hard pre-canary technical gates have fresh evidence and a tested stop action.
+- [ ] A new operator-selected window, fixed cutoff, readiness timestamp and abort path are recorded privately and owner-signed.
+- [ ] The readiness-only status is confirmed; intake remains closed until a separate exact-window go/no-go.
 - [ ] All existing safety invariants remain true until a separately approved procedure changes them.
 
 ## Execution attempt — 2026-09-19T06:40Z
