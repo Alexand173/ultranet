@@ -513,13 +513,61 @@ fn now_seconds() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ProofType, Transaction, TransactionPayload};
+    use crate::{ProofType, Transaction, TransactionPayload, UltraBlockchain};
     use actix_web::{
         http::StatusCode,
         test as actix_test,
         web::{self, ServiceConfig},
-        App, HttpResponse,
+        App, HttpResponse, HttpServer,
     };
+    use parking_lot::RwLock;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc,
+        },
+    };
+
+    static NEXT_TEMP_DB_ID: AtomicU64 = AtomicU64::new(0);
+
+    struct TemporarySnapshotDb(PathBuf);
+
+    impl TemporarySnapshotDb {
+        fn new() -> Self {
+            let id = NEXT_TEMP_DB_ID.fetch_add(1, Ordering::Relaxed);
+            let temp_root = fs::canonicalize(std::env::temp_dir())
+                .expect("canonicalize temporary directory for snapshot tests");
+            let production_root = Path::new("/var/lib/ultranet");
+            let production_root =
+                fs::canonicalize(production_root).unwrap_or_else(|_| production_root.to_path_buf());
+            assert!(
+                !temp_root.starts_with(&production_root),
+                "snapshot test temp directory must not be inside production node state"
+            );
+            let path = temp_root.join(format!(
+                "ultranet-snapshot-test-{}-{id}",
+                std::process::id()
+            ));
+            assert!(
+                !path.starts_with(&production_root),
+                "snapshot test database must not be inside production node state"
+            );
+            fs::create_dir(&path).expect("create isolated snapshot test database directory");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TemporarySnapshotDb {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     fn test_validator(key: Vec<u8>, is_active: bool) -> ValidatorInfo {
         ValidatorInfo {
@@ -568,6 +616,66 @@ mod tests {
         }
     }
 
+    fn test_block(index: u64, public_key: Vec<u8>) -> UltraBlock {
+        UltraBlock {
+            index,
+            timestamp: 101 + index,
+            previous_hash: [0; 32],
+            hash: [index as u8; 32],
+            nonce: 0,
+            transactions: vec![],
+            merkle_root: [2; 32],
+            state_root: [3; 32],
+            shard_roots: vec![],
+            aggregated_signature: None,
+            validator_set: vec![public_key],
+            epoch: 0,
+            gas_used: 0,
+            gas_limit: 1_000,
+            block_reward: 0,
+            size: 0,
+            version: 1,
+            parent_hash: [4; 32],
+            difficulty: 1,
+            total_difficulty: 1,
+        }
+    }
+
+    fn seeded_test_blockchain(path: &Path) -> Arc<RwLock<UltraBlockchain>> {
+        let path = path
+            .to_str()
+            .expect("temporary test database path should be valid UTF-8");
+        let mut blockchain = UltraBlockchain::new(path);
+        let persisted_key = vec![0x42; 48];
+        let persisted_validator = test_validator(persisted_key.clone(), true);
+        blockchain
+            .storage
+            .save_validator(&persisted_validator)
+            .expect("persist synthetic validator");
+        blockchain
+            .storage
+            .save_pending_proposal(
+                &[0x72; 32],
+                &ValidatorJoinProposalData {
+                    public_key: vec![0x51; 2592],
+                    metadata: "PENDING_METADATA_SENTINEL".to_string(),
+                    proposer: "PENDING_PROPOSER_SENTINEL".to_string(),
+                    timestamp: 80,
+                },
+            )
+            .expect("persist synthetic pending proposal");
+        blockchain
+            .storage
+            .save_approval_record(&test_approval(persisted_key.clone()))
+            .expect("persist synthetic approval record");
+        blockchain.chain.push(test_block(1, persisted_key));
+        blockchain
+            .validator
+            .write()
+            .insert_validator_info(test_validator(vec![0x43; 48], true));
+        Arc::new(RwLock::new(blockchain))
+    }
+
     #[test]
     fn local_snapshot_is_disabled_unless_explicitly_enabled() {
         assert!(!parse_enabled(None).unwrap());
@@ -599,6 +707,80 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn enabled_snapshot_route_returns_redacted_data_over_ephemeral_loopback() {
+        let temporary_db = TemporarySnapshotDb::new();
+        let blockchain = seeded_test_blockchain(temporary_db.path());
+        let token = "synthetic-local-snapshot-admin-token";
+        let app_state = web::Data::new(super::super::AppState {
+            blockchain: blockchain.clone(),
+        });
+        let admin_auth = web::Data::new(super::super::AdminAuthConfig {
+            token: token.as_bytes().to_vec(),
+        });
+        let http_server = HttpServer::new(move || {
+            App::new()
+                .app_data(app_state.clone())
+                .app_data(admin_auth.clone())
+                .configure(|config| configure(config, true))
+        })
+        .bind(("127.0.0.1", 0))
+        .unwrap()
+        .workers(1);
+        let address = http_server.addrs()[0];
+        let server = http_server.run();
+        let handle = server.handle();
+        let server_task = actix_web::rt::spawn(server);
+
+        let response_result = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .expect("build isolated loopback client")
+            .get(format!("http://{address}{ROUTE}"))
+            .bearer_auth(token)
+            .send()
+            .await;
+        handle.stop(true).await;
+        assert!(server_task.await.unwrap().is_ok());
+
+        let response = response_result.expect("loopback snapshot request should succeed");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
+        let body = response.text().await.unwrap();
+        let snapshot: serde_json::Value = serde_json::from_str(&body).unwrap();
+
+        assert!(snapshot["persisted_validators"]["total"].as_u64().unwrap() >= 1);
+        assert_eq!(snapshot["pending_proposals"]["total"], 1);
+        assert_eq!(snapshot["approval_journal"]["total"], 1);
+        assert_eq!(snapshot["block_history"]["total_blocks"], 2);
+        assert_eq!(snapshot["consistency"]["cross_tree_snapshot_atomic"], false);
+        assert_eq!(
+            snapshot["pending_proposals"]["entries"][0]["public_key_bytes"],
+            2592
+        );
+
+        for forbidden in [
+            "PRIVATE_SENDER_SENTINEL",
+            "PRIVATE_RECIPIENT_SENTINEL",
+            "PRIVATE_METADATA_SENTINEL",
+            "PRIVATE_PROPOSER_SENTINEL",
+            "PENDING_METADATA_SENTINEL",
+            "PENDING_PROPOSER_SENTINEL",
+            &"42".repeat(48),
+            &"ef".repeat(9),
+            &"ab".repeat(32),
+            "\"approval_transaction\":",
+            "proposal_hash",
+            "\"signature\":",
+            "nullifier",
+        ] {
+            assert!(!body.contains(forbidden), "response leaked {forbidden}");
+        }
+
+        drop(blockchain);
+    }
+
+    #[actix_web::test]
     async fn enabled_snapshot_route_remains_bearer_protected() {
         let app = actix_test::init_service(
             App::new()
@@ -617,6 +799,29 @@ mod tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[actix_web::test]
+    async fn enabled_snapshot_route_rejects_remote_peer_before_handler() {
+        let token = "synthetic-local-snapshot-admin-token";
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(super::super::AdminAuthConfig {
+                    token: token.as_bytes().to_vec(),
+                }))
+                .configure(|config: &mut ServiceConfig| configure(config, true)),
+        )
+        .await;
+        let response = actix_test::call_service(
+            &app,
+            actix_test::TestRequest::get()
+                .uri(ROUTE)
+                .peer_addr("192.0.2.4:50000".parse().unwrap())
+                .insert_header(("Authorization", format!("Bearer {token}")))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
     #[actix_web::test]
@@ -682,6 +887,88 @@ mod tests {
         )
         .await;
         assert_eq!(authorized.status(), StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn enabled_snapshot_route_fails_closed_on_malformed_storage() {
+        let temporary_db = TemporarySnapshotDb::new();
+        let blockchain = seeded_test_blockchain(temporary_db.path());
+        blockchain
+            .read()
+            .storage
+            .pending_proposals
+            .insert([0x01; 31], b"UNIQUE_STORAGE_ERROR_SENTINEL")
+            .unwrap();
+        let token = "synthetic-local-snapshot-admin-token";
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(super::super::AppState {
+                    blockchain: blockchain.clone(),
+                }))
+                .app_data(web::Data::new(super::super::AdminAuthConfig {
+                    token: token.as_bytes().to_vec(),
+                }))
+                .configure(|config: &mut ServiceConfig| configure(config, true)),
+        )
+        .await;
+        let response = actix_test::call_service(
+            &app,
+            actix_test::TestRequest::get()
+                .uri(ROUTE)
+                .peer_addr("127.0.0.1:50000".parse().unwrap())
+                .insert_header(("Authorization", format!("Bearer {token}")))
+                .to_request(),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
+        let body = actix_test::read_body(response).await;
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body.contains("Local validator snapshot unavailable"));
+        assert!(!body.contains("UNIQUE_STORAGE_ERROR_SENTINEL"));
+        assert!(!body.contains("pending proposal key must be exactly 32 bytes"));
+    }
+
+    #[test]
+    fn snapshot_details_are_bounded_and_marked_truncated() {
+        let count = MAX_DETAIL_ROWS + 1;
+        let validators = (0..count)
+            .map(|index| test_validator(vec![index as u8; 48], true))
+            .collect::<Vec<_>>();
+        let proposals = (0..count)
+            .map(|index| ValidatorJoinProposalData {
+                public_key: vec![index as u8; 48],
+                metadata: "synthetic metadata".to_string(),
+                proposer: "synthetic proposer".to_string(),
+                timestamp: index as u64,
+            })
+            .collect::<Vec<_>>();
+        let approvals = (0..count)
+            .map(|index| test_approval(vec![index as u8; 48]))
+            .collect::<Vec<_>>();
+        let blocks = (0..count)
+            .map(|index| test_block(index as u64, vec![index as u8; 48]))
+            .collect::<Vec<_>>();
+
+        let snapshot = build_snapshot(
+            200,
+            &blocks,
+            &validators,
+            &validators,
+            &proposals,
+            &approvals,
+            true,
+        );
+
+        assert!(snapshot.persisted_validators.entries_truncated);
+        assert_eq!(snapshot.persisted_validators.entries.len(), MAX_DETAIL_ROWS);
+        assert!(snapshot.pending_proposals.details_truncated);
+        assert_eq!(snapshot.pending_proposals.entries.len(), MAX_DETAIL_ROWS);
+        assert!(snapshot.approval_journal.details_truncated);
+        assert_eq!(snapshot.approval_journal.entries.len(), MAX_DETAIL_ROWS);
+        assert!(snapshot.block_history.details_truncated);
+        assert_eq!(snapshot.block_history.blocks.len(), MAX_DETAIL_ROWS);
     }
 
     #[test]
