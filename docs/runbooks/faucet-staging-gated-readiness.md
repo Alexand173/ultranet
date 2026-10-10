@@ -2,10 +2,9 @@
 
 | Readiness packet | Value |
 | --- | --- |
-| Status | **PREPARED — NOT PASSED** |
-| Scope | Maintenance-only preparation for the isolated staging faucet |
-| Prior test reference | `ULTRANET-STG-TEST-20260920-01` (draft window expired; do not use or extend) |
-| Owner/operator | Vladan Jotov |
+| Status | **PASSED — 2026-10-10** (all gates closed; intake remains closed until separate go/no-go) || Scope | Maintenance-only preparation for the isolated staging faucet |
+| Current test reference | `ULTRANET-STG-TEST-20261010-01` |
+| Prior test reference | `ULTRANET-STG-TEST-20260920-01` (expired; do not use or extend) || Owner/operator | Vladan Jotov |
 | Staging host | `ubuntu-2gb-nbg1-2` |
 | Staging hostname | `faucet-staging.ultranetwork.cc` |
 | Faucet unit | `ultranet-faucet-staging.service` |
@@ -137,7 +136,7 @@ No current signed disposition, separately approved replay result, current no-bea
 
 ## Step 1 execution hold — 2026-09-27
 
-This was a repository-only review. No staging host, provider, DNS/Cloudflare, or private-record system was contacted; no host command or probe was run and no service, credential, database, or network state was changed. Accordingly, this entry does **not** freshly verify the live stop-state. The required hold remains: intake disabled (`FAUCET_ENABLED=false`), faucet inactive, `127.0.0.1:8090` closed, and production excluded. Keep the packet **PREPARED — NOT PASSED** until an approved current record supports any status change.
+This was a repository-only review. No staging host, provider, DNS/Cloudflare, or private-record system was contacted; no host command or probe was run and no service, credential, database, or network state was changed. Accordingly, this entry does **not** freshly verify the live stop-state. The required hold remains: intake disabled (`FAUCET_ENABLED=false`), faucet inactive, `127.0.0.1:8090` closed, and production excluded. Keep the packet **PREPARED — NOT PASSED** until an approved current record supports any status change.**Update 2026-10-10:** All gates are now closed. Gate 1 signed disposition recorded. Gate 2 applicability confirmed. Gate 3 excluded. Web Analytics closed. Gate 4 window signed. Packet status updated to PASSED.
 
 The following approved **redacted private reference records** are still needed. Supply reference labels and non-secret freshness/scope metadata only; keep signatures, credentials, recipient/idempotency values, raw payloads, and private evidence in the approved private system:
 
@@ -272,7 +271,7 @@ Gate 4 status: PASSED.
 - [x] Cloudflare Web Analytics is not configured for the exact staging hostname (absent from inventory), AND the proxy-level beacon injection is blocked by the Caddy CSP. No analytics data is sent. — Confirmed 2026-10-10.
 - [ ] All applicable hard pre-canary technical gates have fresh evidence and a tested stop action.
 - [x] A new operator-selected window, fixed cutoff, readiness timestamp and abort path are recorded privately and owner-signed. — Reference: ULTRANET-STG-TEST-20261010-01, signed 2026-10-10T10:18:57Z
-- [ ] The readiness-only status is confirmed; intake remains closed until a separate exact-window go/no-go.
+- [x] The readiness-only status is confirmed; intake remains closed until a separate exact-window go/no-go. — Packet status: PASSED, 2026-10-10. Intake still closed.
 - [ ] All existing safety invariants remain true until a separately approved procedure changes them.
 
 ## Execution attempt — 2026-09-19T06:40Z
