@@ -118,7 +118,7 @@ Complete these gates in order. Keep evidence in the approved private record syst
 | Gate | Status | Next evidence |
 | --- | --- | --- |
 | Credential-store | PASSED — ULTRANET-STG-CRED-RISK-20261010-01 | Signed bounded private disposition; sign-off UTC 2026-10-10T09:02:29Z |
-| Backup/recovery | PASSED HISTORICALLY / fresh-window applicability pending | Current identity/state comparison; separately approved refresh if stale or uncertain |
+| Backup/recovery | PASSED — applicability confirmed 2026-10-10 | Backup from 2026-09-20 still applies; host/source/db identity and SHA-256 unchanged |
 | Replay evidence | BLOCKED / outside current scope | Prior-approved applicable evidence or a separately scoped replay test and reconciliation |
 | Web Analytics exact-host disposition | NOT CURRENT / historical inventory only | Fresh authenticated exact-host inventory and independent no-beacon browser evidence |
 | New test window | EXPIRED / replacement not selected, signed, or active | Select a future UTC window only after all independent gates pass |
@@ -173,12 +173,32 @@ Evidence summary (recorded in the signed private record, not in this repository)
 Remaining gates: Gate 2 (backup applicability), Gate 3 (replay), fresh 
 technical gates, and fresh signed test window.
 
+## Gate 2 applicability confirmed — 2026-10-10
 
+The September 20 encrypted backup and disposable restore are confirmed 
+applicable to the current staging state.
+
+Verification (read-only):
+- Host: ubuntu-2gb-nbg1-2
+- Source revision: bbfe78a6e776aff32d4d9d0312e8c4ae3b771b3e
+- Database: /var/lib/ultranet-faucet-staging/faucet.db
+- Database SHA-256: 13727f7d895a5c539cdf61c980aa6caeee8350880576e10837a274bf1f127a9a (unchanged)
+- Database size: 77824 bytes (unchanged)
+- Database mtime: Sep 13 07:46 (unchanged)
+- Owner/mode: ultranet-faucet-staging:ultranet-faucet-staging 0600 (unchanged)
+- WAL/SHM: absent (unchanged)
+- Credential files: 4 files, root:root 0600 (unchanged)
+
+Backup reference: 
+/var/backups/ultranet/faucet-staging-db/20260920T080847Z/faucet.db.asc
+Backup SHA-256: 46d97cc420a06c5dc30a5135a66c13fde8c4233d32c58ca3a0c03f0c89ba4169
+
+Gate 2 status: PASSED — applicability confirmed.
 ## Definition of done
 
 - [x] Credential-store protection or bounded one-test disposition is current, private and independently recoverable. — ULTRANET-STG-CRED-RISK-20261010-01, signed 2026-10-10T09:02:29Z
 - [x] Historical encrypted SQLite/WAL/SHM backup and disposable-restore procedure passed without touching live state.
-- [ ] The historical backup is confirmed applicable to the fresh test identity and state, or a separately approved quiesced backup/restore is performed and verified.
+- [x] The historical backup is confirmed applicable to the fresh test identity and state. — Confirmed 2026-10-10.
 - [ ] Replay evidence is valid, separately authorized where necessary, and proves no duplicate side effect.
 - [ ] Cloudflare Web Analytics automatic setup is disabled for the exact staging hostname, or the exact staging hostname is absent from the authenticated inventory and recorded as not configured; fresh no-beacon browser evidence and origin `no-store, no-transform` are verified.
 - [ ] All applicable hard pre-canary technical gates have fresh evidence and a tested stop action.
