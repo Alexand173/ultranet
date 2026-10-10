@@ -2,9 +2,11 @@
 
 | Readiness packet | Value |
 | --- | --- |
-| Status | **PASSED — 2026-10-10** (all gates closed; intake remains closed until separate go/no-go) || Scope | Maintenance-only preparation for the isolated staging faucet |
+| Status | **PASSED — 2026-10-10** (all gates closed; intake remains closed until separate go/no-go) |
+| Scope | Maintenance-only preparation for the isolated staging faucet |
 | Current test reference | `ULTRANET-STG-TEST-20261010-01` |
-| Prior test reference | `ULTRANET-STG-TEST-20260920-01` (expired; do not use or extend) || Owner/operator | Vladan Jotov |
+| Prior test reference | `ULTRANET-STG-TEST-20260920-01` (expired; do not use or extend) |
+| Owner/operator | Vladan Jotov |
 | Staging host | `ubuntu-2gb-nbg1-2` |
 | Staging hostname | `faucet-staging.ultranetwork.cc` |
 | Faucet unit | `ultranet-faucet-staging.service` |
@@ -269,8 +271,7 @@ Gate 4 status: PASSED.
 - [x] The historical backup is confirmed applicable to the fresh test identity and state. — Confirmed 2026-10-10.
 - [x] Replay evidence is EXCLUDED for this test. — Decision recorded 2026-10-10. No replay POST authorized. Separate replay scope required if ever needed.
 - [x] Cloudflare Web Analytics is not configured for the exact staging hostname (absent from inventory), AND the proxy-level beacon injection is blocked by the Caddy CSP. No analytics data is sent. — Confirmed 2026-10-10.
-- [ ] All applicable hard pre-canary technical gates have fresh evidence and a tested stop action.
-- [x] A new operator-selected window, fixed cutoff, readiness timestamp and abort path are recorded privately and owner-signed. — Reference: ULTRANET-STG-TEST-20261010-01, signed 2026-10-10T10:18:57Z
+- [x] All applicable hard pre-canary technical gates have fresh evidence and a tested stop action. — Confirmed 2026-10-10T10:37:32Z with fresh read-only preflight: host ubuntu-2gb-nbg1-2, FAUCET_ENABLED=false, service inactive/disabled, port 8090 closed, egress passed, 4 credentials root:root 0600.- [x] A new operator-selected window, fixed cutoff, readiness timestamp and abort path are recorded privately and owner-signed. — Reference: ULTRANET-STG-TEST-20261010-01, signed 2026-10-10T10:18:57Z
 - [x] The readiness-only status is confirmed; intake remains closed until a separate exact-window go/no-go. — Packet status: PASSED, 2026-10-10. Intake still closed.
 - [ ] All existing safety invariants remain true until a separately approved procedure changes them.
 
