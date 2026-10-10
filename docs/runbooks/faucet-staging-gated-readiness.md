@@ -123,8 +123,8 @@ Complete these gates in order. Keep evidence in the approved private record syst
 | Replay evidence | EXCLUDED for this test — Gate 3 closed 2026-10-10 | No replay POST; separate replay scope required if ever needed |
 | Web Analytics exact-host disposition | CLOSED — 2026-10-10 | Not configured in Cloudflare Web Analytics; proxy-level beacon injection blocked by CSP |
 | New test window | EXPIRED / EXECUTION INTERRUPTED | Window: 2026-10-10T11:00:00Z – 2026-10-10T12:30:00Z, cutoff 2026-10-10T12:25:00Z; do not reuse or extend |
-| Claim outcome | OWNER-REPORTED — no-side-effect classification not independently verified; reconciliation remains open | Reference: RECON-20261010-01; evidence timestamp reported as 2026-10-10T13:37:00Z; owner review timestamp not supplied |
-| Intake / live state | INCIDENT HOLD — no new claim authorized; treat intake as potentially reachable | Owner reports stop at 11:52:05Z and restart at 14:45:10Z; latest owner-supplied snapshot at 16:34:58Z reports both services active and ports 8090/8081 listening; not independently verified |
+| Claim outcome | OWNER-REPORTED — no-side-effect classification not independently verified; reconciliation remains open | Reference: RECON-20261010-01; evidence timestamp reported as 2026-10-10T13:37:00Z; owner review reported at 2026-10-10T16:47:14Z; no independent reviewer assigned |
+| Intake / live state | INCIDENT HOLD — no new claim authorized; treat intake as potentially reachable | At 2026-10-10T16:47:34Z, owner reports `FAUCET_ENABLED=false` but both services active and ports 8090/8081 listening; not independently verified |
 
 ## Redacted reference review — 2026-09-26
 
@@ -326,35 +326,22 @@ The final pre-sign-off review covered the checked-in staging configuration, the 
 
 ## Owner-reported reconciliation summary — 2026-10-10 (independent review pending)
 
-## Owner-reported reconciliation summary — 2026-10-10
+**Reference:** `RECON-20261010-01`
+**Test reference:** `ULTRANET-STG-TEST-20261010-01`
+**Evidence collection UTC:** `2026-10-10T13:37:00Z` (owner-supplied)
+**Owner review UTC:** `2026-10-10T16:47:14Z` (owner-supplied)
+**Private document:** `reconciliation-outcome-20261010.md` (not available for this repository review)
+**Document SHA-256:** `sha256:04ec74e4af5ff3f41e074a98908f8d4ceea7f3a51d0fba43753b5bac1a14bc81` (owner-supplied; not independently recalculated)
+**Signature:** owner reports local GPG verification; not independently verified in this review
+**Independent reviewer:** not assigned; independent findings are unavailable.
 
-**Reference:** RECON-20261010-01
-**Test reference:** ULTRANET-STG-TEST-20261010-01
-**Classification:** OWNER-REPORTED — Definite failure, no side effect (not independently verified)
-**Evidence collection UTC:** 2026-10-10T13:37:00Z
-**Owner review UTC:** 2026-10-10T16:47:14Z
-**Document:** reconciliation-outcome-20261010.md (private record)
-**Document hash:** sha256:04ec74e4af5ff3f41e074a98908f8d4ceea7f3a51d0fba43753b5bac1a14bc81
-**GPG signature:** Good signature from Vladan Jotov (staging backup key) <vlajko973@gmail.com>, verified locally
-**Independent reviewer:** NOT ASSIGNED (technical test)
+**Owner-reported claim findings:** claim status `queued`; worker `attempt_count=0`; no transaction hash, node transaction, on-chain effect, or funds moved. Faucet balance was reported as zero. The account/address and claim identifiers are intentionally omitted. No underlying database, ledger, node, or helper/API evidence was independently inspected or correlated here.
 
-**Owner-reported findings:**
-- Claim status: queued
-- Worker attempt_count: 0
-- No transaction hash, no node transaction, no on-chain effect, no funds moved
-- Faucet balance: 0 $ULTRA
-- FAUCET_ENABLED=false (verified 2026-10-10T16:47:34Z)
+**Owner-reported state timeline:** at `2026-10-10T11:52:05Z`, the faucet service was reportedly stopped; services were restarted for diagnostics at `14:45:10Z`. At `16:47:34Z`, the owner reports `FAUCET_ENABLED=false`, both services active, ports 8090/8081 listening, and faucet balance zero. This snapshot postdates the recorded owner review at `16:47:14Z` and is not covered by that review timestamp. The enabled flag and active/listening services are distinct facts: this output does not establish that the faucet service is inactive or that ports are closed. This is an owner-supplied observation, not current independent verification; treat staging as potentially reachable.
 
-**Stop-state timeline:**
-- 2026-10-10T11:52:05Z: faucet service stopped (systemd journal)
-- 2026-10-10T14:45:10Z: services restarted by owner for diagnostics
-- 2026-10-10T16:47:34Z: services active, ports 8090/8081 listening, FAUCET_ENABLED=false, faucet balance 0 $ULTRA
+**Assessment:** the report's classification remains **OWNER-REPORTED — NOT INDEPENDENTLY VERIFIED**. The owner review is timestamped, but no independent reviewer is assigned and the evidence needed to correlate API admission, persisted reservation/budget, ledger state, and node effects is not independently available. Claim outcome therefore remains **UNCERTAIN / RECONCILIATION REQUIRED**; incident stays open. The test window is expired and cannot be reused. No new canary is authorized.
 
-**Status:** Claim outcome remains UNCERTAIN / RECONCILIATION REQUIRED until independent review. Test window expired; intake stays closed. No new claim, replay, retry, restart, or restore is authorized.
-
-**Next steps:**
-1. Independent review of this reconciliation (assign reviewer)
-2. Deploy node fix (commit d9476e4) — separate authorization required
-3. Verify node API responds
-4. Fresh signed window
-5. New canary attempt
+**Required next steps:**
+1. Assign an independent reviewer to inspect the private evidence and provide a redacted conclusion, identity/role, and actual UTC review time. Correlate API/helper admission, claim/reservation/budget, worker state, database/ledger baseline, and node mempool/chain/fee/nonce/balance evidence for the exact event interval.
+2. Under existing operator authorization, establish the current safe state. Privately record an exact UTC observation of host identity, persisted `FAUCET_ENABLED`, both unit states, and both listener states, with observer and redacted evidence reference. If safe stop cannot be verified, escalate through the independent recovery path. This packet authorizes no service command.
+3. Keep state preserved; do not retry, replay, reset, or restore over live data. Do not reuse the expired window. Any later canary requires incident resolution, separately authorized deployment/review if needed, fresh hard-gate evidence, a new future signed window, and an exact-window go/no-go.
