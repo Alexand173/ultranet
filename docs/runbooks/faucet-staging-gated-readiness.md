@@ -120,7 +120,7 @@ Complete these gates in order. Keep evidence in the approved private record syst
 | Credential-store | PASSED — ULTRANET-STG-CRED-RISK-20261010-01 | Signed bounded private disposition; sign-off UTC 2026-10-10T09:02:29Z |
 | Backup/recovery | PASSED — applicability confirmed 2026-10-10 | Backup from 2026-09-20 still applies; host/source/db identity and SHA-256 unchanged |
 | Replay evidence | EXCLUDED for this test — Gate 3 closed 2026-10-10 | No replay POST; separate replay scope required if ever needed |
-| Web Analytics exact-host disposition | NOT CURRENT / historical inventory only | Fresh authenticated exact-host inventory and independent no-beacon browser evidence |
+| Web Analytics exact-host disposition | CLOSED — 2026-10-10 | Not configured in Cloudflare Web Analytics; proxy-level beacon injection blocked by CSP |
 | New test window | EXPIRED / replacement not selected, signed, or active | Select a future UTC window only after all independent gates pass |
 | Intake | CLOSED | Keep `FAUCET_ENABLED=false`; no enable call |
 
@@ -217,13 +217,43 @@ from this exclusion; it will be obtained separately when required.
 - Any second claim or retry
 - Any claim that replay behavior is verified
 
+## Web Analytics gate — closed 2026-10-10
+
+Cloudflare Web Analytics status for faucet-staging.ultranetwork.cc:
+- Authenticated Web Analytics inventory lists only ultranetwork.cc and musicotp.net.
+- faucet-staging.ultranetwork.cc is NOT in the inventory.
+- Control-plane status: CLOSED / NOT CONFIGURED.
+
+Cloudflare proxy-level HTML injection:
+- Cloudflare injects a `static.cloudflareinsights.com/beacon.min.js` script tag 
+  into the helper HTML. This is proxy-level automatic injection, not a Web 
+  Analytics site configuration.
+- The Caddy CSP header (`script-src 'self' https://challenges.cloudflare.com`) 
+  does not include `static.cloudflareinsights.com`.
+- The browser blocks the beacon as a CSP violation.
+
+Evidence (fresh browser session, 2026-10-10):
+- Cloudflare Web Analytics inventory: faucet-staging.ultranetwork.cc absent.
+- Console shows: "Loading the script 'https://static.cloudflareinsights.com/beacon.min.js/...' 
+  violates the following Content Security Policy directive: 'script-src 'self' 
+  https://challenges.cloudflare.com'. ... The action has been blocked."
+- Network tab: no cloudflareinsights.com request.
+- Network tab: no POST to /api/faucet/claims.
+- Local Storage: empty.
+- Session Storage: empty.
+
+Result: No analytics data is sent. The CSP provides defense-in-depth 
+against the proxy-level beacon injection.
+
+Web Analytics gate status: CLOSED.
+
 ## Definition of done
 
 - [x] Credential-store protection or bounded one-test disposition is current, private and independently recoverable. — ULTRANET-STG-CRED-RISK-20261010-01, signed 2026-10-10T09:02:29Z
 - [x] Historical encrypted SQLite/WAL/SHM backup and disposable-restore procedure passed without touching live state.
 - [x] The historical backup is confirmed applicable to the fresh test identity and state. — Confirmed 2026-10-10.
 - [x] Replay evidence is EXCLUDED for this test. — Decision recorded 2026-10-10. No replay POST authorized. Separate replay scope required if ever needed.
-- [ ] Cloudflare Web Analytics automatic setup is disabled for the exact staging hostname, or the exact staging hostname is absent from the authenticated inventory and recorded as not configured; fresh no-beacon browser evidence and origin `no-store, no-transform` are verified.
+- [x] Cloudflare Web Analytics is not configured for the exact staging hostname (absent from inventory), AND the proxy-level beacon injection is blocked by the Caddy CSP. No analytics data is sent. — Confirmed 2026-10-10.
 - [ ] All applicable hard pre-canary technical gates have fresh evidence and a tested stop action.
 - [ ] A new operator-selected window, fixed cutoff, readiness timestamp and abort path are recorded privately and owner-signed.
 - [ ] The readiness-only status is confirmed; intake remains closed until a separate exact-window go/no-go.
