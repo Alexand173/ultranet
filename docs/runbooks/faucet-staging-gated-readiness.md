@@ -105,7 +105,7 @@ The fresh window and readiness record require current evidence for all of the fo
 Complete these gates in order. Keep evidence in the approved private record system where required; this repository may hold only redacted status and references, never signatures, secrets, recipient/idempotency values, raw requests, or signed envelopes.
 
 1. **Reconfirm scope and preserve the stop state.** Treat the prior window and all historical host/provider observations as stale unless independently reconfirmed. Keep intake disabled, the faucet stopped, port `8090` closed, and production excluded. No remote action is authorized by this checklist.
-2. **Close Gate 1 — credential-store protection/disposition.** Either remediate to provider-approved encrypted-at-rest or TPM2/LUKS-backed protection and independently test recovery, or have the owner complete and sign a narrowly bounded private risk disposition for exactly one disposable staging test. Refresh host/device/store metadata, four encrypted credential metadata/hashes, plaintext/temp absence, recovery test, scope, expiry, retention, and stop authority. The checked-in disposition draft is not approval; the September 20 timestamps and references must not be reused as current evidence.
+2. **Close Gate 1 — credential-store protection/disposition.** Either remediate to provider-approved encrypted-at-rest or TPM2/LUKS-backed protection and independently test recovery, or have the owner complete and sign a narrowly bounded private risk disposition for exactly one disposable staging test. Refresh host/device/store metadata, four encrypted credential metadata/hashes, plaintext/temp absence, recovery test, scope, expiry, retention, and stop authority. The checked-in disposition draft is not approval; the September 20 timestamps and references must not be reused as current evidence.**Status:** CLOSED on 2026-10-10. Disposition reference: ULTRANET-STG-CRED-RISK-20261010-01.
 3. **Revalidate Gate 2 — backup/recovery applicability.** The September 20 encrypted backup and disposable restore are recorded as historically passed, not automatically current for a later test. Privately confirm host/source/database identity and that the live state has not changed in a way that invalidates its baseline. If freshness or consistency is uncertain, stop and obtain separate approval for a staging-only quiesced SQLite/WAL/SHM capture and disposable restore. Never overwrite live state; preserve checksums and restore comparisons privately.
 4. **Close Gate 3 — replay/idempotency.** Supply prior-approved evidence that same-key/same-request returns the original result without a second side effect and changed-destination reuse returns the documented `409`, with reconciliation and redacted results; otherwise, obtain a separate explicit test scope, recipient isolation, stop action, and rollback/reconciliation procedure before any replay request. Do not perform replay as part of this packet or the one-claim window. Missing or ambiguous replay evidence keeps this gate blocked.
 5. **Refresh the technical pre-canary gates.** Complete current staging identity, binary/source/unit/environment, egress/resolver and expiry monitoring, public route/TLS/WAF/Caddy/origin, proxy identity/path-normalization, Turnstile hostname/action and secret provenance, no-beacon analytics, log/core/temp/proc hygiene, recovery, disabled/stop monitoring, and all applicable rows in [`faucet-staging-claims-enablement.md`](../../deploy/faucet-staging-claims-enablement.md). Historical egress ended September 21 and the Web Analytics inventory dates to September 19; neither is current proof. Any host maintenance, provider change, or live validation requires its own explicit approval and bounded procedure.
@@ -117,7 +117,7 @@ Complete these gates in order. Keep evidence in the approved private record syst
 
 | Gate | Status | Next evidence |
 | --- | --- | --- |
-| Credential-store | BLOCKED / disposition not current | Remediate and independently recover, or sign a new bounded private risk disposition |
+| Credential-store | PASSED — ULTRANET-STG-CRED-RISK-20261010-01 | Signed bounded private disposition; sign-off UTC 2026-10-10T09:02:29Z |
 | Backup/recovery | PASSED HISTORICALLY / fresh-window applicability pending | Current identity/state comparison; separately approved refresh if stale or uncertain |
 | Replay evidence | BLOCKED / outside current scope | Prior-approved applicable evidence or a separately scoped replay test and reconciliation |
 | Web Analytics exact-host disposition | NOT CURRENT / historical inventory only | Fresh authenticated exact-host inventory and independent no-beacon browser evidence |
@@ -135,9 +135,48 @@ Reviewed the repository coordination records only; they are not private-system e
 
 No current signed disposition, separately approved replay result, current no-beacon evidence, or fresh signed window was found in reviewed repository records or available attachments. No blocked gate is promoted. Backup/recovery remains passed only for the historical session pending applicability confirmation. Overall status remains **PREPARED — NOT PASSED**; intake stays closed.
 
+## Step 1 execution hold — 2026-09-27
+
+This was a repository-only review. No staging host, provider, DNS/Cloudflare, or private-record system was contacted; no host command or probe was run and no service, credential, database, or network state was changed. Accordingly, this entry does **not** freshly verify the live stop-state. The required hold remains: intake disabled (`FAUCET_ENABLED=false`), faucet inactive, `127.0.0.1:8090` closed, and production excluded. Keep the packet **PREPARED — NOT PASSED** until an approved current record supports any status change.
+
+The following approved **redacted private reference records** are still needed. Supply reference labels and non-secret freshness/scope metadata only; keep signatures, credentials, recipient/idempotency values, raw payloads, and private evidence in the approved private system:
+
+1. **Current stop-state and staging identity:** a fresh UTC-timestamped reference independently tying the exact staging host, source/binary/unit/environment identity to `FAUCET_ENABLED=false`, inactive faucet, closed port `8090`, and production exclusion. Record the observer/source and scope; historical host notes do not satisfy this.
+2. **Gate 1 credential disposition:** either current provider-approved encrypted-at-rest/TPM2/LUKS remediation and independent recovery-test references, or the owner's current signed bounded one-test disposition reference. Include fresh redacted host/device/store and four encrypted-credential metadata/hashes, plaintext/temp-artifact absence, independent recovery result, exact scope, expiry, retention, and stop authority.
+3. **Gate 2 backup applicability:** a private comparison reference confirming current host/source/database identity and live-state baseline still match the historical backup/restore, plus integrity/state comparison. If not applicable or uncertain, first obtain separate approval for a staging-only quiesced capture and disposable restore; provide its redacted approval, integrity, comparison, and unchanged-live-state references. Never restore over live state.
+4. **Gate 3 replay/idempotency:** either an applicable prior-approved test-scope reference and redacted results/reconciliation proving same-request reuse returns the original result with no duplicate effect and changed-destination reuse yields `409`, or a separate explicit replay authorization with isolation, stop, and reconciliation references before any test. Do not include request values or send a replay under this step.
+5. **Fresh technical gates:** current redacted references for host/source/binary/unit/environment and credential aliases; effective egress/resolver and expiry monitoring; staging DNS/TLS/WAF/Caddy/origin and path/method boundaries; Turnstile hostname/action and secret provenance; exact-host Web Analytics disposition and independent no-beacon browser evidence; log/core/temp/proc hygiene; and tested recovery/stop controls. Each reference must identify its UTC freshness and exact staging scope.
+6. **Fresh window and readiness:** only after all independent gates pass, the owner's private signed future-window and fixed-cutoff record, readiness timestamp/reference, independently recoverable abort path, and exactly-one-claim/no-retry/no-extension boundaries. This remains a later prerequisite, not a current authorization.
+
+## Gate 1 closed — 2026-10-10
+
+Gate 1 (credential-store disposition) is closed by a signed bounded private 
+disposition. The record is retained privately under 
+/root/ultranet-staging-docs/ with mode 0600.
+
+Reference: ULTRANET-STG-CRED-RISK-20261010-01
+Test reference: ULTRANET-STG-TEST-20261010-01
+Signed UTC: 2026-10-10T09:02:29Z
+GPG signature: Good signature from Vladan Jotov (staging backup key) <vlajko973@gmail.com>
+Detached digest: sha256:e00d9eda...dfde9536 (redacted)
+
+Evidence summary (recorded in the signed private record, not in this repository):
+- Host: ubuntu-2gb-nbg1-2
+- Source revision: bbfe78a6e776aff32d4d9d0312e8c4ae3b771b3e
+- FAUCET_ENABLED: false
+- Faucet service: inactive, disabled
+- Port 8090: closed
+- Egress policy: passed, expires 2026-10-11T10:57:17Z
+- Recovery test: VNC access confirmed via Hetzner console
+- Credential files: 4 files, root:root 0600
+
+Remaining gates: Gate 2 (backup applicability), Gate 3 (replay), fresh 
+technical gates, and fresh signed test window.
+
+
 ## Definition of done
 
-- [ ] Credential-store protection or bounded one-test disposition is current, private and independently recoverable.
+- [x] Credential-store protection or bounded one-test disposition is current, private and independently recoverable. — ULTRANET-STG-CRED-RISK-20261010-01, signed 2026-10-10T09:02:29Z
 - [x] Historical encrypted SQLite/WAL/SHM backup and disposable-restore procedure passed without touching live state.
 - [ ] The historical backup is confirmed applicable to the fresh test identity and state, or a separately approved quiesced backup/restore is performed and verified.
 - [ ] Replay evidence is valid, separately authorized where necessary, and proves no duplicate side effect.
@@ -177,4 +216,4 @@ The final pre-sign-off review covered the checked-in staging configuration, the 
 - [ ] Independent no-beacon browser evidence is current.
 - [ ] Vladan Jotov signs the selected future UTC window with its fixed cutoff and private recovery reference.
 
-**Final self-review conclusion:** configuration and documentation are prepared for private sign-off, but the readiness packet remains **PREPARED — NOT PASSED**. Intake stays closed and no claim procedure is authorized.
+**Final self-review conclusion:** configuration and documentation are prepared for private sign-off, but the readiness packet remains **PREPARED — NOT PASSED**. (Gate 1 closed 2026-10-10; Gates 2–4 pending) |Intake stays closed and no claim procedure is authorized.
