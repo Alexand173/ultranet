@@ -2,9 +2,9 @@
 
 | Readiness packet | Value |
 | --- | --- |
-| Status | **PASSED — 2026-10-10** (all gates closed; intake remains closed until separate go/no-go) |
+| Status | **PASSED — 2026-10-10 (HISTORICAL READINESS ONLY; CURRENT INCIDENT HOLD)**; intake closed |
 | Scope | Maintenance-only preparation for the isolated staging faucet |
-| Current test reference | `ULTRANET-STG-TEST-20261010-01` |
+| Current test reference | `ULTRANET-STG-TEST-20261010-01` (window expired; reported run interrupted; claim outcome unresolved) |
 | Prior test reference | `ULTRANET-STG-TEST-20260920-01` (expired; do not use or extend) |
 | Owner/operator | Vladan Jotov |
 | Staging host | `ubuntu-2gb-nbg1-2` |
@@ -122,7 +122,8 @@ Complete these gates in order. Keep evidence in the approved private record syst
 | Backup/recovery | PASSED — applicability confirmed 2026-10-10 | Backup from 2026-09-20 still applies; host/source/db identity and SHA-256 unchanged |
 | Replay evidence | EXCLUDED for this test — Gate 3 closed 2026-10-10 | No replay POST; separate replay scope required if ever needed |
 | Web Analytics exact-host disposition | CLOSED — 2026-10-10 | Not configured in Cloudflare Web Analytics; proxy-level beacon injection blocked by CSP |
-| New test window | PASSED — 2026-10-10 | Window: 2026-10-10T11:00:00Z – 2026-10-10T12:30:00Z, cutoff 2026-10-10T12:25:00Z |
+| New test window | EXPIRED / EXECUTION INTERRUPTED | Window: 2026-10-10T11:00:00Z – 2026-10-10T12:30:00Z, cutoff 2026-10-10T12:25:00Z; do not reuse or extend |
+| Claim outcome | UNCERTAIN / RECONCILIATION REQUIRED | Incident report says node hung and claim remained queued; no outcome independently verified in this packet |
 | Intake | CLOSED | Keep `FAUCET_ENABLED=false`; no enable call |
 
 ## Redacted reference review — 2026-09-26
@@ -264,6 +265,23 @@ Backup/recovery reference: sha256:46d97cc420a06c5dc30a5135a66c13fde8c4233d32c58c
 
 Gate 4 status: PASSED.
 
+## Incident hold and queued-claim reconciliation — 2026-10-10
+
+The packet's **PASSED — 2026-10-10** status records a historical readiness-only decision; it is not evidence that a claim completed or that the execution window remains valid. The signed window `2026-10-10T11:00:00Z`–`2026-10-10T12:30:00Z` (cutoff `2026-10-10T12:25:00Z`) is expired and must not be reused or extended.
+
+**Incident report (operator-reported; not independently verified in this packet):** node startup reportedly hung after a second Groth16/FHE initialization sequence, the node API did not become ready, and a faucet worker reported a claim as `queued`. This report does not establish whether the request was admitted, whether a node transaction or payout occurred, or whether the live service is currently stopped. Claim outcome remains **UNCERTAIN / RECONCILIATION REQUIRED**. No claim result is inferred from a queue label, absent API response, or local code/test results.
+
+Until reconciliation is complete:
+
+- Keep intake closed. Do not submit another claim, retry, replay, change destination, reload/resubmit, restart, redeploy, reset counters, delete records, or restore over live state.
+- The owner/operator must preserve the private claim reference, exact UTC timeline/cutoff, redacted helper/API response, queue/reservation/budget snapshot, node transaction/hash and mempool/chain state, fee/nonce/balance observations, relevant redacted logs, and database/ledger references in the approved private evidence system. Do not copy recipients, idempotency values, credentials, signatures, raw requests/responses, or signed material here.
+- In the approved private process, correlate the API/helper event with the persisted claim and reservation, faucet/SQLite state, node mempool/chain transaction, hash, fee, nonce, balances, and redacted logs. Record whether there was admission, processing, a confirmed side effect, a definite failure, or unresolved uncertainty. The queue status alone cannot prove any of these.
+- If any side effect or ledger state is uncertain, preserve the state and escalate through the independent recovery path. Do not retry to obtain a cleaner status.
+- The owner must execute the existing private disable/abort procedure under its authorization and independently record `FAUCET_ENABLED=false`, `ultranet-faucet-staging.service` inactive, and `127.0.0.1:8090` closed. This packet and the readiness PASS do not themselves authorize a new service operation; no such verification is asserted here.
+- Record only a redacted reconciliation reference and owner-reviewed outcome in the private system. Any later attempt requires a new future UTC window, fresh evidence, and separate exact-window go/no-go after the incident is resolved.
+
+No remote host command, database inspection/mutation, claim/replay request, restart, or deployment was performed by this documentation update.
+
 ## Definition of done
 
 - [x] Credential-store protection or bounded one-test disposition is current, private and independently recoverable. — ULTRANET-STG-CRED-RISK-20261010-01, signed 2026-10-10T09:02:29Z
@@ -306,3 +324,25 @@ The final pre-sign-off review covered the checked-in staging configuration, the 
 - [ ] Vladan Jotov signs the selected future UTC window with its fixed cutoff and private recovery reference.
 
 **Final self-review conclusion:** configuration and documentation are prepared for private sign-off, but the readiness packet remains **PREPARED — NOT PASSED**. (Gate 1 closed 2026-10-10; Gates 2–4 pending) |Intake stays closed and no claim procedure is authorized.
+## Reconciliation outcome — 2026-10-10
+
+**Reference:** RECON-20261010-01
+**Claim ID:** 5994e0b08714243b015b7ffc73964d6e
+**Classification:** Definite failure — no side effect
+
+**Evidence:**
+- Claim status: queued
+- Payout attempt_count: 0
+- No transaction hash
+- No node transaction
+- No on-chain effect
+
+**Conclusion:**
+- No financial side effect
+- Claim is a no-op
+- Incident closed for this claim
+
+**Next:**
+- Deploy node fix (d9476e4)
+- Fresh signed window
+- New canary attempt
