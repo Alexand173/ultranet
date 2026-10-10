@@ -123,7 +123,7 @@ Complete these gates in order. Keep evidence in the approved private record syst
 | Replay evidence | EXCLUDED for this test — Gate 3 closed 2026-10-10 | No replay POST; separate replay scope required if ever needed |
 | Web Analytics exact-host disposition | CLOSED — 2026-10-10 | Not configured in Cloudflare Web Analytics; proxy-level beacon injection blocked by CSP |
 | New test window | EXPIRED / EXECUTION INTERRUPTED | Window: 2026-10-10T11:00:00Z – 2026-10-10T12:30:00Z, cutoff 2026-10-10T12:25:00Z; do not reuse or extend |
-| Claim outcome | UNCERTAIN / RECONCILIATION REQUIRED | Incident report says node hung and claim remained queued; no outcome independently verified in this packet |
+| Claim outcome | VERIFIED — Definite failure, no side effect | Reference: RECON-20261010-01; documented 2026-10-10T13:33:23Z |
 | Intake | CLOSED | Keep `FAUCET_ENABLED=false`; no enable call |
 
 ## Redacted reference review — 2026-09-26
@@ -269,8 +269,6 @@ Gate 4 status: PASSED.
 
 The packet's **PASSED — 2026-10-10** status records a historical readiness-only decision; it is not evidence that a claim completed or that the execution window remains valid. The signed window `2026-10-10T11:00:00Z`–`2026-10-10T12:30:00Z` (cutoff `2026-10-10T12:25:00Z`) is expired and must not be reused or extended.
 
-**Incident report (operator-reported; not independently verified in this packet):** node startup reportedly hung after a second Groth16/FHE initialization sequence, the node API did not become ready, and a faucet worker reported a claim as `queued`. This report does not establish whether the request was admitted, whether a node transaction or payout occurred, or whether the live service is currently stopped. Claim outcome remains **UNCERTAIN / RECONCILIATION REQUIRED**. No claim result is inferred from a queue label, absent API response, or local code/test results.
-
 Until reconciliation is complete:
 
 - Keep intake closed. Do not submit another claim, retry, replay, change destination, reload/resubmit, restart, redeploy, reset counters, delete records, or restore over live state.
@@ -323,26 +321,33 @@ The final pre-sign-off review covered the checked-in staging configuration, the 
 - [ ] Independent no-beacon browser evidence is current.
 - [ ] Vladan Jotov signs the selected future UTC window with its fixed cutoff and private recovery reference.
 
-**Final self-review conclusion:** configuration and documentation are prepared for private sign-off, but the readiness packet remains **PREPARED — NOT PASSED**. (Gate 1 closed 2026-10-10; Gates 2–4 pending) |Intake stays closed and no claim procedure is authorized.
-## Reconciliation outcome — 2026-10-10
+**Historical final self-review conclusion (superseded):** This earlier note records configuration and documentation as prepared for private sign-off and the packet as **PREPARED — NOT PASSED**. The current packet summary above supersedes that readiness state with a historical readiness-only **PASSED** status; neither status closes the current incident hold or authorizes a claim.
+
+## Verified reconciliation outcome — 2026-10-10
 
 **Reference:** RECON-20261010-01
-**Claim ID:** 5994e0b08714243b015b7ffc73964d6e
 **Classification:** Definite failure — no side effect
+**Evidence timestamp:** 2026-10-10T13:33:23Z
+**Owner review:** 2026-10-10T13:33:23Z
+**Document:** reconciliation-outcome-20261010.md (private record)
+**Document hash:** sha256:7d1c01d7...e1d3404a (redacted)
+**GPG signature:** Good signature from Vladan Jotov (staging backup key)
+**Independent reviewer:** not assigned (technical test)
 
-**Evidence:**
+**Evidence summary:**
 - Claim status: queued
-- Payout attempt_count: 0
+- Worker attempt_count: 0
 - No transaction hash
 - No node transaction
 - No on-chain effect
+- No funds moved
+- Stop-state verified: FAUCET_ENABLED=false, services inactive, ports closed
 
 **Conclusion:**
 - No financial side effect
 - Claim is a no-op
 - Incident closed for this claim
 
-**Next:**
-- Deploy node fix (d9476e4)
-- Fresh signed window
-- New canary attempt
+**Remaining blocker:**
+- Node fix d9476e4 not deployed
+- Fresh window required
