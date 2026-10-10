@@ -119,7 +119,7 @@ Complete these gates in order. Keep evidence in the approved private record syst
 | --- | --- | --- |
 | Credential-store | PASSED — ULTRANET-STG-CRED-RISK-20261010-01 | Signed bounded private disposition; sign-off UTC 2026-10-10T09:02:29Z |
 | Backup/recovery | PASSED — applicability confirmed 2026-10-10 | Backup from 2026-09-20 still applies; host/source/db identity and SHA-256 unchanged |
-| Replay evidence | BLOCKED / outside current scope | Prior-approved applicable evidence or a separately scoped replay test and reconciliation |
+| Replay evidence | EXCLUDED for this test — Gate 3 closed 2026-10-10 | No replay POST; separate replay scope required if ever needed |
 | Web Analytics exact-host disposition | NOT CURRENT / historical inventory only | Fresh authenticated exact-host inventory and independent no-beacon browser evidence |
 | New test window | EXPIRED / replacement not selected, signed, or active | Select a future UTC window only after all independent gates pass |
 | Intake | CLOSED | Keep `FAUCET_ENABLED=false`; no enable call |
@@ -194,12 +194,35 @@ Backup reference:
 Backup SHA-256: 46d97cc420a06c5dc30a5135a66c13fde8c4233d32c58ca3a0c03f0c89ba4169
 
 Gate 2 status: PASSED — applicability confirmed.
+## Gate 3 — Replay/idempotency decision — 2026-10-10
+
+Replay testing is EXCLUDED from this technical test. The scope is exactly 
+one disposable claim, with:
+
+- no retry
+- no replay POST
+- no changed-destination test
+- no reload/new-tab resubmission
+
+**Rationale:** The token value is zero. The purpose of this test is to 
+verify the end-to-end Turnstile Siteverify path and the one-claim ceremony, 
+not to test replay semantics. Replay evidence is not fabricated or inferred 
+from this exclusion; it will be obtained separately when required.
+
+**Gate 3 status:** CLOSED / EXCLUDED for this test.
+
+**Not authorized by this decision:**
+- Any replay POST during the one-claim window
+- Any changed-destination test
+- Any second claim or retry
+- Any claim that replay behavior is verified
+
 ## Definition of done
 
 - [x] Credential-store protection or bounded one-test disposition is current, private and independently recoverable. — ULTRANET-STG-CRED-RISK-20261010-01, signed 2026-10-10T09:02:29Z
 - [x] Historical encrypted SQLite/WAL/SHM backup and disposable-restore procedure passed without touching live state.
 - [x] The historical backup is confirmed applicable to the fresh test identity and state. — Confirmed 2026-10-10.
-- [ ] Replay evidence is valid, separately authorized where necessary, and proves no duplicate side effect.
+- [x] Replay evidence is EXCLUDED for this test. — Decision recorded 2026-10-10. No replay POST authorized. Separate replay scope required if ever needed.
 - [ ] Cloudflare Web Analytics automatic setup is disabled for the exact staging hostname, or the exact staging hostname is absent from the authenticated inventory and recorded as not configured; fresh no-beacon browser evidence and origin `no-store, no-transform` are verified.
 - [ ] All applicable hard pre-canary technical gates have fresh evidence and a tested stop action.
 - [ ] A new operator-selected window, fixed cutoff, readiness timestamp and abort path are recorded privately and owner-signed.
