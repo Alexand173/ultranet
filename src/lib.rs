@@ -1136,6 +1136,36 @@ pub struct UltraBlockchain {
     pub pruning_window: u64,
 }
 
+struct SharedEngineHandles<Zk, RecursiveZk, Fhe> {
+    zk_engine: Arc<RwLock<Zk>>,
+    recursive_zk: Arc<RwLock<RecursiveZk>>,
+    fhe_engine: Arc<RwLock<Fhe>>,
+}
+
+impl<Zk, RecursiveZk, Fhe> SharedEngineHandles<Zk, RecursiveZk, Fhe> {
+    fn from_refs(
+        zk_engine: &Arc<RwLock<Zk>>,
+        recursive_zk: &Arc<RwLock<RecursiveZk>>,
+        fhe_engine: &Arc<RwLock<Fhe>>,
+    ) -> Self {
+        Self {
+            zk_engine: Arc::clone(zk_engine),
+            recursive_zk: Arc::clone(recursive_zk),
+            fhe_engine: Arc::clone(fhe_engine),
+        }
+    }
+}
+
+impl<Zk, RecursiveZk, Fhe> Clone for SharedEngineHandles<Zk, RecursiveZk, Fhe> {
+    fn clone(&self) -> Self {
+        Self {
+            zk_engine: Arc::clone(&self.zk_engine),
+            recursive_zk: Arc::clone(&self.recursive_zk),
+            fhe_engine: Arc::clone(&self.fhe_engine),
+        }
+    }
+}
+
 // ============================================================
 // 7. NOVČANIK
 // ============================================================
@@ -1428,8 +1458,19 @@ impl UltraBlockchain {
         Self::with_storage(storage)
     }
     pub fn with_storage(storage: Arc<Storage>) -> Self {
-        let zk_engine = UltraZKEngine::new();
-        let recursive_zk = RecursiveZKEngine::new();
+        Self::with_storage_and_shared_engines(storage, None)
+    }
+
+    fn with_storage_and_shared_engines(
+        storage: Arc<Storage>,
+        shared_engines: Option<&SharedEngineHandles<UltraZKEngine, RecursiveZKEngine, FheEngine>>,
+    ) -> Self {
+        let zk_engine = shared_engines
+            .map(|engines| Arc::clone(&engines.zk_engine))
+            .unwrap_or_else(|| Arc::new(RwLock::new(UltraZKEngine::new())));
+        let recursive_zk = shared_engines
+            .map(|engines| Arc::clone(&engines.recursive_zk))
+            .unwrap_or_else(|| Arc::new(RwLock::new(RecursiveZKEngine::new())));
         let mut validator_instance = BLSValidator::new(75);
         let mut validators_vec = Vec::new();
         let stm_instance = Arc::new(BlockSTM::new());
@@ -1480,8 +1521,11 @@ impl UltraBlockchain {
             println!("🌳 Sharded MPT Trie initialized from last block shard roots.");
         }
 
-        let fhe_engine_instance =
-            Arc::new(RwLock::new(FheEngine::new(shared_storage.fhe_keys.clone())));
+        let fhe_engine_instance = shared_engines
+            .map(|engines| Arc::clone(&engines.fhe_engine))
+            .unwrap_or_else(|| {
+                Arc::new(RwLock::new(FheEngine::new(shared_storage.fhe_keys.clone())))
+            });
         let stark_engine_instance = Arc::new(UltraStarkEngine::new(128)); // 128 bits of security
         let ai_governor_instance = Arc::new(RwLock::new(AIGovernor::new()));
         let cross_shard_instance = Arc::new(RwLock::new(CrossShardMessenger::new()));
@@ -1885,7 +1929,7 @@ impl UltraBlockchain {
             chain,
             state: Arc::new(RwLock::new(rebuilt_state)),
             validator: Arc::new(RwLock::new(validator_instance)),
-            zk_engine: Arc::new(RwLock::new(zk_engine)),
+            zk_engine,
             mempool: Arc::new(RwLock::new(mempool)),
             merkle_tree: Arc::new(RwLock::new(rebuilt_merkle_tree)),
             pending_nonces: Arc::new(RwLock::new(pending_nonces)),
@@ -1902,7 +1946,7 @@ impl UltraBlockchain {
             genesis_time,
             version: Self::VERSION,
             storage,
-            recursive_zk: Arc::new(RwLock::new(recursive_zk)),
+            recursive_zk,
             recursive_proofs: Vec::new(),
             dag: dag_shared,
             dag_round: Arc::new(AtomicU64::new(max_round)),
@@ -4215,10 +4259,19 @@ pub async fn run_node() -> Result<(), String> {
 
     let mut blockchain = UltraBlockchain::with_storage(shared.get_storage());
 
-    // Za P2P node - DELI ISTU BAZU!
-    let blockchain_p2p = Arc::new(tokio::sync::RwLock::new(UltraBlockchain::with_storage(
-        shared.get_storage(),
-    )));
+    // The P2P facade uses the same durable storage and heavyweight crypto engines.
+    // Share those engine handles instead of repeating Groth16/FHE initialization.
+    let shared_engines = SharedEngineHandles::from_refs(
+        &blockchain.zk_engine,
+        &blockchain.recursive_zk,
+        &blockchain.fhe_engine,
+    );
+    let blockchain_p2p = Arc::new(tokio::sync::RwLock::new(
+        UltraBlockchain::with_storage_and_shared_engines(
+            shared.get_storage(),
+            Some(&shared_engines),
+        ),
+    ));
 
     shared.print_stats();
     println!("✅ Blockchain initialized!");
@@ -4240,16 +4293,7 @@ pub async fn run_node() -> Result<(), String> {
             return Err(format!("Recursive ZK setup error: {}", e));
         }
     }
-    {
-        // P2P instanca deli istu bazu, ali ima svoj Recursive ZK engine -
-        // mora biti setup-ovan i tamo da bi mogla da kreira/verifikuje proof-ove.
-        let blockchain_p2p_guard = blockchain_p2p.read().await;
-        let mut recursive_zk_p2p = blockchain_p2p_guard.recursive_zk.write();
-        if let Err(e) = recursive_zk_p2p.setup() {
-            eprintln!("❌ Recursive ZK (P2P) setup failed: {}", e);
-            return Err(format!("Recursive ZK (P2P) setup error: {}", e));
-        }
-    }
+    // The P2P blockchain shares this already-initialized Recursive ZK engine.
     println!("✅ Recursive ZK engine initialized!");
     println!(
         "   - Validators: {}",
@@ -4463,6 +4507,19 @@ pub async fn run_node() -> Result<(), String> {
 mod signature_verification_tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn shared_engine_handles_keep_primary_and_p2p_identity() {
+        let zk_engine = Arc::new(RwLock::new(1_u8));
+        let recursive_zk = Arc::new(RwLock::new(2_u8));
+        let fhe_engine = Arc::new(RwLock::new(3_u8));
+        let primary = SharedEngineHandles::from_refs(&zk_engine, &recursive_zk, &fhe_engine);
+        let p2p = primary.clone();
+
+        assert!(Arc::ptr_eq(&primary.zk_engine, &p2p.zk_engine));
+        assert!(Arc::ptr_eq(&primary.recursive_zk, &p2p.recursive_zk));
+        assert!(Arc::ptr_eq(&primary.fhe_engine, &p2p.fhe_engine));
+    }
 
     fn open_test_chain(name: &str) -> UltraBlockchain {
         let path = format!("test_db_sigcheck_{}", name);

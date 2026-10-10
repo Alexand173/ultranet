@@ -132,6 +132,18 @@ impl RecursiveZKEngine {
     }
 
     pub fn setup(&mut self) -> Result<(), String> {
+        if self.is_setup {
+            if self.proving_key.is_some() && self.verifying_key.is_some() {
+                return Ok(());
+            }
+            return Err(
+                "Recursive ZK setup is marked complete but parameters are missing".to_string(),
+            );
+        }
+        if self.proving_key.is_some() || self.verifying_key.is_some() {
+            return Err("Recursive ZK parameters are only partially initialized".to_string());
+        }
+
         println!("🔧 Generating Recursive ZK parameters...");
         println!("⏳ This may take a few seconds...");
 
@@ -297,6 +309,32 @@ mod tests {
         let mut engine = RecursiveZKEngine::new();
         let result = engine.setup();
         assert!(result.is_ok(), "Setup should succeed");
+
+        let proving_key_before = engine
+            .proving_key
+            .as_ref()
+            .map(|key| key as *const ProvingKey<Bls12_381>);
+        let verifying_key_before = engine
+            .verifying_key
+            .as_ref()
+            .map(|key| key as *const VerifyingKey<Bls12_381>);
+        engine
+            .setup()
+            .expect("repeated setup should reuse the existing parameters");
+        assert_eq!(
+            engine
+                .proving_key
+                .as_ref()
+                .map(|key| key as *const ProvingKey<Bls12_381>),
+            proving_key_before
+        );
+        assert_eq!(
+            engine
+                .verifying_key
+                .as_ref()
+                .map(|key| key as *const VerifyingKey<Bls12_381>),
+            verifying_key_before
+        );
         println!("✅ Recursive ZK setup test passed!");
     }
 
