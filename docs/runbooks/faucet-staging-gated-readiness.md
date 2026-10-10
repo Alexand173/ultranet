@@ -121,7 +121,7 @@ Complete these gates in order. Keep evidence in the approved private record syst
 | Backup/recovery | PASSED — applicability confirmed 2026-10-10 | Backup from 2026-09-20 still applies; host/source/db identity and SHA-256 unchanged |
 | Replay evidence | EXCLUDED for this test — Gate 3 closed 2026-10-10 | No replay POST; separate replay scope required if ever needed |
 | Web Analytics exact-host disposition | CLOSED — 2026-10-10 | Not configured in Cloudflare Web Analytics; proxy-level beacon injection blocked by CSP |
-| New test window | EXPIRED / replacement not selected, signed, or active | Select a future UTC window only after all independent gates pass |
+| New test window | PASSED — 2026-10-10 | Window: 2026-10-10T11:00:00Z – 2026-10-10T12:30:00Z, cutoff 2026-10-10T12:25:00Z |
 | Intake | CLOSED | Keep `FAUCET_ENABLED=false`; no enable call |
 
 ## Redacted reference review — 2026-09-26
@@ -247,6 +247,22 @@ against the proxy-level beacon injection.
 
 Web Analytics gate status: CLOSED.
 
+## Gate 4 — Fresh test window — 2026-10-10
+
+Window start UTC: 2026-10-10T11:00:00Z
+Window end UTC:   2026-10-10T12:30:00Z
+Fixed cutoff UTC: 2026-10-10T12:25:00Z
+
+Test reference: ULTRANET-STG-TEST-20261010-01
+Signed UTC: 2026-10-10T10:18:57Z
+GPG signature: Good signature from Vladan Jotov (staging backup key)
+Document hash: sha256:fc80ffcf093db81bcef9a0a055cd06bfe98da3183a08964fef57020d2da0a014
+
+Credential disposition reference: ULTRANET-STG-CRED-RISK-20261010-01
+Backup/recovery reference: sha256:46d97cc420a06c5dc30a5135a66c13fde8c4233d32c58ca3a0c03f0c89ba4169
+
+Gate 4 status: PASSED.
+
 ## Definition of done
 
 - [x] Credential-store protection or bounded one-test disposition is current, private and independently recoverable. — ULTRANET-STG-CRED-RISK-20261010-01, signed 2026-10-10T09:02:29Z
@@ -255,7 +271,7 @@ Web Analytics gate status: CLOSED.
 - [x] Replay evidence is EXCLUDED for this test. — Decision recorded 2026-10-10. No replay POST authorized. Separate replay scope required if ever needed.
 - [x] Cloudflare Web Analytics is not configured for the exact staging hostname (absent from inventory), AND the proxy-level beacon injection is blocked by the Caddy CSP. No analytics data is sent. — Confirmed 2026-10-10.
 - [ ] All applicable hard pre-canary technical gates have fresh evidence and a tested stop action.
-- [ ] A new operator-selected window, fixed cutoff, readiness timestamp and abort path are recorded privately and owner-signed.
+- [x] A new operator-selected window, fixed cutoff, readiness timestamp and abort path are recorded privately and owner-signed. — Reference: ULTRANET-STG-TEST-20261010-01, signed 2026-10-10T10:18:57Z
 - [ ] The readiness-only status is confirmed; intake remains closed until a separate exact-window go/no-go.
 - [ ] All existing safety invariants remain true until a separately approved procedure changes them.
 
