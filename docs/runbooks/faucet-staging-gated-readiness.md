@@ -2,7 +2,7 @@
 
 | Readiness packet | Value |
 | --- | --- |
-| Status | **PASSED — 2026-10-10 (HISTORICAL READINESS ONLY; CURRENT INCIDENT HOLD)**; intake closed |
+| Status | **PASSED — 2026-10-10 (HISTORICAL READINESS ONLY; INCIDENT OPEN; LIVE STATE NOT INDEPENDENTLY VERIFIED)**; no new canary authorized |
 | Scope | Maintenance-only preparation for the isolated staging faucet |
 | Current test reference | `ULTRANET-STG-TEST-20261010-01` (window expired; reported run interrupted; claim outcome unresolved) |
 | Prior test reference | `ULTRANET-STG-TEST-20260920-01` (expired; do not use or extend) |
@@ -17,7 +17,7 @@ This packet prepares the remaining private gates. It does not enable intake, sta
 
 The previous window, `2026-09-18T15:00:00Z`–`2026-09-18T17:00:00Z`, is expired. It must not be extended automatically. A new operator-selected UTC window and a fresh readiness confirmation are required before any bounded disabled validation or one-claim procedure.
 
-Keep these invariants true while this packet is pending:
+These are required safe-state invariants, not a claim that they are currently satisfied. Later owner-supplied observations report active services/listeners; see the incident summary below for the latest reported live-state snapshot:
 
 ```text
 FAUCET_ENABLED=false
@@ -123,8 +123,8 @@ Complete these gates in order. Keep evidence in the approved private record syst
 | Replay evidence | EXCLUDED for this test — Gate 3 closed 2026-10-10 | No replay POST; separate replay scope required if ever needed |
 | Web Analytics exact-host disposition | CLOSED — 2026-10-10 | Not configured in Cloudflare Web Analytics; proxy-level beacon injection blocked by CSP |
 | New test window | EXPIRED / EXECUTION INTERRUPTED | Window: 2026-10-10T11:00:00Z – 2026-10-10T12:30:00Z, cutoff 2026-10-10T12:25:00Z; do not reuse or extend |
-| Claim outcome | VERIFIED — Definite failure, no side effect | Reference: RECON-20261010-01; documented 2026-10-10T13:33:23Z |
-| Intake | CLOSED | Keep `FAUCET_ENABLED=false`; no enable call |
+| Claim outcome | OWNER-REPORTED — no-side-effect classification not independently verified; reconciliation remains open | Reference: RECON-20261010-01; evidence timestamp reported as 2026-10-10T13:37:00Z; owner review timestamp not supplied |
+| Intake / live state | INCIDENT HOLD — no new claim authorized; treat intake as potentially reachable | Owner reports stop at 11:52:05Z and restart at 14:45:10Z; latest owner-supplied snapshot at 16:34:58Z reports both services active and ports 8090/8081 listening; not independently verified |
 
 ## Redacted reference review — 2026-09-26
 
@@ -135,11 +135,11 @@ Reviewed the repository coordination records only; they are not private-system e
 - The fresh-window draft still contains the expired September 20 window and no readiness confirmation or owner signature.
 - The one-claim record says readiness and results are not recorded; it does not evidence a claim or successful canary.
 
-No current signed disposition, separately approved replay result, current no-beacon evidence, or fresh signed window was found in reviewed repository records or available attachments. No blocked gate is promoted. Backup/recovery remains passed only for the historical session pending applicability confirmation. Overall status remains **PREPARED — NOT PASSED**; intake stays closed.
+**Historical repository review — 2026-09-26:** No current signed disposition, separately approved replay result, current no-beacon evidence, or fresh signed window was found at that time. The packet was then **PREPARED — NOT PASSED**; that status was superseded by the readiness-only decision recorded on 2026-10-10. Neither historical record establishes current live service state or closes the present incident hold.
 
 ## Step 1 execution hold — 2026-09-27
 
-This was a repository-only review. No staging host, provider, DNS/Cloudflare, or private-record system was contacted; no host command or probe was run and no service, credential, database, or network state was changed. Accordingly, this entry does **not** freshly verify the live stop-state. The required hold remains: intake disabled (`FAUCET_ENABLED=false`), faucet inactive, `127.0.0.1:8090` closed, and production excluded. Keep the packet **PREPARED — NOT PASSED** until an approved current record supports any status change.**Update 2026-10-10:** All gates are now closed. Gate 1 signed disposition recorded. Gate 2 applicability confirmed. Gate 3 excluded. Web Analytics closed. Gate 4 window signed. Packet status updated to PASSED.
+This was a repository-only review on 2026-09-27. No staging host, provider, DNS/Cloudflare, or private-record system was contacted; no host command or probe was run and no service, credential, database, or network state was changed. It did not verify live stop-state. The listed disabled/inactive/closed conditions were required hold conditions, not observations. The **PREPARED — NOT PASSED** statement was superseded by the readiness-only gate closure recorded on 2026-10-10. Later owner-supplied service observations in the incident summary report services active and ports listening; current live state remains unverified.
 
 The following approved **redacted private reference records** are still needed. Supply reference labels and non-secret freshness/scope metadata only; keep signatures, credentials, recipient/idempotency values, raw payloads, and private evidence in the approved private system:
 
@@ -287,8 +287,9 @@ No remote host command, database inspection/mutation, claim/replay request, rest
 - [x] The historical backup is confirmed applicable to the fresh test identity and state. — Confirmed 2026-10-10.
 - [x] Replay evidence is EXCLUDED for this test. — Decision recorded 2026-10-10. No replay POST authorized. Separate replay scope required if ever needed.
 - [x] Cloudflare Web Analytics is not configured for the exact staging hostname (absent from inventory), AND the proxy-level beacon injection is blocked by the Caddy CSP. No analytics data is sent. — Confirmed 2026-10-10.
-- [x] All applicable hard pre-canary technical gates have fresh evidence and a tested stop action. — Confirmed 2026-10-10T10:37:32Z with fresh read-only preflight: host ubuntu-2gb-nbg1-2, FAUCET_ENABLED=false, service inactive/disabled, port 8090 closed, egress passed, 4 credentials root:root 0600.- [x] A new operator-selected window, fixed cutoff, readiness timestamp and abort path are recorded privately and owner-signed. — Reference: ULTRANET-STG-TEST-20261010-01, signed 2026-10-10T10:18:57Z
-- [x] The readiness-only status is confirmed; intake remains closed until a separate exact-window go/no-go. — Packet status: PASSED, 2026-10-10. Intake still closed.
+- [x] Historical hard pre-canary technical preflight passed at 2026-10-10T10:37:32Z: staging host, `FAUCET_ENABLED=false`, faucet service inactive/disabled, port 8090 closed, egress passed, and four credential files `root:root 0600`. This predates the incident and later service restarts; it is not current live-state verification.
+- [x] Historical operator-selected window, fixed cutoff, readiness timestamp, and abort path were recorded and owner-signed. — Reference: `ULTRANET-STG-TEST-20261010-01`, signed 2026-10-10T10:18:57Z; the window is expired and must not be reused.
+- [x] Historical readiness-only status was recorded as PASSED on 2026-10-10. This did not authorize claim execution; intake remains on incident hold, and later owner-supplied observations report services active and ports listening.
 - [ ] All existing safety invariants remain true until a separately approved procedure changes them.
 
 ## Execution attempt — 2026-09-19T06:40Z
@@ -323,31 +324,37 @@ The final pre-sign-off review covered the checked-in staging configuration, the 
 
 **Historical final self-review conclusion (superseded):** This earlier note records configuration and documentation as prepared for private sign-off and the packet as **PREPARED — NOT PASSED**. The current packet summary above supersedes that readiness state with a historical readiness-only **PASSED** status; neither status closes the current incident hold or authorizes a claim.
 
-## Verified reconciliation outcome — 2026-10-10
+## Owner-reported reconciliation summary — 2026-10-10 (independent review pending)
+
+## Owner-reported reconciliation summary — 2026-10-10
 
 **Reference:** RECON-20261010-01
-**Classification:** Definite failure — no side effect
-**Evidence timestamp:** 2026-10-10T13:33:23Z
-**Owner review:** 2026-10-10T13:33:23Z
+**Test reference:** ULTRANET-STG-TEST-20261010-01
+**Classification:** OWNER-REPORTED — Definite failure, no side effect (not independently verified)
+**Evidence collection UTC:** 2026-10-10T13:37:00Z
+**Owner review UTC:** 2026-10-10T16:47:14Z
 **Document:** reconciliation-outcome-20261010.md (private record)
-**Document hash:** sha256:7d1c01d7...e1d3404a (redacted)
-**GPG signature:** Good signature from Vladan Jotov (staging backup key)
-**Independent reviewer:** not assigned (technical test)
+**Document hash:** sha256:04ec74e4af5ff3f41e074a98908f8d4ceea7f3a51d0fba43753b5bac1a14bc81
+**GPG signature:** Good signature from Vladan Jotov (staging backup key) <vlajko973@gmail.com>, verified locally
+**Independent reviewer:** NOT ASSIGNED (technical test)
 
-**Evidence summary:**
+**Owner-reported findings:**
 - Claim status: queued
 - Worker attempt_count: 0
-- No transaction hash
-- No node transaction
-- No on-chain effect
-- No funds moved
-- Stop-state verified: FAUCET_ENABLED=false, services inactive, ports closed
+- No transaction hash, no node transaction, no on-chain effect, no funds moved
+- Faucet balance: 0 $ULTRA
+- FAUCET_ENABLED=false (verified 2026-10-10T16:47:34Z)
 
-**Conclusion:**
-- No financial side effect
-- Claim is a no-op
-- Incident closed for this claim
+**Stop-state timeline:**
+- 2026-10-10T11:52:05Z: faucet service stopped (systemd journal)
+- 2026-10-10T14:45:10Z: services restarted by owner for diagnostics
+- 2026-10-10T16:47:34Z: services active, ports 8090/8081 listening, FAUCET_ENABLED=false, faucet balance 0 $ULTRA
 
-**Remaining blocker:**
-- Node fix d9476e4 not deployed
-- Fresh window required
+**Status:** Claim outcome remains UNCERTAIN / RECONCILIATION REQUIRED until independent review. Test window expired; intake stays closed. No new claim, replay, retry, restart, or restore is authorized.
+
+**Next steps:**
+1. Independent review of this reconciliation (assign reviewer)
+2. Deploy node fix (commit d9476e4) — separate authorization required
+3. Verify node API responds
+4. Fresh signed window
+5. New canary attempt
