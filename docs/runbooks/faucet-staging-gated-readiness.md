@@ -26,7 +26,19 @@ ultranet-faucet-staging.service: inactive
 production origin 167.233.161.115: excluded
 production services, credentials, state, DNS, Caddy and firewall: untouched
 ```
+## Gate 1 — staging risk disposition — 2026-10-17
 
+- **Reference:** ULTRANET-STG-CRED-RISK-20261017-01
+- **Test reference:** ULTRANET-STG-TEST-20261017-01
+- **Status:** OWNER-SIGNED — NOT INDEPENDENTLY REVIEWED — ONE TEST ONLY
+- **Created UTC:** 2026-10-17T09:15:34Z
+- **Expires UTC:** 2026-10-18T09:15:34Z
+- **Recovery:** Hetzner VNC, tested PASS, 2026-10-10T09:02:29Z
+- **Independent reviewer:** NOT ASSIGNED (technical test)
+- **Note:** Gate 1 closure does not authorize a test. A separate exact-window go/no-go is required.
+
+Document hash: sha256:45401bbfb5669387155603ef1907ba86b6ca289506a8ecc16b2080e05deadd2f
+GPG signature: Good signature from Vladan Jotov
 Do not record wallet passwords, recovery phrases, Turnstile secrets, operator tokens, idempotency keys, claim recipients, signed envelopes, private keys, or raw request bodies here.
 
 ## Gate 1 — credential-store protection and disposition
@@ -118,7 +130,7 @@ Complete these gates in order. Keep evidence in the approved private record syst
 
 | Gate | Status | Next evidence |
 | --- | --- | --- |
-| Credential-store | PASSED — ULTRANET-STG-CRED-RISK-20261010-01 | Signed bounded private disposition; sign-off UTC 2026-10-10T09:02:29Z |
+| Credential-store | OWNER-SIGNED — NOT INDEPENDENTLY REVIEWED — ONE TEST ONLY | Reference: ULTRANET-STG-CRED-RISK-20261017-01, signed 2026-10-17T09:15:34Z, expires 2026-10-18T09:15:34Z. Recovery: Hetzner VNC tested 2026-10-10T09:02:29Z. No independent reviewer. |
 | Backup/recovery | PASSED — applicability confirmed 2026-10-10 | Backup from 2026-09-20 still applies; host/source/db identity and SHA-256 unchanged |
 | Replay evidence | EXCLUDED for this test — Gate 3 closed 2026-10-10 | No replay POST; separate replay scope required if ever needed |
 | Web Analytics exact-host disposition | CLOSED — 2026-10-10 | Not configured in Cloudflare Web Analytics; proxy-level beacon injection blocked by CSP |
