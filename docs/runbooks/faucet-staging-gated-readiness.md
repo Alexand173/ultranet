@@ -17,7 +17,7 @@ This packet prepares the remaining private gates. It does not enable intake, sta
 
 The previous window, `2026-09-18T15:00:00Z`–`2026-09-18T17:00:00Z`, is expired. It must not be extended automatically. A new operator-selected UTC window and a fresh readiness confirmation are required before any bounded disabled validation or one-claim procedure.
 
-These are required safe-state invariants, not a claim that they are currently satisfied. Later owner-supplied observations report active services/listeners; see the incident summary below for the latest reported live-state snapshot:
+These are required safe-state invariants, not a continuing guarantee. The latest time-bounded read-only observation is recorded under **Live stop-state verification — 2026-10-21T16:36:56Z** below; it does not replace fresh verification before any separately authorized procedure.
 
 ```text
 FAUCET_ENABLED=false
@@ -183,7 +183,19 @@ Complete these gates in order. Keep evidence in the approved private record syst
 | Web Analytics exact-host disposition | CLOSED — 2026-10-10 | Not configured in Cloudflare Web Analytics; proxy-level beacon injection blocked by CSP |
 | New test window | EXPIRED / EXECUTION INTERRUPTED | Window: 2026-10-10T11:00:00Z – 2026-10-10T12:30:00Z, cutoff 2026-10-10T12:25:00Z; do not reuse or extend |
 | Claim outcome | OWNER-REPORTED — Definite failure, no side effect (not independently verified) | Reference: RECON-20261010-01; owner review 2026-10-10T16:47:14Z; document hash sha256:04ec74e4...bc81 |
-| Intake / live state | INCIDENT HOLD — no new claim authorized; treat intake as potentially reachable | At 2026-10-10T16:47:34Z, owner reports `FAUCET_ENABLED=false` but both services active and ports 8090/8081 listening; not independently verified |
+| Intake / live state | INCIDENT HOLD — no new claim authorized; stop-state verified at 2026-10-21T16:36:56Z (time-bounded) | Strict-key read-only SSH confirmed faucet inactive/disabled, `FAUCET_ENABLED=false`, port `8090` closed, and node API on loopback `8081`. This does not close reconciliation or authorize a claim. |
+
+## Live stop-state verification — 2026-10-21T16:36:56Z
+
+This time-bounded snapshot was collected through SSH with strict host-key checking and a hostname guard for the staging host. Commands were read-only; no service, file, credential, database, ledger, or network configuration was changed. No claim, replay, Siteverify request, or provider API call was made. This is an operational snapshot, not an independent reviewer attestation or a readiness/authorization record.
+
+- **Host identity:** `ubuntu-2gb-nbg1-2`; expected staging IPv4 `2.28.61.71` present.
+- **Faucet:** `ultranet-faucet-staging.service` inactive (`dead`) and disabled; persisted `FAUCET_ENABLED=false`.
+- **Listeners:** no TCP listener on `8090`; `127.0.0.1:8081` is listening for the staging node API only.
+- **Node-reported state:** `chain_length=1`, `mempool_size=0`, `total_transactions=0`. Chain length is recorded as returned; no separate block inspection is asserted here.
+- **Account lookup:** redacted address `4781a663…558210`; balance `0` base units (`0.000000 ULTRA`), nonce `0`.
+
+**Incident status remains OPEN / ON HOLD.** The October 10 queued-claim reconciliation remains owner-reported and not independently reviewed. Gate 1 remains expired; the fresh Gate 1 checklist remains unsigned. This snapshot neither closes the incident hold nor authorizes a claim or future test.
 
 ## Redacted reference review — 2026-09-26
 
@@ -334,7 +346,7 @@ Until reconciliation is complete:
 - The owner/operator must preserve the private claim reference, exact UTC timeline/cutoff, redacted helper/API response, queue/reservation/budget snapshot, node transaction/hash and mempool/chain state, fee/nonce/balance observations, relevant redacted logs, and database/ledger references in the approved private evidence system. Do not copy recipients, idempotency values, credentials, signatures, raw requests/responses, or signed material here.
 - In the approved private process, correlate the API/helper event with the persisted claim and reservation, faucet/SQLite state, node mempool/chain transaction, hash, fee, nonce, balances, and redacted logs. Record whether there was admission, processing, a confirmed side effect, a definite failure, or unresolved uncertainty. The queue status alone cannot prove any of these.
 - If any side effect or ledger state is uncertain, preserve the state and escalate through the independent recovery path. Do not retry to obtain a cleaner status.
-- The owner must execute the existing private disable/abort procedure under its authorization and independently record `FAUCET_ENABLED=false`, `ultranet-faucet-staging.service` inactive, and `127.0.0.1:8090` closed. This packet and the readiness PASS do not themselves authorize a new service operation; no such verification is asserted here.
+- The owner must execute the existing private disable/abort procedure under its authorization and independently record `FAUCET_ENABLED=false`, `ultranet-faucet-staging.service` inactive, and `127.0.0.1:8090` closed. This packet and the readiness PASS do not themselves authorize a new service operation. The October 10 record made no such verification claim; the separate October 21 read-only snapshot above is time-bounded and grants no operational authority.
 - Record only a redacted reconciliation reference and owner-reviewed outcome in the private system. Any later attempt requires a new future UTC window, fresh evidence, and separate exact-window go/no-go after the incident is resolved.
 
 No remote host command, database inspection/mutation, claim/replay request, restart, or deployment was performed by this documentation update.
