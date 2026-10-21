@@ -41,9 +41,56 @@ Document hash: sha256:45401bbfb5669387155603ef1907ba86b6ca289506a8ecc16b2080e05d
 GPG signature: Good signature from Vladan Jotov
 Do not record wallet passwords, recovery phrases, Turnstile secrets, operator tokens, idempotency keys, claim recipients, signed envelopes, private keys, or raw request bodies here.
 
+## Gate 1 disposition expiry review — 2026-10-21
+
+The recorded one-test disposition above expired at `2026-10-18T09:15:34Z`. It is historical evidence only and does not provide current risk acceptance or authority for any test. This repository-only note does not revalidate the private record, its signature, or current host/recovery evidence. No test, service action, or host-state claim is authorized or inferred.
+
+Any future test requires fresh Gate 1 evidence and a new unique, exact-scope private disposition completed through the approved private record process, with expiry no later than the separately approved test cutoff. Keep the incident hold and all other gates in force.
+
 ## Gate 1 — credential-store protection and disposition
 
 **Current historical finding, not current acceptance:** the host credential store was recorded as `/var/lib/systemd/credential.secret`, `root:root`, mode `0400`, on unencrypted `/dev/sda1` ext4. `systemd-creds has-tpm2` reported partial capability with no usable TPM-backed protection. The old risk-acceptance wording and withdrawn approval record are not evidence for a new window.
+
+### Fresh unsigned staging review checklist — 2026-10-21
+
+**Status: PREPARED — UNSIGNED — NO CURRENT GATE 1 AUTHORITY.** This is a repository checklist only. It does not authorize host/provider commands, SSH access, service or credential changes, a claim, a replay, Siteverify, or a test. Complete the evidence gathering only in a separately approved staging maintenance session. Keep detailed evidence and all private references in the approved private record system; place only redacted status/references in this repository. Never record credential contents, signatures, private keys, recovery phrases, operator tokens, recipients, idempotency keys, or raw requests here.
+
+#### A. Scope and stop-state preconditions
+
+- [ ] Confirm the separately approved maintenance authorization and evidence destination before connecting. This checklist itself grants no access or operational authority.
+- [ ] Verify the trusted SSH host key; confirm the destination is exactly staging `2.28.61.71` / `ubuntu-2gb-nbg1-2`, not production. Stop on an unknown key, mismatch, or uncertain environment.
+- [ ] Record current UTC time, hostname, source revision, assigned-address summary, observer, and evidence reference. Redact UUIDs, PIDs, nonessential addresses, and unrelated host details from any shared summary.
+- [ ] Preserve the incident hold. Do not enable intake, start/restart a service, submit a claim, send a replay, call Siteverify, mutate credentials, change provider/network state, or contact production.
+
+#### B. Fresh read-only host and credential-store snapshot
+
+- [ ] Record `lsblk -f`, root filesystem, credential-store device/filesystem, owner/group/mode, and `systemd-creds has-tpm2` result; do not infer encrypted-at-rest or TPM protection from file permissions alone.
+- [ ] Record metadata only for the four staging `*.cred` files (filename/alias, owner, group, mode, size, and SHA-256). Never display, decrypt, copy, or include credential contents.
+- [ ] Confirm protected plaintext and temporary credential artifacts are absent; record only the redacted result and evidence reference.
+- [ ] Record the exact staging unit, environment-file identity, credential aliases, and current service state without exposing values.
+- [ ] Record listener bind addresses, ports, and owning service/process role. Interpret `127.0.0.1:8090` as the faucet listener: it must be closed when the faucet is required inactive. `127.0.0.1:8081` is the staging node API and may be listening if the node runs; identify its owner and do not conflate it with the faucet stop gate.
+- [ ] Confirm no production credential/path overlap. Stop on any overlap, secret exposure, stale evidence, or unexplained state.
+
+#### C. Independent recovery check
+
+- [ ] Confirm Hetzner console access independently of the current SSH session.
+- [ ] From a trusted client, verify authorized staging SSH access with the host key checked and only a harmless identity command. Do not reveal, transmit, or display a private key.
+- [ ] Record pass/fail, UTC time, operator, and private evidence reference for both paths. If either is unavailable or not independent, do not sign a disposition.
+
+#### D. Private disposition preparation (leave unsigned here)
+
+- [ ] In the approved private record system, confirm the proposed reference and destination are unique before creating anything; do not overwrite prior records or reuse expired October references.
+- [ ] Record fresh host/storage findings; actual owner and role; exact host, unit, hostname, revision, credential aliases; recovery owner/path; retention/disposal owner; abort authority; and the exact stop action.
+- [ ] If the owner elects a risk exception, state acceptance of residual credential-store risk for exactly one named future disposable staging test only. Exclude production, long-lived staging, any second test/claim, retries, replay, changed-destination tests, provider changes, and automatic extension.
+- [ ] Do not invent a future test window, reference, signer, reviewer, evidence result, or expiry. With no separately approved future test cutoff, leave the disposition pending/unsigned. Any eventual expiry must be no later than the approved test cutoff/closeout.
+- [ ] Freeze the exact final private record before owner signature. Verify the signing key fingerprint against a trusted pre-existing private record, then verify the signature and digest over those exact bytes. Keep the key, signature, and private artifact outside this repository and chat.
+- [ ] If an independent reviewer is assigned, they separately verify independence, signer authority, signature/digest, exact scope, recovery, cutoff, and stop/retention terms. Otherwise record `Independent reviewer: NOT ASSIGNED` and `OWNER-SIGNED — NOT INDEPENDENTLY REVIEWED — ONE TEST ONLY`; do not imply independent review.
+
+#### E. Stop and repository update boundaries
+
+- [ ] Stop without signing on host-key/environment mismatch, production overlap, secret exposure, uncertain or stale evidence, failed independent recovery, or inability to verify the exact stop action.
+- [ ] Do not change the current Gate 1 status from `EXPIRED — HISTORICAL OWNER SIGNATURE; NOT CURRENT AUTHORITY` based on this checklist. A future redacted append-only packet update requires a separately authorized, completed private record and must not include full hashes, signature bytes, private documents, storage UUIDs, or secrets.
+- [ ] Keep Gate 2 applicability, Gate 3 replay policy, technical pre-canary gates, incident reconciliation, and the fresh signed-window/go-no-go as independent blockers. Closing Gate 1 alone never authorizes a test.
 
 Before a canary, record one of the following in a private change record:
 
@@ -130,7 +177,7 @@ Complete these gates in order. Keep evidence in the approved private record syst
 
 | Gate | Status | Next evidence |
 | --- | --- | --- |
-| Credential-store | OWNER-SIGNED — NOT INDEPENDENTLY REVIEWED — ONE TEST ONLY | Reference: ULTRANET-STG-CRED-RISK-20261017-01, signed 2026-10-17T09:15:34Z, expires 2026-10-18T09:15:34Z. Recovery: Hetzner VNC tested 2026-10-10T09:02:29Z. No independent reviewer. |
+| Credential-store | EXPIRED — HISTORICAL OWNER SIGNATURE; NOT CURRENT AUTHORITY | Historical reference: ULTRANET-STG-CRED-RISK-20261017-01; recorded expiry 2026-10-18T09:15:34Z. Fresh Gate 1 evidence and a new exact-scope private disposition are required before any separately approved future test. |
 | Backup/recovery | PASSED — applicability confirmed 2026-10-10 | Backup from 2026-09-20 still applies; host/source/db identity and SHA-256 unchanged |
 | Replay evidence | EXCLUDED for this test — Gate 3 closed 2026-10-10 | No replay POST; separate replay scope required if ever needed |
 | Web Analytics exact-host disposition | CLOSED — 2026-10-10 | Not configured in Cloudflare Web Analytics; proxy-level beacon injection blocked by CSP |

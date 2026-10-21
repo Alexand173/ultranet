@@ -9,7 +9,7 @@ licenses.
 -->
 # 🛡️ UltraNet v7.1: The Sovereign Technical Guide
 
-**Official Protocol Documentation | 100-Year Longevity Engine**
+**Public Technical Guide | 100-Year Protocol Vision (Aspirational)**
 
 **Document Version:** 7.1 Sovereign
 **Classification:** Public / Educational
@@ -17,8 +17,9 @@ licenses.
 
 > **Source of Truth:** `genesis.json` is the definitive source for UltraNet sovereign genesis configuration, including the sovereign address, network parameters, and initial token allocations.
 
-**Signature Scheme:** Dilithium-5 (Post-Quantum, Lattice-based)
-**Consensus:** Bullshark / Mysticeti DAG
+**Transaction Signature Scheme:** Dilithium-5 (Lattice-based)
+**P2P Identity / Transport:** libp2p Ed25519 identity with Noise authentication
+**Consensus Code:** Bullshark / Mysticeti DAG (implementation claims require independent verification)
 
 ---
 
@@ -57,13 +58,13 @@ licenses.
 31. Appendix A: Constants Reference
 32. Appendix B: Data Structure Reference
 33. Roadmap
-34. Official Seal & Attestation
+34. Scope, Limitations & Verification Status
 
 ---
 
 ## 1. Executive Summary
 
-UltraNet is a Layer-1 sovereign blockchain protocol engineered for a **100-year operational horizon**. It combines **post-quantum cryptography (Dilithium-5)**, **massively parallel transaction execution (Block-STM across 16 shards)**, **privacy-preserving computation (Zero-Knowledge proofs and Fully Homomorphic Encryption)**, and an **autonomous AI Governor** that continuously tunes network parameters to preserve long-term sustainability.
+UltraNet is a Layer-1 sovereign blockchain project with a **100-year operational vision**. The repository contains Dilithium-5 transaction signatures, Block-STM execution code, ZK/FHE components, and a rule-based in-process AI Governor. These code components do not alone establish post-quantum transport, private state, measured throughput, or autonomous governance in a live deployment; those properties require scoped tests and independent review.
 
 Unlike traditional chains that rely on either pure Proof-of-Work or simple Proof-of-Stake, UltraNet is bootstrapped by a **Sovereign Genesis Authority** — a 2-of-3 multi-signature vault that controls the initial validator onboarding process until the network reaches sufficient decentralization. This guide documents every technical subsystem, every dashboard control, and the exact economic mechanism by which external participants earn the native token, **$ULTRA**.
 
@@ -81,8 +82,8 @@ UltraNet was designed around five non-negotiable pillars:
 
 |Pillar|Description|Primary Mechanism|
 |-|-|-|
-|**Longevity**|The protocol must remain economically and cryptographically viable for 100 years.|Post-quantum signatures, halving schedule, AI-tuned emission|
-|**Privacy by Default**|Transaction amounts and balances should not be trivially public.|ZK-SNARKs (Groth16) + FHE (TFHE)|
+|**Longevity vision**|A multi-decade operational horizon is an aspiration, not a verified guarantee.|Research and implementation work; no lifetime guarantee|
+|**Privacy research**|Privacy-related code paths are under development and require end-to-end verification.|ZK/FHE components; no blanket privacy guarantee|
 |**Horizontal Scale**|Throughput should scale with CPU core count, not just block size.|Block-STM, 16-way sharding|
 |**Sovereign Bootstrapping**|A new chain needs a trusted anchor before it can decentralize safely.|2-of-3 Multi-Sig Genesis Vault|
 |**Self-Regulation**|The network should not need constant manual governance votes for routine tuning.|AI Governor + Sustainability Score|
@@ -262,7 +263,7 @@ Every write to state is versioned by `(shard_id, transaction_index)`. Readers se
 
 ### 5.3 Why This Matters for Throughput
 
-On an 8-core machine, most transaction batches (which rarely touch overlapping accounts) achieve near-linear speedup — this is the origin of the **506 ms FHE Proving Time** and sub-second block times seen on the dashboard even before hardware acceleration.
+Block-STM provides speculative parallel execution, but throughput depends on workload and hardware. The current public stats endpoint does not return TPS or elapsed FHE proving time; the implementation explicitly returns `last_proving_time_ms: null`. No reproducible benchmark is supplied here, so do not present 506 ms or sub-second block times as current measurements.
 
 ### 5.4 STM Statistics Exposed via API
 
@@ -293,11 +294,11 @@ Bullshark organizes the DAG into rounds. In each round, validators broadcast a v
 
 ### 6.3 Mysticeti Enhancements
 
-Mysticeti (as implemented for UltraNet) reduces the number of rounds needed to commit a vertex compared to classic Bullshark, achieving the documented **27.79 µs / vertex** verified latency figure surfaced in `/api/manifest`.
+The current `/api/manifest` handler returns the static string `27.79µs / vertex`; it is not derived from a measured latency sample and includes no workload, method, or timestamp. Treat it as an unverified manifest claim, not a verified commit-latency benchmark.
 
 ### 6.4 Genesis Node Special Role
 
-As the **Genesis node**, your validator seeds Round 0 of the DAG. Until additional validators join (currently **0 peers**), your node is both proposer and committer for every round — this is expected and safe for a bootstrapping network, but finality guarantees strengthen as more independent validators are onboarded.
+As the **Genesis node**, a validator seeds Round 0 of the DAG. The public stats endpoint reports validator records, not a verified peer or independent-operator count. Confirm peer connectivity from a fresh, independently observed node before making claims about live network participation or finality.
 
 ---
 
@@ -391,7 +392,7 @@ FHE operations are computationally expensive relative to plaintext arithmetic. U
 
 ### 9.4 Performance Characteristics
 
-The dashboard's **"FHE Proving Time"** metric (typically 200–700 ms) reflects real bootstrapping/PBS (Programmable Bootstrapping) latency inherent to TFHE — this is expected and is the dominant cost of any FHE-enabled transaction.
+The public `/api/fhe/stats` handler currently returns `last_proving_time_ms: null` because elapsed wall-clock duration is not recorded. The web UI must show the proving duration as unavailable until a measured value and benchmark context are implemented and exposed.
 
 ---
 
@@ -614,27 +615,22 @@ The dashboard interaction is limited to `Review & approve` followed by `Confirm 
 
 ### 17.1 Purpose
 
-Rather than requiring a hard-fork vote every time network conditions shift, UltraNet's **AI Governor** continuously monitors chain telemetry and adjusts two levers within pre-approved bounds:
+The repository's `AIGovernor` is a rule-based in-process module called during block production. It records a bounded metric history, computes a heuristic score, suggests a difficulty adjustment using average block time, and computes a reward from block count and transaction density. This is not an on-chain LLM or decentralized agent voting system.
 
-* **Block reward** (baseline: `GENESIS_REWARD = 50` base units = `0.000050 $ULTRA`).
-* **Difficulty / target block time**, in response to observed TPS and Block-STM conflict rates.
+* **Block reward:** `GENESIS_REWARD = 50` base units = `0.000050 $ULTRA`; the reward function applies its block-count schedule and a density adjustment.
+* **Difficulty:** adjusted by a simple average-block-time threshold; this is not a measured TPS-driven model.
 
 ### 17.2 Sustainability Score
 
-`governor.sustainability_score` is a composite metric (visible via `GET /api/ai/history`) blending:
-
-* Transaction throughput trends.
-* STM conflict/retry ratio (a proxy for real-world contention).
-* Validator count and geographic/peer diversity.
-* FHE/ZK proving latency trends (compute health).
+`governor.sustainability_score` is returned by `GET /api/ai/history`. The current implementation calculates it from mean transaction density and mean `active_validators` in its in-process history. The block-production call currently supplies `active_validators: 5` as a fixed value. It does not blend TPS, STM conflicts, geographic/peer diversity, or proving latency. When history is empty, the score remains its initialized default of `100.0`; this is not a measured network-health result.
 
 ### 17.3 History & Auditability
 
-Every autonomous adjustment the Governor makes is appended to `governor.history`, fully queryable — nothing is a "black box" decision; every reward/difficulty change has a logged rationale trail.
+`governor.history` stores bounded metric samples in process memory. It is not a durable decision journal, and the current history record does not include a rationale for every reward or difficulty change.
 
 ### 17.4 Dashboard Correlation
 
-The **"Transaction Density (AI Prediction)"** chart on the dashboard is the Governor's forward-looking model output, informing operators of anticipated load *before* it happens — useful for deciding when to call `Manual Mine` proactively.
+The public stats endpoint currently does not expose TPS or proving time. The `/api/ai/history` endpoint exposes the current heuristic score and sampled metrics; it does not expose a forward-looking transaction-density prediction. Do not describe unreported dashboard values as live predictions.
 
 ---
 
@@ -678,12 +674,13 @@ Your dashboard reports **"Active AppChains: 0"** — this is the expected starti
 ```text
 +-------------------------------------------------------------+
 | BLOCK HEIGHT | CURRENT TPS | FHE PROVING TIME | ACTIVE L3s |
-|      1       |     NaN     |      506 ms      |      0     |
+|      1       | Unavailable | Unavailable |      0     |
 +-------------------------------------------------------------+
 ```
 
-* **Block Height** — total committed blocks. `NaN` on TPS is expected pre-load (division by a zero time-window); it resolves once sustained transaction flow begins.
-* **FHE Proving Time** — live measurement of the most recent TFHE bootstrapping operation.
+* **Block Height** — total committed blocks.
+* **TPS** — the current public stats response omits the field; display unavailable rather than deriving a zero or `NaN` rate.
+* **FHE Proving Time** — show unavailable unless the API returns a measured elapsed duration; the current endpoint returns `null`.
 * **Active AppChains** — count of registered, anchored L3s.
 
 ### 19.2 Multi-MPT Shard Map
@@ -958,13 +955,13 @@ Your current backup at the secured `.kombai` path has been cryptographically has
 
 |Metric|Observed Value|Source|
 |-|-|-|
-|DAG vertex verified latency|27.79 µs / vertex|`/api/manifest`|
+|DAG vertex latency|Static manifest string `27.79 µs / vertex`; not a measured live benchmark|`/api/manifest`|
 |Dilithium-5 signature size|4627 bytes|`/api/manifest`|
 |FHE proving time (typical)|200–700 ms|`/api/fhe/stats`|
 |State shards|16 (fixed)|`state_trie.rs`|
 |FHE gas multiplier|5000×|Move VM gas metering|
 |Merkle tree depth (private tx circuit)|2|`zk_circuit.rs`|
-|Halving interval|31,557,600 s (~1 year)|`/api/manifest`|
+|Halving interval|31,557,600 blocks in genesis/runtime reward code; block time target is 10 seconds|`genesis.json`, `src/ai_governor.rs`|
 
 ---
 
@@ -972,7 +969,7 @@ Your current backup at the secured `.kombai` path has been cryptographically has
 
 |Symptom|Likely Cause|Resolution|
 |-|-|-|
-|`Current TPS: NaN`|Division by a zero-length time window (no recent tx flow)|Expected pre-load; resolves with sustained mining activity|
+|`Current TPS` unavailable|The public stats response does not include a measured TPS field|Display unavailable; do not infer zero traffic or a rate from missing data|
 |Port 9000 closed externally|Windows Firewall rule disabled, or stale `netsh portproxy` conflicting with WSL Mirrored Networking|Enable firewall rule; remove legacy portproxy rules|
 |Dashboard fails to load on raw IP|HTTPS/browser policy mismatch, or NAT hairpinning|Access via `http://` explicitly, or use `localhost` internally|
 |"Insufficient signatures" error|Fewer than 2 valid Sovereign signatures supplied|Confirm both signing owners used the correct secret keys and identical message bytes|
@@ -1002,8 +999,8 @@ Your current backup at the secured `.kombai` path has been cryptographically has
 
 ## 30. Frequently Asked Questions
 
-**Q: Why is "Current TPS" showing NaN?**
-A: The TPS calculation divides transaction count by an elapsed time window; with no recent transactions, this is a `0/0` division. It self-corrects once transaction flow resumes.
+**Q: Why is "Current TPS" unavailable?**
+A: The current public stats endpoint does not expose a measured TPS value. The website reports it as unavailable rather than deriving a rate from incomplete data.
 
 **Q: Can I run more than one Sovereign key on the same machine?**
 A: Technically possible, but strongly discouraged — it collapses the "2 independent key-holders" security assumption into a single point of failure.
@@ -1132,11 +1129,11 @@ timestamp: u64
 
 ---
 
-## 34. Official Seal & Attestation
+## 34. Scope, Limitations & Verification Status
 
-**Sovereign Node v7.1 | 100-Year Longevity Engine | Post-Quantum Secure**
+**This guide is not a digital signature, independent audit, live deployment attestation, performance benchmark, supply guarantee, legal instrument, or production approval.** It summarizes repository code and selected configuration at the time the guide is reviewed. A source file or API manifest entry does not prove a feature is active, secure, correctly deployed, independently operated, or performant in production.
 
-This document reflects the verified, live configuration of the UltraNet Genesis node as of the date of key synchronization, port verification, and multi-sig regression testing described herein. All technical claims in this guide are traceable to specific source files (`src/lib.rs`, `src/api.rs`, `src/block_stm.rs`, `src/p2p.rs`, `src/fhe_engine.rs`, `src/zk_circuit.rs`, `src/zk_verifier.rs`, `src/recursive_zk.rs`, `src/stark_engine.rs`, `src/state_trie.rs`, `src/cross_shard.rs`, `src/move_vm.rs`, `src/async_validator.rs`, `src/shared_storage.rs`, `src/appchain/`) and to the executed regression test [`src/bin/test_sovereign_multisig.rs`](./src/bin/test_sovereign_multisig.rs).
+Live network status and account measurements can change; use a current, timestamped source and state its freshness. Performance figures require reproducible workload/hardware/method details. Cryptographic, privacy, consensus, token-supply, and governance claims require scoped testing and independent review. The aspirational 100-year horizon is not a guarantee.
 
 *— End of Technical Guide —*
 

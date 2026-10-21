@@ -41,6 +41,8 @@ function createRenderer() {
   const renderer = new marked.Renderer();
   const headingIds = new Map();
   const defaultTable = renderer.table.bind(renderer);
+  const defaultListItem = renderer.listitem.bind(renderer);
+  let diagramCount = 0;
 
   renderer.heading = function heading({ tokens, depth }) {
     const text = this.parser.parseInline(tokens);
@@ -50,12 +52,14 @@ function createRenderer() {
 
   renderer.code = function code({ text, lang }) {
     if (lang?.trim().toLowerCase() === "mermaid") {
-      return `<figure class="diagram-block" aria-labelledby="diagram-caption-${headingIds.size}">
-  <div class="mermaid" role="img" aria-label="Mermaid architecture diagram">${escapeHtml(text)}</div>
-  <figcaption id="diagram-caption-${headingIds.size}">Architecture diagram</figcaption>
+      const diagramId = ++diagramCount;
+      const captionId = `diagram-caption-${diagramId}`;
+      return `<figure class="diagram-block" aria-labelledby="${captionId}">
+  <div class="mermaid" role="img" aria-label="Mermaid architecture diagram ${diagramId}">${escapeHtml(text)}</div>
+  <figcaption id="${captionId}">Architecture diagram ${diagramId}</figcaption>
   <details class="diagram-source">
     <summary>View diagram source</summary>
-    <pre><code>${escapeHtml(text)}</code></pre>
+    <pre tabindex="0"><code>${escapeHtml(text)}</code></pre>
   </details>
 </figure>\n`;
     }
@@ -63,7 +67,18 @@ function createRenderer() {
     const languageClass = lang?.trim()
       ? ` class="language-${escapeHtml(lang.trim())}"`
       : "";
-    return `<pre><code${languageClass}>${escapeHtml(text)}</code></pre>\n`;
+    return `<pre tabindex="0"><code${languageClass}>${escapeHtml(text)}</code></pre>\n`;
+  };
+
+  renderer.listitem = function listitem(item) {
+    if (!item.task) return defaultListItem(item);
+    const checkbox = item.tokens.find((token) => token.type === "checkbox");
+    if (!checkbox || checkbox.type !== "checkbox") return defaultListItem(item);
+
+    const accessibleName = escapeHtml(stripMarkup(item.text));
+    const contentTokens = item.tokens.filter((token) => token.type !== "checkbox");
+    const checked = checkbox.checked ? " checked" : "";
+    return `<li class="task-list-item"><input type="checkbox" aria-label="${accessibleName}"${checked} disabled> ${this.parser.parse(contentTokens)}</li>\n`;
   };
 
   renderer.table = function table(token) {
@@ -81,6 +96,7 @@ function documentTemplate(renderedMarkdown) {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="author" content="Vladan Jotov">
     <meta name="description" content="The canonical UltraNet v7.1 sovereign technical guide.">
+    <link rel="icon" type="image/png" href="/images/ultra-coin.png">
     <title>UltraNet v7.1 Sovereign Technical Guide</title>
     <style>
       :root {
@@ -259,8 +275,9 @@ function documentTemplate(renderedMarkdown) {
 
       .mermaid svg { max-width: 100%; height: auto; }
       .diagram-block figcaption { margin-top: 0.75rem; color: var(--ink-muted); font-size: 0.78rem; text-align: center; }
-      .diagram-source { margin-top: 0.8rem; color: var(--ink-muted); font-size: 0.8rem; }
+      .diagram-source { margin-top: 0.8rem; color: #65747d; font-size: 0.8rem; }
       .diagram-source summary { cursor: pointer; color: var(--cyan); font-weight: 700; }
+      .task-list-item > input { margin-right: 0.5rem; accent-color: var(--cyan); }
       .diagram-source pre { margin-bottom: 0; }
 
       @media (max-width: 42rem) {
@@ -284,7 +301,7 @@ function documentTemplate(renderedMarkdown) {
         <p class="cover-meta">DOCUMENT_VERSION // 7.1_SOVEREIGN &nbsp;|&nbsp; 34_CHAPTERS &nbsp;|&nbsp; PUBLIC / EDUCATIONAL</p>
         <p class="source-notice">Copyright (c) 2026 Vladan Jotov. This documentation is licensed under the ISC License. Third-party materials remain under their respective licenses.</p>
       </header>
-      <article class="document-body" aria-label="UltraNet sovereign technical guide">
+      <article class="document-body" aria-label="UltraNet v7.1 sovereign technical guide">
         ${renderedMarkdown}
       </article>
     </main>

@@ -12,59 +12,69 @@ const WHITEPAPER_PDF = "/docs/ultranet-whitepaper.pdf";
 export default function WhitepaperReader() {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [progress, setProgress] = useState(0);
+  const [documentError, setDocumentError] = useState(false);
 
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
 
-    let detachScrollListener: (() => void) | undefined;
+    let detachFrameObservers: (() => void) | undefined;
+    let mounted = true;
 
-    const attachScrollListener = () => {
-      const frameWindow = iframe.contentWindow;
-      const document = iframe.contentDocument;
-      if (!frameWindow || !document) return;
+    const attachFrameObservers = () => {
+      try {
+        const frameWindow = iframe.contentWindow;
+        const frameDocument = iframe.contentDocument;
+        if (!frameWindow || !frameDocument || frameDocument.readyState !== "complete") return;
 
-      const updateProgress = () => {
-        const scrollableHeight = document.documentElement.scrollHeight - frameWindow.innerHeight;
-        const nextProgress = scrollableHeight > 0
-          ? (frameWindow.scrollY / scrollableHeight) * 100
-          : 0;
-        setProgress(Math.min(100, Math.max(0, nextProgress)));
-      };
+        if (frameDocument.body?.textContent?.trim() === "Internal Server Error") {
+          if (mounted) setDocumentError(true);
+          return;
+        }
 
-      frameWindow.addEventListener("scroll", updateProgress, { passive: true });
-      updateProgress();
-      return () => frameWindow.removeEventListener("scroll", updateProgress);
+        if (mounted) setDocumentError(false);
+        const updateProgress = () => {
+          const scrollableHeight = frameDocument.documentElement.scrollHeight - frameWindow.innerHeight;
+          const nextProgress = scrollableHeight > 0
+            ? (frameWindow.scrollY / scrollableHeight) * 100
+            : 0;
+          setProgress(Math.min(100, Math.max(0, nextProgress)));
+        };
+
+        frameWindow.addEventListener("scroll", updateProgress, { passive: true });
+        const resizeObserver = new ResizeObserver(updateProgress);
+        resizeObserver.observe(frameDocument.documentElement);
+        updateProgress();
+        return () => {
+          frameWindow.removeEventListener("scroll", updateProgress);
+          resizeObserver.disconnect();
+        };
+      } catch {
+        if (mounted) setDocumentError(true);
+      }
     };
 
     const handleLoad = () => {
-      detachScrollListener?.();
-      detachScrollListener = attachScrollListener();
+      detachFrameObservers?.();
+      detachFrameObservers = attachFrameObservers();
     };
 
-    const retryTimer = window.setInterval(() => {
-      if (detachScrollListener) {
-        window.clearInterval(retryTimer);
-        return;
-      }
-      handleLoad();
-    }, 100);
     iframe.addEventListener("load", handleLoad);
     handleLoad();
 
     return () => {
-      window.clearInterval(retryTimer);
+      mounted = false;
       iframe.removeEventListener("load", handleLoad);
-      detachScrollListener?.();
+      detachFrameObservers?.();
     };
   }, []);
 
   return (
     <div className="relative min-h-screen overflow-x-clip bg-ink-black text-platinum selection:bg-cyan-glow/30 selection:text-white">
-      <div className="fixed inset-0 pointer-events-none dot-grid opacity-20" />
-      <div className="fixed inset-0 pointer-events-none bg-[radial-gradient(circle_at_50%_35%,rgba(15,255,255,0.06)_0%,transparent_58%)]" />
+      <div aria-hidden="true" className="fixed inset-0 pointer-events-none dot-grid opacity-20" />
+      <div aria-hidden="true" className="fixed inset-0 pointer-events-none bg-[radial-gradient(circle_at_50%_35%,rgba(15,255,255,0.06)_0%,transparent_58%)]" />
 
-      <main className="relative mx-auto max-w-[1680px] px-4 pb-8 pt-24 sm:px-6 lg:px-8">
+      <main aria-label="Whitepaper reader" className="relative mx-auto max-w-[1680px] px-4 pb-8 pt-24 sm:px-6 lg:px-8">
         <div className="mb-5 flex flex-col gap-4 border-b border-platinum/10 pb-5 lg:flex-row lg:items-center lg:justify-between">
           <Link
             href="/docs"
@@ -75,7 +85,7 @@ export default function WhitepaperReader() {
           </Link>
 
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2 font-mono text-[9px] uppercase tracking-[0.18em] text-platinum/35">
-            <span className="text-cyan-glow/80">CANONICAL_WHITEPAPER</span>
+            <span className="text-cyan-glow/80">REPOSITORY_GUIDE</span>
             <span>v7.1_SOVEREIGN</span>
             <span>AUTHOR // VLADAN_JOTOV</span>
             <span>LICENSE // ISC</span>
@@ -130,7 +140,7 @@ export default function WhitepaperReader() {
             <div className="mt-4 grid gap-2 border-t border-platinum/10 pt-3 font-mono text-[9px] uppercase tracking-[0.16em] text-platinum/35 sm:grid-cols-[1fr_auto] sm:items-center">
               <div className="flex min-w-0 items-center gap-2">
                 <FileText className="h-3.5 w-3.5 shrink-0 text-cyan-glow/70" aria-hidden="true" />
-                <span className="truncate">Source // ULTRA_NET_TECHNICAL_GUIDE.md // 34_CHAPTERS // 9_DIAGRAMS</span>
+                <span className="truncate">Source // ULTRA_NET_TECHNICAL_GUIDE.md // generated HTML // public educational copy</span>
               </div>
               <span className="text-cyan-glow/80" aria-live="polite">{Math.round(progress)}%_READ</span>
             </div>
@@ -142,6 +152,7 @@ export default function WhitepaperReader() {
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={Math.round(progress)}
+              aria-valuetext={`${Math.round(progress)} percent read`}
             >
               <div
                 className="h-full bg-cyan-glow shadow-[0_0_12px_rgba(15,255,255,0.8)] transition-[width] duration-150"
@@ -151,6 +162,11 @@ export default function WhitepaperReader() {
           </div>
 
           <div className="bg-[#dfe5e8] p-1 sm:p-2">
+            {documentError && (
+              <div role="alert" className="m-3 border border-red-300/40 bg-red-300/10 p-4 text-sm text-red-100">
+                The embedded document could not be read. Use Open HTML or PDF Export to open it directly.
+              </div>
+            )}
             <iframe
               ref={iframeRef}
               title="UltraNet v7.1 Sovereign Technical Whitepaper"
