@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">UltraVerse</string>
+    <string name="supported_path">Supported path</string>
+    <string name="not_available_yet">Not available yet</string>
+    <string name="wallet_setup_note">Wallet setup stays on this device. Your actual $ULTRA balance is shown after you open and unlock the wallet.</string>
+</resources>

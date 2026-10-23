@@ -1,0 +1,5 @@
+Public Domain (https://creativecommons.org/share-your-work/public-domain/cc0/)
+
+For Keccak and AES we are using public-domain code from sources and by authors listed in comments on top of the respective files.
+
+The implementation is compiled from the existing website/crypto/ultra-dilithium5/pqclean sources, which are documented in website/crypto/ultra-dilithium5/README.md as the exact pqcrypto-dilithium 0.5.0 PQClean Dilithium-5 clean implementation used by the Rust node.
