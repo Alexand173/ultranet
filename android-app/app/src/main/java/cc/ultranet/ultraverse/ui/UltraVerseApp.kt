@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -14,9 +15,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Contrast
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -36,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -52,6 +62,7 @@ import cc.ultranet.ultraverse.ui.home.ServiceGroupSection
 import cc.ultranet.ultraverse.ui.home.WalletHero
 import cc.ultranet.ultraverse.ui.navigation.BottomNavigation
 import cc.ultranet.ultraverse.ui.navigation.UltraVerseTab
+import cc.ultranet.ultraverse.ui.theme.AppearanceMode
 import cc.ultranet.ultraverse.ui.theme.UltraVerseColors
 import cc.ultranet.ultraverse.ui.wallet.WalletFlowScreen
 import cc.ultranet.ultraverse.ui.wallet.WalletRoute
@@ -59,7 +70,10 @@ import cc.ultranet.ultraverse.wallet.WalletController
 import kotlinx.coroutines.launch
 
 @Composable
-internal fun UltraVerseApp() {
+internal fun UltraVerseApp(
+    appearance: AppearanceMode,
+    onAppearanceChange: (AppearanceMode) -> Unit,
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val listState = rememberLazyListState()
@@ -110,6 +124,8 @@ internal fun UltraVerseApp() {
             AppsDirectory(
                 listState = listState,
                 modifier = Modifier.padding(scaffoldPadding),
+                appearance = appearance,
+                onAppearanceChange = onAppearanceChange,
                 onCreateWallet = { route = WalletRoute.Create },
                 onRestoreWallet = { route = WalletRoute.Restore },
                 onOpenWallet = { route = WalletRoute.Portfolio },
@@ -163,6 +179,8 @@ internal fun UltraVerseApp() {
 @Composable
 private fun AppsDirectory(
     listState: androidx.compose.foundation.lazy.LazyListState,
+    appearance: AppearanceMode,
+    onAppearanceChange: (AppearanceMode) -> Unit,
     modifier: Modifier = Modifier,
     onCreateWallet: () -> Unit,
     onRestoreWallet: () -> Unit,
@@ -182,7 +200,9 @@ private fun AppsDirectory(
         contentPadding = PaddingValues(bottom = 20.dp),
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
-        item(key = "brand-header") { BrandHeader() }
+        item(key = "brand-header") {
+            BrandHeader(appearance = appearance, onAppearanceChange = onAppearanceChange)
+        }
         item(key = "wallet-hero") {
             WalletHero(
                 onCreateWallet = onCreateWallet,
@@ -220,31 +240,60 @@ private fun AppsDirectory(
 }
 
 @Composable
-private fun BrandHeader() {
+private fun BrandHeader(
+    appearance: AppearanceMode,
+    onAppearanceChange: (AppearanceMode) -> Unit,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(UltraVerseColors.backgroundDeep.copy(alpha = 0.84f))
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .background(UltraVerseColors.backgroundDeep.copy(alpha = 0.94f))
+            .padding(start = 16.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Image(
-            painter = painterResource(R.drawable.ultranet_official_coin),
+            painter = painterResource(R.drawable.ultranet_coin_disc),
             contentDescription = "Official UltraNet coin emblem",
-            modifier = Modifier.height(34.dp),
+            modifier = Modifier.size(36.dp),
         )
         Column(modifier = Modifier.padding(start = 9.dp)) {
             Text("UltraVerse", color = UltraVerseColors.ink, fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Text("on UltraNet", color = UltraVerseColors.muted, fontSize = 10.sp)
         }
         Spacer(Modifier.weight(1f))
-        Text(
-            text = "SERVICE HUB",
-            color = UltraVerseColors.cyan,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.2.sp,
-        )
+        Box {
+            IconButton(
+                onClick = { menuExpanded = true },
+                modifier = Modifier
+                    .size(48.dp)
+                    .semantics { contentDescription = "Appearance: ${appearance.label}. Change light or dark mode." },
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Contrast,
+                    contentDescription = null,
+                    tint = UltraVerseColors.cyan,
+                )
+            }
+            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                AppearanceMode.entries.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.label, color = UltraVerseColors.ink) },
+                        onClick = {
+                            menuExpanded = false
+                            onAppearanceChange(option)
+                        },
+                        leadingIcon = {
+                            if (option == appearance) {
+                                Icon(Icons.Outlined.Check, contentDescription = null, tint = UltraVerseColors.cyan)
+                            } else {
+                                Spacer(Modifier.size(24.dp))
+                            }
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 

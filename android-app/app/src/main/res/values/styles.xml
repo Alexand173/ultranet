@@ -1,12 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- System-following theme, kept as the manifest default. -->
     <style name="Theme.UltraVerse" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#0F7F8A</item>
+        <item name="android:colorAccent">#0B6F79</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowBackground">#F6FAFC</item>
+    </style>
+
+    <!--
+      Explicit variants for the in-app appearance choice. They are applied with setTheme() before
+      the window is created, so the launch frame and bar icons match the saved preference even when
+      the system itself is in the opposite mode.
+    -->
+    <style name="Theme.UltraVerse.Light">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#0B6F79</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">#F6FAFC</item>
+    </style>
+
+    <style name="Theme.UltraVerse.Dark">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#52E9EC</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">#07131F</item>
     </style>
 </resources>

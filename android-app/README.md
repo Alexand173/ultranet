@@ -13,7 +13,9 @@ A native Kotlin + Jetpack Compose client for the UltraVerse service catalog and 
 - Transfers use integer base units (six decimals), a local 32-byte nullifier, the canonical version-1 SHA3-256 digest and local Dilithium-5 signing, then POST the established byte-array JSON envelope over HTTPS. Pending outgoing amount + fee is deducted from displayed available funds. Sending is disabled when history is unavailable or reaches the 100-record API limit, so pending spend cannot be silently ignored.
 - Signing the transaction is local, but transfer proving/validation is still performed by the existing node endpoint. A pending transaction is not a confirmed transaction; confirmation depends on block production.
 - The signed request is retained in memory for identical retry after an ambiguous response. It is not persisted across app process death; after restart, check address history before preparing another transaction.
-- The UI follows the system theme. `UltraVersePalette` carries one role set with a dark and a light instance, exposed through `UltraVerseColors`; screens read roles and never branch on the mode themselves. Light mode maps the cyan accent to an accessible teal (`#0F7F8A`), because `#52E9EC` fails contrast on white.
+- The UI follows the saved appearance choice (Follow system / Light / Dark), not only the OS mode. `UltraVersePalette` carries one role set with a dark and a light instance, exposed through `UltraVerseColors`; screens read roles and never branch on the mode themselves. Light mode maps the cyan accent to an accessible teal (`#0B6F79`), because `#52E9EC` fails contrast on white.
+- Every light-mode role that is used as text clears WCAG AA (4.5:1) on the white, tinted-card, and gradient-end surfaces: `ink` `#0B2233`, `muted` `#3F5C6C`, `dim` `#557180`, `cyan` `#0B6F79`, `gold` `#8A6516`, `supported` `#0E7047`, `unavailable` `#C13342`. The earlier `dim` (`#7D97A6`, 2.9:1) and `gold` (`#9A7420`, 3.7:1) tones failed AA for small labels.
+- The hero ring and the header emblem draw `ultranet_coin_disc.png`, a square, transparent-cornered crop of the official render. Regenerate it with `python3 tools/make_coin_disc.py` after replacing `ultranet_official_coin.png` (the launcher icon still uses the full render).
 
 ## Build
 
@@ -32,6 +34,8 @@ Run local JVM and device tests with:
 
 The connected tests include the website BIP39 seed vector, shared WASM/native key/address/signature vectors, the Rust v1 digest fixture, AES-GCM tamper/wrong-password checks, API envelope and signed-byte-array contract checks, and Compose catalog/native-route regressions.
 
+`AppearanceModeTest` covers the header appearance menu: all three modes are offered, choosing Dark or Light repaints and updates the button's accessible name, and `AppearanceStore` reloads exactly what it saved. Prefer this test over injected taps when validating the switch, because a headless software-rendered emulator can silently drop injected touches.
+
 `WalletCryptoParityTest` runs four 310 000-iteration PBKDF2 derivations, so it takes minutes on a software-rendered emulator and seconds on hardware. Use `-Pandroid.testInstrumentationRunnerArguments.class=<class>` to run one class at a time when iterating.
 
 The portfolio shows a balance and nonce only when account data *and* transaction history both load. Without history, pending outgoing spend cannot be subtracted, so the screen reports unavailable data instead of an overstated balance.
@@ -42,7 +46,11 @@ A local API-36 Google APIs x86_64 AVD may be started with:
 emulator -avd UltraVerse_API_36 -no-window -no-audio -no-boot-anim -accel off -gpu swiftshader_indirect -no-snapshot
 ```
 
+Substituting `-gpu off` moves rasterisation into the guest and boots the same way; both are software paths and both hit the capture issue described below.
+
 The development host is WSL2 without KVM, so software-rendered emulator performance is limited and system-wide ANR warnings may occur. Prefer a hardware-accelerated emulator or physical device for UI iteration. The debug APK is at `app/build/outputs/apk/debug/app-debug.apk` after a successful build.
+
+Headless software rendering is not stable for long sessions: `adb exec-out screencap` eventually returns an all-black frame and `adb shell input tap` stops reaching the app while uiautomator dumps still look correct. The emulator console prints `Failed to find ColorBuffer` / `Failed to bind to texture` when this happens. A freshly booted emulator captures reliably, so take the screenshots you need right after `am start`, or restart the emulator; when touch input is dead, verify interaction through the instrumentation tests instead.
 
 ## Crypto source attribution
 

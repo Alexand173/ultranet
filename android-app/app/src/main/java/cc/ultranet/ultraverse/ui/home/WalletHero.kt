@@ -85,8 +85,10 @@ internal fun WalletHero(
                     .clip(CircleShape)
                     .background(UltraVerseColors.backgroundDeep),
             ) {
+                // The disc asset is square with transparent corners, so the gold ring frames the
+                // coin instead of a letterboxed photo edge.
                 Image(
-                    painter = painterResource(R.drawable.ultranet_official_coin),
+                    painter = painterResource(R.drawable.ultranet_coin_disc),
                     contentDescription = null,
                     modifier = Modifier
                         .fillMaxSize()

@@ -3,8 +3,10 @@ package cc.ultranet.ultraverse.ui.home
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -60,8 +62,12 @@ internal fun ServiceGroupSection(
             }
             Spacer(Modifier.height(9.dp))
             group.services.chunked(columns).forEach { rowServices ->
+                // IntrinsicSize.Max keeps every tile in a row the same height, so a tile with a
+                // detail line does not sit taller than its neighbours.
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Max),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.Top,
                 ) {
@@ -69,7 +75,9 @@ internal fun ServiceGroupSection(
                         ServiceTile(
                             service = service,
                             onOpen = { onOpenService(service) },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
                         )
                     }
                     repeat(columns - rowServices.size) {

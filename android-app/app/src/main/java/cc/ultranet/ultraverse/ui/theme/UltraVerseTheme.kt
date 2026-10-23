@@ -70,12 +70,14 @@ private val LightPalette = UltraVersePalette(
     surfaceRaised = Color(0xFFF1F7FA),
     outline = Color(0xFFD7E5EC),
     ink = Color(0xFF0B2233),
-    muted = Color(0xFF4F6D7E),
-    dim = Color(0xFF7D97A6),
-    cyan = Color(0xFF0F7F8A),
+    // muted/dim/cyan/gold/supported are tuned so every one of them clears WCAG AA (4.5:1) as
+    // text on the light backgrounds, including the tinted cards and the hero gradient stops.
+    muted = Color(0xFF3F5C6C),
+    dim = Color(0xFF557180),
+    cyan = Color(0xFF0B6F79),
     violet = Color(0xFF5B44C7),
-    gold = Color(0xFF9A7420),
-    supported = Color(0xFF14804F),
+    gold = Color(0xFF8A6516),
+    supported = Color(0xFF0E7047),
     unavailable = Color(0xFFC13342),
     heroGradient = listOf(
         Color(0xFFE7F6F8),

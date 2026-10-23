@@ -6,8 +6,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -67,10 +69,10 @@ internal fun ServiceTile(
         colors = CardDefaults.cardColors(containerColor = background),
         elevation = CardDefaults.cardElevation(defaultElevation = if (supported) 3.dp else 0.dp),
     ) {
-        Box(modifier = Modifier.fillMaxWidth()) {
+        Box(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .fillMaxSize()
                     .padding(start = 10.dp, top = 12.dp, end = 9.dp, bottom = 11.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -115,6 +117,8 @@ internal fun ServiceTile(
                 }
 
                 service.actionLabel?.let { action ->
+                    // Pinned to the bottom so the link lines up across an equal-height row.
+                    Spacer(Modifier.weight(1f))
                     Text(
                         text = "$action ↗",
                         color = UltraVerseColors.supported,
