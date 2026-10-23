@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -37,7 +38,9 @@ internal fun ServiceTile(
 ) {
     val supported = service.availability == Availability.Supported
     val shape = RoundedCornerShape(16.dp)
-    val background = if (supported) UltraVerseColors.supported.copy(alpha = 0.09f) else UltraVerseColors.surface
+    // Opaque, not alpha-tinted: a translucent container lets the elevation shadow show through and
+    // reads as a grey box on light surfaces.
+    val background = if (supported) UltraVerseColors.supported.copy(alpha = 0.09f).compositeOver(UltraVerseColors.surface) else UltraVerseColors.surface
     val outline = if (supported) UltraVerseColors.supported.copy(alpha = 0.46f) else UltraVerseColors.outline.copy(alpha = 0.74f)
     val spokenLabel = if (supported) {
         listOfNotNull("${service.name}. Supported path.", service.detail, service.actionLabel).joinToString(" ")

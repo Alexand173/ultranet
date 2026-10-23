@@ -34,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -57,15 +58,7 @@ internal fun WalletHero(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp))
-            .background(
-                Brush.linearGradient(
-                    listOf(
-                        Color(0xFF103948).copy(alpha = 0.72f),
-                        Color(0xFF10172E).copy(alpha = 0.62f),
-                        Color(0xFF2A1D4A).copy(alpha = 0.34f),
-                    ),
-                ),
-            )
+            .background(Brush.linearGradient(UltraVerseColors.heroGradient))
             .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 18.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -134,12 +127,15 @@ internal fun WalletHero(
                 .padding(top = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // Light mode has no glow to lean on, so the primary action fills solid for hierarchy.
+            val solidPrimary = !UltraVerseColors.isDark
             WalletAction(
                 label = "Create local wallet",
                 icon = Icons.Outlined.AccountBalanceWallet,
                 onClick = onCreateWallet,
                 modifier = Modifier.weight(1f),
                 accent = UltraVerseColors.cyan,
+                filled = solidPrimary,
             )
             WalletAction(
                 label = "Restore wallet",
@@ -177,17 +173,23 @@ private fun WalletAction(
     modifier: Modifier = Modifier,
     accent: Color,
     showArrow: Boolean = false,
+    filled: Boolean = false,
 ) {
+    val contentColor = if (filled) UltraVerseColors.backgroundDeep else accent
     Surface(
         modifier = modifier
             .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(
-                Brush.linearGradient(
-                    listOf(accent.copy(alpha = 0.19f), UltraVerseColors.surface.copy(alpha = 0.88f)),
-                ),
+                if (filled) {
+                    Brush.linearGradient(listOf(accent, accent))
+                } else {
+                    Brush.linearGradient(
+                        listOf(accent.copy(alpha = 0.19f), UltraVerseColors.surface.copy(alpha = 0.88f)),
+                    )
+                },
             )
-            .border(1.dp, accent.copy(alpha = 0.58f), RoundedCornerShape(14.dp))
+            .border(1.dp, if (filled) accent else accent.copy(alpha = 0.58f), RoundedCornerShape(14.dp))
             .clickable(role = Role.Button, onClick = onClick)
             .semantics { contentDescription = label },
         color = Color.Transparent,
@@ -201,11 +203,11 @@ private fun WalletAction(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(imageVector = icon, contentDescription = null, tint = accent, modifier = Modifier.size(17.dp))
+            Icon(imageVector = icon, contentDescription = null, tint = contentColor, modifier = Modifier.size(17.dp))
             Spacer(Modifier.width(6.dp))
             Text(
                 text = label,
-                color = accent,
+                color = contentColor,
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
@@ -216,7 +218,7 @@ private fun WalletAction(
                 androidx.compose.material3.Icon(
                     imageVector = Icons.Outlined.ArrowOutward,
                     contentDescription = null,
-                    tint = accent,
+                    tint = contentColor,
                     modifier = Modifier.size(15.dp),
                 )
             }

@@ -15,6 +15,13 @@ import cc.ultranet.ultraverse.ui.theme.UltraVerseColors
 /** A bounded, static network mesh. It is decorative and never represents market performance. */
 @Composable
 internal fun MeshBackdrop(modifier: Modifier = Modifier) {
+    // Resolved here because drawWithCache and onDrawBehind are not composable scopes.
+    val cyan = UltraVerseColors.cyan
+    val violet = UltraVerseColors.violet
+    val gold = UltraVerseColors.gold
+    val focalColor = UltraVerseColors.surfaceRaised
+    val isDark = UltraVerseColors.isDark
+    val washAlpha = if (isDark) 1f else 0.85f
     androidx.compose.foundation.layout.Box(
         modifier = modifier
             .fillMaxSize()
@@ -24,24 +31,22 @@ internal fun MeshBackdrop(modifier: Modifier = Modifier) {
                 val centerX = width * 0.5f
                 val horizonY = height * 0.55f
                 val bottomY = height * 0.97f
-                val cyan = UltraVerseColors.cyan
-                val violet = UltraVerseColors.violet
                 val meshStroke = 0.8.dp.toPx()
                 val nodeRadius = 1.15.dp.toPx()
                 val raySegments = 10
 
                 val tealWash = Brush.radialGradient(
-                    colors = listOf(cyan.copy(alpha = 0.14f), Color.Transparent),
+                    colors = listOf(cyan.copy(alpha = 0.14f * washAlpha), Color.Transparent),
                     center = Offset(width * 0.18f, height * 0.43f),
                     radius = width * 0.66f,
                 )
                 val violetWash = Brush.radialGradient(
-                    colors = listOf(violet.copy(alpha = 0.12f), Color.Transparent),
+                    colors = listOf(violet.copy(alpha = 0.12f * washAlpha), Color.Transparent),
                     center = Offset(width * 0.86f, height * 0.43f),
                     radius = width * 0.62f,
                 )
                 val focalWash = Brush.radialGradient(
-                    colors = listOf(Color(0xFF235D73).copy(alpha = 0.16f), Color.Transparent),
+                    colors = listOf(focalColor.copy(alpha = 0.16f * washAlpha), Color.Transparent),
                     center = Offset(centerX, height * 0.43f),
                     radius = width * 0.32f,
                 )
@@ -108,7 +113,7 @@ internal fun MeshBackdrop(modifier: Modifier = Modifier) {
                         )
                     }
                     drawCircle(
-                        color = UltraVerseColors.gold.copy(alpha = 0.24f),
+                        color = gold.copy(alpha = 0.24f),
                         radius = innerOrbit,
                         center = orbitCenter,
                         style = Stroke(width = 0.8.dp.toPx()),
