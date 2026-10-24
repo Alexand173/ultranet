@@ -1,10 +1,35 @@
 # Mining run sheet — UltraVerse on UltraNet
 
-**Baseline captured 2026-10-24T15:53Z:** `chain_length 2` · `mempool_size 3` · `validator_count 6` · pending
-proposals **none** · 1 activated validator · sovereign/approver `3b8ef38a…94e87ee3c`
+**Baseline captured 2026-10-24T16:33Z** (`/api/stats`, `/api/governance/proposals`, `/api/governance/approvals`):
+
+| Fact | Value |
+|---|---|
+| `chain_length` | **2** — blocks index 0 (genesis) and 1 exist; the next block is index **2** |
+| `mempool_size` | **3** |
+| `validator_count` | **6** |
+| `total_transactions` / `total_blocks` | 2 / 2 |
+| highest block | index 1, `hash 02784c34…`, `gas_used 81938`, `difficulty 0`, `epoch 1` |
+| pending validator proposals | **none** (`{"proposals": []}`) |
+| approval journal | **1 entry** (`total_count 1`, `has_more false`) |
+
+The single journal entry:
+
+| Field | Value |
+|---|---|
+| validator address, `hex(SHA3-256(public_key))` | `094420342ad33eda3ed61841d09317a4d9a6a903a0a4c95b61d14b8ce2c55d78` |
+| applicant, `proposal.proposer` | `2859eb671f8e03129932efd184f4707352a9770e61fc5e6b8215911c8bd377ed` |
+| approved by, `approval_transaction.sender` | `3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c` (sovereign) |
+| alias, `proposal.metadata` | `VladTepes` |
+| `is_active` / `stake` / `weight` | `true` / `1000` / `1` |
+| `joined_at` / `last_epoch` / `slash_count` | `1788338774` / `1` / `0` |
 
 > **Read this first:** the mempool is **not** empty. The first successful `/api/mine` will consume those
-> three transactions and produce block 3. Decide before you start whether that is acceptable.
+> three transactions and produce block **index 2**, not 3 — block indices are zero-based, so
+> `/api/block/2` currently answers `{"success":false,"message":"Block not found"}` and becomes the new
+> block after mining.
+>
+> **Second:** the validator's own address (`0944…`) and the address that applied (`2859…`) are
+> **different**. The app's gate opens only for the applicant — see step 2.
 
 ## 0. Preconditions
 
@@ -81,6 +106,22 @@ prints `NO activated record`, stop — the app's action stays disabled and minin
 `genesis.json` is not a source here: it declares `initial_validator_count: 5` with
 `validator_set_source: "runtime-generated during bootstrap"` and names no validator addresses.
 
+### Known gap: the app's gate matches the applicant, not the validator key
+
+`OperatorApi.hasValidatorRecord` compares the wallet address against `proposal.proposer`, then falls
+back to a substring search of the serialised approval row. Against the current journal, evaluated
+exactly as the app does it:
+
+| Wallet address | App gate |
+|---|---|
+| `2859eb67…` (applicant / proposer) | **opens** — the address appears in `proposal` |
+| `09442034…` (the validator key's own address) | **stays closed** — the row carries that key as a 2592-byte array, never as a hex address |
+
+So a wallet holding the validator's own key is refused by the app even though the node holds a valid,
+active record for it. The authoritative check is the derived address in the script above
+(`hex(SHA3-256(activated_validator.public_key))`). Until the app derives it too, unlock the **applicant**
+wallet `2859eb67…`, or patch `hasValidatorRecord` to compare the derived address.
+
 ## 3. Wallet on the phone
 
 1. `adb install -r app/build/outputs/apk/debug/app-debug.apk`
@@ -108,8 +149,12 @@ Tap **Validate transactions**, then:
 
 ```sh
 curl -sS https://api.ultranetwork.cc/api/stats | tee /tmp/stats-after.json | python3 -m json.tool
-curl -sS https://api.ultranetwork.cc/api/block/3 | python3 -m json.tool   # index = the new height
+curl -sS https://api.ultranetwork.cc/api/block/2 | python3 -m json.tool   # index = chain_length before mining
 ```
+
+Block indices are zero-based: with `chain_length 2` the existing blocks are 0 and 1, so the block
+produced by this run is index **2**, and `chain_length` becomes 3. Fetching `/api/block/3` would return
+`Block not found` even after a successful mine.
 
 The operator call itself, if run from the node instead of the phone:
 
@@ -136,6 +181,7 @@ python3 -m json.tool /tmp/mine.json; unset TOKEN
 
 | Symptom | Cause | Action |
 |---|---|---|
+| Action disabled, gate says no record | the app matches the applicant only, or the address has no record at all | run the step 2 script: `ACTIVATED` proves the node knows the key, so the app's heuristic is the blocker |
 | Action disabled, gate says no record | address matches no activated record | re-run step 2 with the copied address |
 | Gate green, action disabled | token not imported | import the token, 32+ characters |
 | 401 with a token that works in `curl` | trailing whitespace, or the node restarted with a new token | *Manage saved token* → replace |
@@ -150,11 +196,14 @@ Keystore entry; the wallet is untouched. Uninstalling removes both. Lock the wal
 Window (UTC):         __________ → __________
 App sha256:           27aa576d…c8ab7a7
 Wallet address:       ______________________________________
-Height before/after:  ______ → ______
-Mempool before/after: ______ → ______
+Height before/after:  2 → ______          (next block index: 2)
+Mempool before/after: 3 → ______
+Validator count:      6 → ______
 Block hash:           ______________________________________
 Verdict:              pass / fail — operator: ____  reviewer: ____
 ```
+
+Baseline already captured read-only on 2026-10-24T16:33Z; only the "after" columns need filling.
 
 ## What this run does not prove
 
