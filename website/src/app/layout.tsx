@@ -15,6 +15,7 @@ import GlobalCoin from "@/components/ui/GlobalCoin";
 import VisualNoise from "@/components/ui/VisualNoise";
 import GlobalCommandSearch from "@/components/ui/GlobalCommandSearch";
 import WalletSessionProvider from "@/components/wallet/WalletSessionProvider";
+import WalletBalancePill from "@/components/wallet/WalletBalancePill";
 
 export default function RootLayout({
   children,
@@ -35,6 +36,7 @@ export default function RootLayout({
           <SmoothScroll>
             <Navbar />
             <GlobalCoin />
+            <WalletBalancePill />
             {children}
           </SmoothScroll>
         </WalletSessionProvider>

@@ -27,6 +27,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -62,9 +63,13 @@ import cc.ultranet.ultraverse.ui.operator.MiningScreen
 import cc.ultranet.ultraverse.ui.theme.AppearanceMode
 import cc.ultranet.ultraverse.ui.theme.UltraVerseColors
 import cc.ultranet.ultraverse.ui.validator.ValidatorScreen
+import cc.ultranet.ultraverse.ui.wallet.LocalWalletBalance
+import cc.ultranet.ultraverse.ui.wallet.WalletBalanceHeaderState
 import cc.ultranet.ultraverse.ui.wallet.WalletFlowScreen
 import cc.ultranet.ultraverse.ui.wallet.WalletRoute
 import cc.ultranet.ultraverse.wallet.WalletController
+import cc.ultranet.ultraverse.wallet.WalletUiState
+import cc.ultranet.ultraverse.wallet.availableAfterPending
 import kotlinx.coroutines.launch
 
 /** Top-level native destinations. Every supported catalog entry maps to one of these. */
@@ -83,6 +88,8 @@ internal fun UltraVerseApp(
     val controller = remember { WalletController(context.applicationContext) }
     var section by remember { mutableStateOf(HomeSection.Apps) }
     var route by remember { mutableStateOf(WalletRoute.Apps) }
+    // Set when Portfolio is opened from a tool screen, so Back returns to that tool instead of home.
+    var portfolioReturn by remember { mutableStateOf<HomeSection?>(null) }
     val currentRoute by rememberUpdatedState(route)
     val currentSection by rememberUpdatedState(section)
 
@@ -128,7 +135,8 @@ internal fun UltraVerseApp(
                     selectedTab = selectedTab,
                     onPortfolio = { section = HomeSection.Wallet; route = WalletRoute.Portfolio },
                     onApps = {
-                        controller.lock()
+                        // Switching to another service must not end the wallet session; the session
+                        // ends on an explicit Lock, or when the activity stops (see the observer above).
                         section = HomeSection.Apps
                         route = WalletRoute.Apps
                         scope.launch { listState.animateScrollToItem(index = HomeHeader.entries.size) }
@@ -137,15 +145,27 @@ internal fun UltraVerseApp(
             }
         },
     ) { scaffoldPadding ->
+        // Every tool top bar shows the live balance; provide it once here instead of threading it
+        // through each screen's private panes. Opening Portfolio remembers the originating tool.
+        CompositionLocalProvider(
+            LocalWalletBalance provides WalletBalanceHeaderState(controller.state) {
+                portfolioReturn = section
+                section = HomeSection.Wallet
+                route = WalletRoute.Portfolio
+            },
+        ) {
         when (section) {
             HomeSection.Apps -> AppsDirectory(
                 listState = listState,
                 modifier = Modifier.padding(scaffoldPadding),
                 appearance = appearance,
                 onAppearanceChange = onAppearanceChange,
+                walletState = controller.state,
                 onCreateWallet = { openWallet(); route = WalletRoute.Create },
                 onRestoreWallet = { openWallet(); route = WalletRoute.Restore },
                 onOpenWallet = { openWallet() },
+                onOpenPortfolio = { portfolioReturn = null; openWallet() },
+                onRefreshBalance = { scope.launch { controller.refreshAccount() } },
                 onOpenService = openService,
             )
 
@@ -154,8 +174,9 @@ internal fun UltraVerseApp(
                 route = route,
                 onRoute = {
                     if (it == WalletRoute.Apps) {
-                        controller.lock()
-                        section = HomeSection.Apps
+                        // Leaving the wallet screen keeps the session: only an explicit lock ends it.
+                        section = portfolioReturn ?: HomeSection.Apps
+                        portfolioReturn = null
                     } else {
                         section = HomeSection.Wallet
                     }
@@ -221,6 +242,7 @@ internal fun UltraVerseApp(
                 onOpenValidator = { section = HomeSection.Validator },
             )
         }
+        }
     }
 }
 
@@ -229,10 +251,13 @@ private fun AppsDirectory(
     listState: androidx.compose.foundation.lazy.LazyListState,
     appearance: AppearanceMode,
     onAppearanceChange: (AppearanceMode) -> Unit,
+    walletState: WalletUiState,
     modifier: Modifier = Modifier,
     onCreateWallet: () -> Unit,
     onRestoreWallet: () -> Unit,
     onOpenWallet: () -> Unit,
+    onOpenPortfolio: () -> Unit,
+    onRefreshBalance: () -> Unit,
     onOpenService: (ServiceEntry) -> Unit,
 ) {
     LazyColumn(
@@ -258,9 +283,17 @@ private fun AppsDirectory(
                         onAppearanceChange = onAppearanceChange,
                     )
                     HomeHeader.Hero -> WalletHero(
+                        walletExists = walletState.storedWallet != null,
+                        unlocked = walletState.unlocked,
+                        accountBalanceBaseUnits = walletState.account?.balanceBaseUnits,
+                        availableBaseUnits = walletState.availableAfterPending(),
+                        balanceHistory = walletState.balanceHistory,
+                        isRefreshing = walletState.isRefreshing,
                         onCreateWallet = onCreateWallet,
                         onRestoreWallet = onRestoreWallet,
                         onOpenWallet = onOpenWallet,
+                        onOpenPortfolio = onOpenPortfolio,
+                        onRefresh = onRefreshBalance,
                     )
                     HomeHeader.Legend -> AvailabilityLegend(
                         modifier = Modifier

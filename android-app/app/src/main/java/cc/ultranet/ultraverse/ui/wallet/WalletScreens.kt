@@ -6,6 +6,7 @@ import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,6 +57,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -65,13 +68,17 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import cc.ultranet.ultraverse.ui.home.BalanceSparkline
 import cc.ultranet.ultraverse.ui.theme.UltraVerseColors
+import cc.ultranet.ultraverse.ui.tool.shortAddress
 import cc.ultranet.ultraverse.wallet.AccountSnapshot
 import cc.ultranet.ultraverse.wallet.FeeEstimate
 import cc.ultranet.ultraverse.wallet.TransactionRecord
 import cc.ultranet.ultraverse.wallet.TransactionStatus
 import cc.ultranet.ultraverse.wallet.WalletCrypto
 import cc.ultranet.ultraverse.wallet.WalletUiState
+import cc.ultranet.ultraverse.wallet.availableAfterPending
+import cc.ultranet.ultraverse.wallet.pendingOutflow
 import kotlinx.coroutines.launch
 import java.security.SecureRandom
 import java.text.DecimalFormat
@@ -262,42 +269,87 @@ private fun PortfolioScreen(
     }
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
+    var filter by remember(wallet.address) { mutableStateOf(TransactionFilter.All) }
+    var expandedHash by remember(wallet.address) { mutableStateOf<String?>(null) }
+    var showObservedHistory by remember(wallet.address) { mutableStateOf(false) }
+    val confirmed = state.history.filter { it.status == TransactionStatus.Confirmed }
+    val moneyIn = confirmed.filter { it.recipient == wallet.address }.sumOf { it.amountBaseUnits }
+    val moneyOut = confirmed.filter { it.sender == wallet.address }.sumOf { it.amountBaseUnits + it.feeBaseUnits }
+    val reserved = state.pendingOutflow()
+    val available = state.availableAfterPending()
+    val visible = when (filter) {
+        TransactionFilter.All -> state.history
+        TransactionFilter.Sent -> state.history.filter { it.sender == wallet.address }
+        TransactionFilter.Received -> state.history.filter { it.recipient == wallet.address }
+    }
+    val pendingRecords = visible.filter { it.status == TransactionStatus.Pending }
+    val dayGroups = visible
+        .filter { it.status == TransactionStatus.Confirmed }
+        .groupBy { dayStartMillis(it.timestamp) }
+        .toSortedMap(compareByDescending { it })
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = UltraVerseColors.surface),
-                shape = RoundedCornerShape(22.dp),
-                modifier = Modifier.fillMaxWidth().border(1.dp, UltraVerseColors.cyan.copy(alpha = .28f), RoundedCornerShape(22.dp)),
-            ) {
-                Column(Modifier.padding(20.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("$ULTRA_SYMBOL BALANCE", color = UltraVerseColors.muted, style = MaterialTheme.typography.labelMedium, letterSpacing = 1.2.sp, modifier = Modifier.weight(1f))
-                        IconButton(onClick = onRefresh, enabled = !state.isRefreshing, modifier = Modifier.size(48.dp)) {
-                            if (state.isRefreshing) CircularProgressIndicator(Modifier.size(20.dp), color = UltraVerseColors.cyan, strokeWidth = 2.dp)
-                            else Icon(Icons.Outlined.Refresh, contentDescription = "Refresh account", tint = UltraVerseColors.cyan)
-                        }
-                    }
-                    Text(
-                        text = state.account?.takeIf { state.historyAvailable }?.let { formatUltra(it.balanceBaseUnits) } ?: "—",
-                        modifier = Modifier.padding(top = 2.dp),
-                        color = UltraVerseColors.ink,
-                        style = MaterialTheme.typography.headlineLarge,
-                        fontWeight = FontWeight.Bold,
+            // Reconciliation first, unboxed: account balance, what pending sends already reserve,
+            // and what is left. Three equal stat cards would hide exactly this relationship.
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp)) {
+                Text(
+                    text = "Account balance",
+                    color = UltraVerseColors.muted,
+                    style = MaterialTheme.typography.labelMedium,
+                    letterSpacing = 1.2.sp,
+                )
+                Text(
+                    text = state.account?.let { formatUltra(it.balanceBaseUnits) } ?: "Balance unavailable",
+                    modifier = Modifier.padding(top = 2.dp),
+                    color = if (state.account == null) UltraVerseColors.dim else UltraVerseColors.ink,
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                if (reserved > 0) {
+                    StatementLine(
+                        label = "Pending sends, including fees",
+                        value = "−${formatUltra(reserved)}",
+                        valueColor = UltraVerseColors.gold,
                     )
-                    Text(
-                        text = if (state.account == null || !state.historyAvailable) "Live account data unavailable" else "${formatUltra(availableBalance(state.account, state.history))} available after pending sends",
-                        modifier = Modifier.padding(top = 4.dp),
-                        color = UltraVerseColors.muted,
-                        style = MaterialTheme.typography.bodySmall,
+                }
+                HorizontalDivider(color = UltraVerseColors.outline, modifier = Modifier.padding(vertical = 8.dp))
+                StatementLine(
+                    label = "Available after pending sends",
+                    value = available?.let(::formatUltra) ?: "Could not be verified",
+                    valueColor = if (available == null) UltraVerseColors.dim else UltraVerseColors.cyan,
+                    emphasized = true,
+                )
+                Text(
+                    text = when {
+                        state.account == null -> "The node has not returned this account yet. Refresh to read it."
+                        !state.historyAvailable -> "Without loaded history the app cannot know what pending sends reserve."
+                        !state.historyComplete -> "History reached the 100-record limit, so availability may be overstated."
+                        else -> "Pending sends reserve their amount and network fee."
+                    },
+                    modifier = Modifier.padding(top = 6.dp),
+                    color = UltraVerseColors.dim,
+                    style = MaterialTheme.typography.labelSmall,
+                    lineHeight = 14.sp,
+                )
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    PrimaryAction(
+                        label = "Send $ULTRA_SYMBOL",
+                        onClick = onSend,
+                        modifier = Modifier.weight(1f),
+                        enabled = state.account != null && state.historyAvailable && state.historyComplete && !state.isRefreshing && state.unresolvedTransfer == null,
                     )
-                    Spacer(Modifier.height(16.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        PrimaryAction("Send", onSend, modifier = Modifier.weight(1f), enabled = state.account != null && state.historyAvailable && state.historyComplete && !state.isRefreshing && state.unresolvedTransfer == null)
-                        OutlinedButton(onClick = onRefresh, modifier = Modifier.weight(1f).heightIn(min = 48.dp), enabled = !state.isRefreshing) { Text("Refresh") }
+                    OutlinedButton(
+                        onClick = onRefresh,
+                        modifier = Modifier.heightIn(min = 48.dp),
+                        enabled = !state.isRefreshing,
+                    ) {
+                        if (state.isRefreshing) CircularProgressIndicator(Modifier.size(18.dp), color = UltraVerseColors.cyan, strokeWidth = 2.dp)
+                        else Text("Refresh")
                     }
                 }
             }
@@ -342,15 +394,319 @@ private fun PortfolioScreen(
                 }
             }
         }
-        item { Text("Recent activity", color = UltraVerseColors.ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        item {
+            Row(
+                modifier = Modifier.padding(top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Account statement",
+                    modifier = Modifier.weight(1f),
+                    color = UltraVerseColors.ink,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(coverageLabel(state), color = UltraVerseColors.dim, style = MaterialTheme.typography.labelSmall)
+            }
+            Row(modifier = Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(26.dp)) {
+                MoneyTotal("Money in", moneyIn, UltraVerseColors.supported)
+                MoneyTotal("Money out", moneyOut, UltraVerseColors.ink)
+            }
+            Text(
+                text = "Confirmed transfers only. Pending items reserve funds and are listed separately.",
+                modifier = Modifier.padding(top = 6.dp),
+                color = UltraVerseColors.dim,
+                style = MaterialTheme.typography.labelSmall,
+                lineHeight = 14.sp,
+            )
+            Row(
+                modifier = Modifier.padding(top = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TransactionFilter.entries.forEach { option ->
+                    val selected = filter == option
+                    Surface(
+                        onClick = { filter = option },
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (selected) UltraVerseColors.cyan.copy(alpha = 0.16f) else UltraVerseColors.surface.copy(alpha = 0.7f),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (selected) UltraVerseColors.cyan.copy(alpha = 0.55f) else UltraVerseColors.outline.copy(alpha = 0.6f),
+                        ),
+                    ) {
+                        Text(
+                            text = option.label,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                            color = if (selected) UltraVerseColors.cyan else UltraVerseColors.muted,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                        )
+                    }
+                }
+            }
+        }
+
         if (!state.historyAvailable && state.history.isEmpty()) {
             item { InlineMessage("Transaction history is unavailable. Refresh before preparing a transfer.", isError = false) }
-        } else if (state.history.isEmpty()) {
-            item { InlineMessage("No transactions returned by the node yet.", isError = false) }
-        } else {
-            items(state.history, key = { it.hash }) { record -> TransactionRow(record, wallet.address) }
+        } else if (visible.isEmpty()) {
+            item {
+                InlineMessage(
+                    message = if (state.history.isEmpty()) {
+                        "No transactions returned by the node yet."
+                    } else {
+                        "No ${filter.label.lowercase()} transfers in the loaded history."
+                    },
+                    isError = false,
+                )
+            }
+        }
+
+        if (pendingRecords.isNotEmpty()) {
+            item {
+                Text(
+                    text = "Pending · not in the totals above",
+                    modifier = Modifier.padding(top = 6.dp),
+                    color = UltraVerseColors.gold,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            items(pendingRecords, key = { "pending-${it.hash}" }) { record ->
+                StatementRow(
+                    record = record,
+                    ownAddress = wallet.address,
+                    expanded = expandedHash == record.hash,
+                    onToggle = { expandedHash = if (expandedHash == record.hash) null else record.hash },
+                )
+            }
+        }
+
+        dayGroups.forEach { (day, records) ->
+            item(key = "day-$day") {
+                Text(
+                    text = formatDayLabel(day),
+                    modifier = Modifier.padding(top = 10.dp),
+                    color = UltraVerseColors.muted,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            items(records, key = { "row-${it.hash}" }) { record ->
+                StatementRow(
+                    record = record,
+                    ownAddress = wallet.address,
+                    expanded = expandedHash == record.hash,
+                    onToggle = { expandedHash = if (expandedHash == record.hash) null else record.hash },
+                )
+            }
+        }
+
+        item {
+            Spacer(Modifier.height(6.dp))
+            Surface(
+                onClick = { showObservedHistory = !showObservedHistory },
+                shape = RoundedCornerShape(12.dp),
+                color = UltraVerseColors.surface.copy(alpha = 0.6f),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Observed balance history",
+                        modifier = Modifier.weight(1f),
+                        color = UltraVerseColors.ink,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = if (showObservedHistory) "Hide" else "${state.balanceHistory.size} points",
+                        color = UltraVerseColors.cyan,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
+            if (showObservedHistory) {
+                if (state.balanceHistory.isEmpty()) {
+                    Text(
+                        text = "No observations yet. Each successful refresh records the balance the node returned.",
+                        modifier = Modifier.padding(top = 8.dp),
+                        color = UltraVerseColors.dim,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                } else {
+                    BalanceSparkline(
+                        observations = state.balanceHistory,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    Text(
+                        text = "Points are recorded on refresh, not measured continuously; gaps mean the app did not read the node.",
+                        modifier = Modifier.padding(top = 6.dp),
+                        color = UltraVerseColors.dim,
+                        style = MaterialTheme.typography.labelSmall,
+                        lineHeight = 14.sp,
+                    )
+                    state.balanceHistory.takeLast(4).reversed().forEach { sample ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = formatObservedAt(sample.atMillis),
+                                color = UltraVerseColors.muted,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                            Text(
+                                text = formatUltra(sample.balanceBaseUnits),
+                                color = UltraVerseColors.ink,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun MoneyTotal(label: String, baseUnits: Long, color: androidx.compose.ui.graphics.Color) {
+    Column {
+        Text(label, color = UltraVerseColors.muted, style = MaterialTheme.typography.labelSmall)
+        Text(
+            text = formatUltra(baseUnits),
+            modifier = Modifier.padding(top = 1.dp),
+            color = color,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
+private fun StatementLine(
+    label: String,
+    value: String,
+    valueColor: androidx.compose.ui.graphics.Color,
+    emphasized: Boolean = false,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.weight(1f),
+            color = if (emphasized) UltraVerseColors.ink else UltraVerseColors.muted,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = if (emphasized) FontWeight.SemiBold else FontWeight.Normal,
+        )
+        Text(
+            text = value,
+            color = valueColor,
+            style = if (emphasized) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+/**
+ * One statement row. Separated by whitespace rather than boxed, and expanded in place so the
+ * ledger keeps reading as a statement instead of a stack of cards.
+ */
+@Composable
+private fun StatementRow(
+    record: TransactionRecord,
+    ownAddress: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val outgoing = record.sender == ownAddress
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(role = Role.Button, onClick = onToggle)
+            .semantics {
+                contentDescription = buildString {
+                    append(if (outgoing) "Sent to " else "Received from ")
+                    append(shortAddress(if (outgoing) record.recipient else record.sender))
+                    append(", ")
+                    append(if (outgoing) "minus " else "plus ")
+                    append(formatUltra(record.amountBaseUnits))
+                    append(", ")
+                    append(formatObservedAt(record.timestamp * 1000L))
+                    append(", ")
+                    append(if (record.status == TransactionStatus.Pending) "pending" else "confirmed")
+                }
+            }
+            .padding(vertical = 9.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                Text(
+                    text = (if (outgoing) "Sent to " else "Received from ") +
+                        shortAddress(if (outgoing) record.recipient else record.sender),
+                    color = UltraVerseColors.ink,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = formatObservedAt(record.timestamp * 1000L) + " · " +
+                        if (record.status == TransactionStatus.Pending) "Pending" else "Confirmed",
+                    modifier = Modifier.padding(top = 2.dp),
+                    color = if (record.status == TransactionStatus.Pending) UltraVerseColors.gold else UltraVerseColors.muted,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+            Text(
+                text = (if (outgoing) "−" else "+") + formatUltra(record.amountBaseUnits),
+                color = if (outgoing) UltraVerseColors.ink else UltraVerseColors.supported,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        if (expanded) {
+            Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                ReviewLine("Network fee", formatUltra(record.feeBaseUnits))
+                ReviewLine("Nonce", record.nonce.toString())
+                ReviewLine("Counterparty", if (outgoing) record.recipient else record.sender)
+                ReviewLine("Transaction hash", record.hash)
+            }
+        }
+    }
+    HorizontalDivider(color = UltraVerseColors.outline.copy(alpha = 0.4f))
+}
+
+private enum class TransactionFilter(val label: String) {
+    All("All"),
+    Sent("Sent"),
+    Received("Received"),
+}
+
+private fun dayStartMillis(timestampSeconds: Long): Long {
+    val calendar = java.util.Calendar.getInstance()
+    calendar.timeInMillis = timestampSeconds * 1000L
+    calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
+    calendar.set(java.util.Calendar.MINUTE, 0)
+    calendar.set(java.util.Calendar.SECOND, 0)
+    calendar.set(java.util.Calendar.MILLISECOND, 0)
+    return calendar.timeInMillis
+}
+
+private fun formatDayLabel(dayStartMillis: Long): String =
+    java.text.SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(java.util.Date(dayStartMillis))
+
+private fun formatObservedAt(atMillis: Long): String =
+    java.text.SimpleDateFormat("d MMM yyyy, HH:mm", Locale.getDefault()).format(java.util.Date(atMillis))
+
+private fun coverageLabel(state: WalletUiState): String = when {
+    !state.historyAvailable -> "History unavailable"
+    state.historyComplete -> "Complete history"
+    else -> "Latest 100 records"
 }
 
 @Composable
@@ -652,20 +1008,6 @@ private fun TransactionResultScreen(state: WalletUiState, onRefresh: () -> Unit,
 }
 
 @Composable
-private fun TransactionRow(record: TransactionRecord, ownAddress: String) {
-    val outgoing = record.sender == ownAddress
-    Card(colors = CardDefaults.cardColors(containerColor = UltraVerseColors.surface.copy(alpha = .72f)), shape = RoundedCornerShape(14.dp)) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(if (outgoing) "Sent to ${record.recipient.take(10)}…" else "Received from ${record.sender.take(10)}…", color = UltraVerseColors.ink, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(record.status.name.lowercase().replaceFirstChar(Char::uppercase) + " · nonce ${record.nonce}", modifier = Modifier.padding(top = 4.dp), color = UltraVerseColors.muted, style = MaterialTheme.typography.labelSmall)
-            }
-            Text("${if (outgoing) "−" else "+"}${formatUltra(record.amountBaseUnits)}", color = if (outgoing) UltraVerseColors.ink else UltraVerseColors.supported, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-        }
-    }
-}
-
-@Composable
 private fun FeeSummary(estimate: FeeEstimate) {
     Card(modifier = Modifier.fillMaxWidth().padding(top = 12.dp), colors = CardDefaults.cardColors(containerColor = UltraVerseColors.surface), shape = RoundedCornerShape(14.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -744,13 +1086,6 @@ private fun formatUltra(baseUnits: Long): String {
     val symbols = DecimalFormatSymbols(Locale.US)
     val grouped = DecimalFormat("#,##0", symbols).format(whole)
     return (if (negative) "−" else "") + grouped + "." + fraction
-}
-
-private fun availableBalance(account: AccountSnapshot, history: List<TransactionRecord>): Long {
-    val pending = history.asSequence()
-        .filter { it.status == TransactionStatus.Pending && it.sender == account.address }
-        .sumOf { it.amountBaseUnits + it.feeBaseUnits }
-    return (account.balanceBaseUnits - pending).coerceAtLeast(0)
 }
 
 private const val ULTRA_SYMBOL = "\$ULTRA"

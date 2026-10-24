@@ -52,6 +52,7 @@ import cc.ultranet.ultraverse.ui.tool.ToolPrimaryAction
 import cc.ultranet.ultraverse.ui.tool.ToolSectionLabel
 import cc.ultranet.ultraverse.ui.tool.ToolTextField
 import cc.ultranet.ultraverse.ui.tool.ToolTopBar
+import cc.ultranet.ultraverse.ui.wallet.ToolBalanceAction
 import cc.ultranet.ultraverse.ui.tool.formatUltra
 import cc.ultranet.ultraverse.ui.tool.shortAddress
 import kotlinx.coroutines.launch
@@ -224,7 +225,7 @@ private fun RegistryBody(
     onSelect: (AppChainSummary) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize().background(UltraVerseColors.background)) {
-        ToolTopBar(title = "AppChains", onBack = onBack)
+        ToolTopBar(title = "AppChains", onBack = onBack, action = { ToolBalanceAction() })
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -344,7 +345,12 @@ private fun ChainDetailBody(
     onCopyTreasury: (String) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize().background(UltraVerseColors.background)) {
-        ToolTopBar(title = chain.name, subtitle = "AppChain #${chain.id}", onBack = onBack)
+        ToolTopBar(
+            title = chain.name,
+            subtitle = "AppChain #${chain.id}",
+            onBack = onBack,
+            action = { ToolBalanceAction() },
+        )
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -459,7 +465,7 @@ private fun CreateChainBody(
     }
 
     Column(modifier = Modifier.fillMaxSize().background(UltraVerseColors.background)) {
-        ToolTopBar(title = "Create chain", subtitle = "AppChains", onBack = onBack)
+        ToolTopBar(title = "Create chain", subtitle = "AppChains", onBack = onBack, action = { ToolBalanceAction() })
         Column(
             modifier = Modifier
                 .weight(1f)

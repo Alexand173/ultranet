@@ -47,6 +47,7 @@ import cc.ultranet.ultraverse.ui.tool.ToolSectionLabel
 import cc.ultranet.ultraverse.ui.tool.ToolTextField
 import cc.ultranet.ultraverse.ui.tool.ToolTopBar
 import cc.ultranet.ultraverse.ui.tool.shortAddress
+import cc.ultranet.ultraverse.ui.wallet.ToolBalanceAction
 import cc.ultranet.ultraverse.wallet.ValidatorProposalSigner
 import kotlinx.coroutines.launch
 
@@ -94,7 +95,7 @@ internal fun ValidatorScreen(
 
     when (pane) {
         ValidatorPane.Overview -> Column(modifier = Modifier.fillMaxSize().background(UltraVerseColors.background)) {
-            ToolTopBar(title = "Validator", onBack = onBack)
+            ToolTopBar(title = "Validator", onBack = onBack, action = { ToolBalanceAction() })
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -335,7 +336,7 @@ private fun ApplyBody(
         ValidatorProposalSigner.validatePublicKey(normalizedKey) == null
 
     Column(modifier = Modifier.fillMaxSize().background(UltraVerseColors.background)) {
-        ToolTopBar(title = "Apply as validator", subtitle = "Validator", onBack = onBack)
+        ToolTopBar(title = "Apply as validator", subtitle = "Validator", onBack = onBack, action = { ToolBalanceAction() })
         Column(
             modifier = Modifier
                 .weight(1f)

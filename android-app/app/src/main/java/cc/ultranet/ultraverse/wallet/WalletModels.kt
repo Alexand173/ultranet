@@ -69,6 +69,12 @@ internal data class SignedTransfer(
     }
 }
 
+/** One balance the app actually read from the node, captured for the observed-history graphic. */
+internal data class BalanceObservation(
+    val atMillis: Long,
+    val balanceBaseUnits: Long,
+)
+
 internal data class WalletUiState(
     val initialized: Boolean = false,
     val storageError: Boolean = false,
@@ -76,6 +82,7 @@ internal data class WalletUiState(
     val unlocked: Boolean = false,
     val sessionEpoch: Long = 0,
     val account: AccountSnapshot? = null,
+    val balanceHistory: List<BalanceObservation> = emptyList(),
     val history: List<TransactionRecord> = emptyList(),
     val historyAvailable: Boolean = false,
     val historyComplete: Boolean = false,
@@ -90,6 +97,25 @@ internal data class WalletUiState(
     val unresolvedTransfer: SignedTransfer? = null,
     val lastTransaction: TransactionRecord? = null,
 )
+
+/** Amount plus fee already reserved by pending outgoing transfers. */
+internal fun WalletUiState.pendingOutflow(): Long {
+    val account = account ?: return 0L
+    return history.asSequence()
+        .filter { it.status == TransactionStatus.Pending && it.sender == account.address }
+        .fold(0L) { total, record -> total + record.amountBaseUnits + record.feeBaseUnits }
+}
+
+/**
+ * Node balance minus pending outgoing commitments, or null when it cannot be verified: without a
+ * loaded history the app cannot know what is already reserved, so it reports unavailable rather
+ * than an overstated spendable figure.
+ */
+internal fun WalletUiState.availableAfterPending(): Long? {
+    val account = account ?: return null
+    if (!historyAvailable) return null
+    return (account.balanceBaseUnits - pendingOutflow()).coerceAtLeast(0L)
+}
 
 internal const val WALLET_VERSION = 1
 internal const val WALLET_KDF_ITERATIONS = 310_000

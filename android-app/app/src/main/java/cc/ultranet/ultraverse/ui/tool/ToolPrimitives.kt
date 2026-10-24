@@ -257,6 +257,16 @@ internal fun shortAddress(value: String?): String = when {
     else -> "${value.take(10)}…${value.takeLast(8)}"
 }
 
+/** Same grouping rules as [formatUltra] without the symbol, for headline balances. */
+internal fun formatUltraValue(baseUnits: Long?): String {
+    if (baseUnits == null) return "—"
+    val whole = baseUnits / 1_000_000L
+    val fraction = baseUnits % 1_000_000L
+    val grouped = NumberFormat.getIntegerInstance(Locale.getDefault()).format(whole)
+    if (fraction == 0L) return grouped
+    return "$grouped.${fraction.toString().padStart(6, '0').trimEnd('0')}"
+}
+
 /** Formats base units (six decimals) without inventing precision the node did not send. */
 internal fun formatUltra(baseUnits: Long?): String {
     if (baseUnits == null) return "Unavailable"

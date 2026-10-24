@@ -16,8 +16,11 @@ import type {
   WalletSessionState,
 } from "@/components/wallet/wallet.types";
 
-const LOCAL_WALLET_AUTO_LOCK_MS = 15 * 60 * 1000;
-const INTERNAL_NAVIGATION_GRACE_MS = 1_500;
+// The local session lasts as long as the tab is open. The provider is mounted in the root layout,
+// so moving between pages keeps the unlocked key material in memory; only an explicit lock — or
+// losing the tab, which discards that material — ends it. There is deliberately no inactivity
+// timer and no lock-on-tab-hidden: both ended the session while the user was reading or briefly
+// switching windows, which is not a boundary this client can enforce anyway.
 
 const WalletSessionContext = createContext<WalletSessionContextValue | null>(null);
 
@@ -31,8 +34,6 @@ export default function WalletSessionProvider({ children }: { children: React.Re
   const activeSigningRef = useRef(0);
   const pendingLockRef = useRef(false);
   const deferredMaterialWipeRef = useRef<Set<LocalWalletKeyMaterial>>(new Set());
-  const navigationGraceDeadlineRef = useRef(0);
-  const hiddenLockTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -51,35 +52,6 @@ export default function WalletSessionProvider({ children }: { children: React.Re
 
     return () => {
       active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    const markSameOriginNavigation = (event: MouseEvent) => {
-      if (
-        event.button !== 0 ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.shiftKey ||
-        event.altKey ||
-        !(event.target instanceof Element)
-      ) return;
-
-      const anchor = event.target.closest("a");
-      if (!anchor || (anchor.target && anchor.target !== "_self") || anchor.hasAttribute("download")) return;
-
-      const destination = new URL(anchor.href, window.location.href);
-      const current = new URL(window.location.href);
-      if (destination.origin !== current.origin || destination.href === current.href) return;
-
-      navigationGraceDeadlineRef.current = Date.now() + INTERNAL_NAVIGATION_GRACE_MS;
-    };
-
-    document.addEventListener("pointerdown", markSameOriginNavigation, true);
-    document.addEventListener("click", markSameOriginNavigation, true);
-    return () => {
-      document.removeEventListener("pointerdown", markSameOriginNavigation, true);
-      document.removeEventListener("click", markSameOriginNavigation, true);
     };
   }, []);
 
@@ -103,11 +75,6 @@ export default function WalletSessionProvider({ children }: { children: React.Re
   }, []);
 
   const performLock = useCallback(() => {
-    if (hiddenLockTimerRef.current !== null) {
-      window.clearTimeout(hiddenLockTimerRef.current);
-      hiddenLockTimerRef.current = null;
-    }
-    navigationGraceDeadlineRef.current = 0;
     const material = materialRef.current;
     materialRef.current = null;
     pendingLockRef.current = false;
@@ -156,62 +123,9 @@ export default function WalletSessionProvider({ children }: { children: React.Re
     setSessionState("unlocked");
   }, []);
 
-  useEffect(() => {
-    if (sessionState !== "unlocked") return;
-
-    let timeout = window.setTimeout(lock, LOCAL_WALLET_AUTO_LOCK_MS);
-    const refreshInactivityTimeout = () => {
-      window.clearTimeout(timeout);
-      timeout = window.setTimeout(lock, LOCAL_WALLET_AUTO_LOCK_MS);
-    };
-    const clearHiddenLockTimer = () => {
-      if (hiddenLockTimerRef.current !== null) {
-        window.clearTimeout(hiddenLockTimerRef.current);
-        hiddenLockTimerRef.current = null;
-      }
-      navigationGraceDeadlineRef.current = 0;
-    };
-    const lockWhenHidden = () => {
-      if (document.visibilityState !== "hidden") {
-        clearHiddenLockTimer();
-        return;
-      }
-
-      const remainingGrace = navigationGraceDeadlineRef.current - Date.now();
-      if (remainingGrace <= 0) {
-        lock();
-        return;
-      }
-
-      if (hiddenLockTimerRef.current !== null) window.clearTimeout(hiddenLockTimerRef.current);
-      hiddenLockTimerRef.current = window.setTimeout(() => {
-        hiddenLockTimerRef.current = null;
-        navigationGraceDeadlineRef.current = 0;
-        if (document.visibilityState === "hidden") lock();
-      }, remainingGrace);
-    };
-
-    document.addEventListener("pointerdown", refreshInactivityTimeout, { passive: true });
-    document.addEventListener("keydown", refreshInactivityTimeout, { passive: true });
-    document.addEventListener("touchstart", refreshInactivityTimeout, { passive: true });
-    document.addEventListener("visibilitychange", lockWhenHidden);
-
-    return () => {
-      window.clearTimeout(timeout);
-      clearHiddenLockTimer();
-      document.removeEventListener("pointerdown", refreshInactivityTimeout);
-      document.removeEventListener("keydown", refreshInactivityTimeout);
-      document.removeEventListener("touchstart", refreshInactivityTimeout);
-      document.removeEventListener("visibilitychange", lockWhenHidden);
-    };
-  }, [lock, sessionState]);
-
+  // Wipe the in-memory key when the app unmounts (tab closed or full navigation away). No timer
+  // and no visibility handler run here: those would end the session while the tab is still open.
   useEffect(() => () => {
-    if (hiddenLockTimerRef.current !== null) {
-      window.clearTimeout(hiddenLockTimerRef.current);
-      hiddenLockTimerRef.current = null;
-    }
-    navigationGraceDeadlineRef.current = 0;
     const material = materialRef.current;
     materialRef.current = null;
     if (material) clearLocalWalletKeyMaterial(material);

@@ -29,8 +29,8 @@ export default function EducationalWalletCallout({ variant, placement }: Educati
           <p className={`mt-4 text-sm leading-7 ${dark ? "text-platinum/65" : "text-learn-muted"}`}>
             First export the public <code className={dark ? "text-platinum/90" : "text-learn-ink"}>DILITHIUM_PUB_KEY.hex</code> from the computer running <code className={dark ? "text-platinum/90" : "text-learn-ink"}>UltraNetNode.exe</code>. Then create or unlock your personal wallet on <strong className={dark ? "text-platinum/90" : "text-learn-ink"}>Send Ultra</strong>. UltraWallet signs the proposal locally so the network knows you authorized that node identity.
           </p>
-          <p className={`mt-3 text-xs leading-6 ${dark ? "text-platinum/45" : "text-learn-muted"}`}>
-            The private node JSON, wallet secret, recovery phrase, and wallet password stay local. The website never stores your password and cannot bypass the wallet&apos;s security prompts. A same-site local session can remain unlocked in memory; reload, lock, timeout, or wallet policy can require unlock again.
+          <p className={`mt-3 text-xs leading-6 ${dark ? "text-platinum/70" : "text-learn-muted"}`}>
+            The private node JSON, wallet secret, recovery phrase, and wallet password stay local. The website never stores your password and cannot bypass the wallet&apos;s security prompts. Your unlocked session stays in memory for as long as this tab is open, including while you move between pages; reloading the page, pressing Lock wallet, or closing the tab requires the password again.
           </p>
         </div>
         <div className={`grid shrink-0 gap-3 text-xs sm:grid-cols-2 lg:w-[23rem] lg:grid-cols-1 ${dark ? "text-platinum/65" : "text-learn-muted"}`}>

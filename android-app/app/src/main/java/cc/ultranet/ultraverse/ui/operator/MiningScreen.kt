@@ -47,6 +47,7 @@ import cc.ultranet.ultraverse.ui.tool.ToolPrimaryAction
 import cc.ultranet.ultraverse.ui.tool.ToolTextField
 import cc.ultranet.ultraverse.ui.tool.ToolTopBar
 import cc.ultranet.ultraverse.ui.tool.shortAddress
+import cc.ultranet.ultraverse.ui.wallet.ToolBalanceAction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -162,7 +163,12 @@ internal fun MiningScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().background(UltraVerseColors.background)) {
-        ToolTopBar(title = "Validate transactions", subtitle = "Block production", onBack = onBack)
+        ToolTopBar(
+            title = "Validate transactions",
+            subtitle = "Block production",
+            onBack = onBack,
+            action = { ToolBalanceAction() },
+        )
 
         Column(
             modifier = Modifier

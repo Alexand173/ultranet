@@ -19,6 +19,7 @@ internal class WalletController(
 ) {
     private val appContext = context.applicationContext
     private val store = EncryptedWalletStore(appContext)
+    private val balanceHistory = BalanceHistoryStore(appContext)
 
     var state by mutableStateOf(WalletUiState())
         private set
@@ -29,7 +30,15 @@ internal class WalletController(
     suspend fun initialize() = runBusy {
         try {
             val stored = withContext(Dispatchers.IO) { store.load() }
-            state = state.copy(initialized = true, storageError = false, storedWallet = stored, unlocked = false, error = null)
+            val observations = withContext(Dispatchers.IO) { balanceHistory.load() }
+            state = state.copy(
+                initialized = true,
+                storageError = false,
+                storedWallet = stored,
+                unlocked = false,
+                balanceHistory = observations,
+                error = null,
+            )
         } catch (error: Exception) {
             state = state.copy(initialized = true, storageError = true, storedWallet = null, unlocked = false, error = error.message ?: "Unable to read the local wallet store.")
         }
@@ -181,8 +190,15 @@ internal class WalletController(
                 account.await() to runCatching { history.await() }
             }
             val history = historyResult.getOrElse { emptyList() }
+            // Only a balance the node actually returned becomes a sample; failures leave a gap.
+            val observations = withContext(Dispatchers.IO) {
+                balanceHistory.record(
+                    BalanceObservation(atMillis = System.currentTimeMillis(), balanceBaseUnits = accountResult.balanceBaseUnits),
+                )
+            }
             state = state.copy(
                 account = accountResult,
+                balanceHistory = observations,
                 history = history,
                 historyAvailable = historyResult.isSuccess,
                 historyComplete = historyResult.isSuccess && history.size < 100,
