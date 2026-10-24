@@ -51,20 +51,82 @@ Record `chain_length`, `mempool_size` and `validator_count`. These are the numbe
 
 ## 2. Governance gate for the address you will use
 
-Save as `verify-validator.py` and run `python3 verify-validator.py <64-hex address>`. The authority is
-the **derived address**, not a substring match: a validator's address is `hex(SHA3-256(2592-byte
-Dilithium public key))` (`src/lib.rs:151-155`).
+Start with a read-only cross-check of the two routes the app's gate itself reads, so the phone has a
+printed expectation before anything is tapped. Both are `GET`, unauthenticated and side-effect free: no
+token, no body, no query parameter that writes. The only governance writes in this build are
+`POST /api/governance/propose` and the approval-intent routes, and this run never calls them.
+
+### 2a. Fetch both payloads
+
+```sh
+BASE=https://api.ultranetwork.cc
+curl -sS -o /tmp/proposals.json -w 'proposals  HTTP %{http_code}  %{size_download} B\n' "$BASE/api/governance/proposals"
+curl -sS -o /tmp/approvals.json -w 'approvals  HTTP %{http_code}  %{size_download} B\n' "$BASE/api/governance/approvals"
+```
+
+Both must answer `200`. A `404` means this node build does not mount the routes and a `500` means the
+node failed to read its own journal; stop on either, because the app renders "no record" for both and a
+mining tap after that tests nothing.
+
+A `403` is neither of those. The edge in front of the API answers 403 to clients that send no usable
+`User-Agent`, which is why these `curl` calls work while the stock `Python-urllib` agent does not —
+measured 2026-10-24: default agent `403`, `curl/8.5.0` `200` on `/api/stats`. Any script you write for
+these routes has to name an agent; the 2c script below does.
+
+| Route | Shape (`src/api.rs:2084`, `src/api.rs:3026`) |
+|---|---|
+| `proposals` | `{"success": true, "proposals": [{hash, public_key, metadata, proposer, timestamp}]}` |
+| `approvals` | `{"success": true, "approvals": [{proposal_hash, approval_transaction, proposal, activated_validator, recorded_at}], "pagination": {limit, total_count, has_more, next_cursor}}` |
+
+`activated_validator` is a `ValidatorInfo` (`src/lib.rs:377`): `public_key` as a JSON array of 2592
+integers, alongside `weight`, `is_active`, `joined_at`, `last_epoch`, `stake`, `rewards`, `slash_count`.
+That array is the identity — the row never carries the derived hex address.
+
+```sh
+python3 -m json.tool /tmp/proposals.json
+python3 -m json.tool /tmp/approvals.json
+```
+
+**Expected at the 16:33Z baseline:** `proposals` is `[]`; `approvals` holds exactly one row with
+`total_count 1`, `has_more false`, `next_cursor null`.
+
+### 2b. Read the page the app itself reads
+
+`OperatorApi.hasValidatorRecord` requests `/api/governance/approvals` with no parameters, so it sees the
+default page of **50** records; `limit` is capped at **100** (`src/api.rs:3022-3023`). Check that page
+before blaming the app:
+
+```sh
+curl -sS "$BASE/api/governance/approvals" -o /tmp/approvals-page1.json
+python3 -c 'import json;p=json.load(open("/tmp/approvals-page1.json"))["pagination"];print({k:p[k] for k in ("limit","total_count","has_more","next_cursor")})'
+```
+
+`has_more false` means the app read the whole journal. If it is `true`, records exist that the app never
+fetches — walk the cursor (`?limit=100&cursor=<next_cursor>`) before concluding a key is unregistered,
+and treat a gate that disagrees only with a later page as this known limitation, not a phone fault.
+
+### 2c. Derive the address and print one verdict
+
+The authority is the **derived address**, not a substring match: a validator's address is
+`hex(SHA3-256(2592-byte Dilithium public key))` (`src/lib.rs:151-155`). Save as `verify-validator.py`
+and run `python3 verify-validator.py <64-hex address>`. It re-reads the same two routes, so if its
+numbers disagree with your saved files the journal moved between the calls.
 
 ```python
 #!/usr/bin/env python3
-import hashlib, json, sys, urllib.request
+import hashlib, json, sys, urllib.error, urllib.request
 
 BASE = "https://api.ultranetwork.cc"
 address = sys.argv[1].strip().lower().removeprefix("0x")
 
 def get(path):
-    with urllib.request.urlopen(BASE + path, timeout=20) as r:
-        return json.load(r)
+    # The edge answers 403 to the default `Python-urllib` agent, so send a real one.
+    request = urllib.request.Request(BASE + path, headers={"User-Agent": "UltraNet-run-sheet/1.0"})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as error:
+        sys.exit("%s answered HTTP %s %s" % (path, error.code, error.reason))
 
 def address_of(pubkey):
     # FIPS SHA3-256, matching RustCrypto Sha3_256 on the node. NOT keccak256.
@@ -160,6 +222,18 @@ Block indices are zero-based: with `chain_length 2` the existing blocks are 0 an
 produced by this run is index **2**, and `chain_length` becomes 3. Fetching `/api/block/3` would return
 `Block not found` even after a successful mine.
 
+The approval journal must not move during a mining run — mining consumes mempool transactions, it does
+not approve anyone. Compare it against the file saved in step 2a (same shell, so `$BASE` is still set):
+
+```sh
+curl -sS "$BASE/api/governance/approvals" -o /tmp/approvals-after.json
+diff <(python3 -m json.tool /tmp/approvals.json) <(python3 -m json.tool /tmp/approvals-after.json) \
+  && echo "approval journal unchanged by this run"
+```
+
+A diff here means a governance write landed from somewhere else while you were mining; record it and do
+not read the run as a pass.
+
 The operator call itself, if run from the node instead of the phone:
 
 ```sh
@@ -186,6 +260,7 @@ python3 -m json.tool /tmp/mine.json; unset TOKEN
 | Symptom | Cause | Action |
 |---|---|---|
 | Action disabled, gate says no record | the address has no activated or pending record | re-run step 2 with the copied address; `NO activated record` means the node does not know that key |
+| Gate says no record, but step 2c printed `ACTIVATED` | the phone's address differs from the one you checked, or the record sits past the page of 50 the app reads (2b `has_more true`) | copy the address again from Portfolio and re-run 2a–2c; if it only matches a later cursor page, that is the app's single-page read, not a mismatch in the key |
 | Action disabled although step 2 printed `ACTIVATED` | the installed build predates the derived-address gate | install the current debug APK (sha256 `dd29f3b6…` or later) |
 | Gate green, action disabled | token not imported | import the token, 32+ characters |
 | 401 with a token that works in `curl` | trailing whitespace, or the node restarted with a new token | *Manage saved token* → replace |
@@ -203,6 +278,8 @@ Wallet address:       ______________________________________
 Height before/after:  2 → ______          (next block index: 2)
 Mempool before/after: 3 → ______
 Validator count:      6 → ______
+Gate cross-check:     ACTIVATED / none   (derived: ____________________)
+Approval journal:     1 row → ______      (has_more false · unchanged by run: y/n)
 Block hash:           ______________________________________
 Verdict:              pass / fail — operator: ____  reviewer: ____
 ```
