@@ -24,6 +24,9 @@ import cc.ultranet.ultraverse.ui.theme.UltraVerseTheme
 
 class MainActivity : ComponentActivity() {
 
+    /** The appearance currently applied to the window, so repeat requests become no-ops. */
+    private var appliedSystemBars: Pair<Boolean, Int>? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // The saved preference decides the window theme before the window exists, so the launch
         // frame never flashes the colour of the opposite mode.
@@ -60,17 +63,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig)
-        // "Follow system" has to re-resolve the bar polarity when the OS flips.
-        val darkTheme = storeAppearance().resolveDark(isSystemNightMode())
-        applySystemBars(
-            darkTheme = darkTheme,
-            windowBackground = UltraVerseResourceColors.windowBackground(darkTheme),
-        )
-    }
-
-    private fun storeAppearance(): AppearanceMode = AppearanceStore(this).load()
+    // No onConfigurationChanged override: the manifest declares no android:configChanges, so a
+    // system dark-mode flip recreates this activity and onCreate already re-resolves the saved mode.
 
     private fun isSystemNightMode(): Boolean =
         resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
@@ -79,8 +73,16 @@ class MainActivity : ComponentActivity() {
     /**
      * Edge-to-edge scrims stay transparent so the app gradient reaches the screen edges, while the
      * icon polarity is driven by our resolved appearance rather than the system setting.
+     *
+     * [enableEdgeToEdge] re-registers its decor-fit and bar listeners on every call, and the window
+     * background allocation is wasted work when the appearance has not actually changed, so repeated
+     * calls from `SideEffect` and `onConfigurationChanged` are collapsed onto the last applied pair.
      */
     private fun applySystemBars(darkTheme: Boolean, windowBackground: Int) {
+        val requested = darkTheme to windowBackground
+        if (requested == appliedSystemBars) return
+        appliedSystemBars = requested
+
         val statusBarStyle = if (darkTheme) {
             SystemBarStyle.dark(Color.TRANSPARENT)
         } else {

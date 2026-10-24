@@ -25,7 +25,6 @@ import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -178,25 +177,28 @@ private fun WalletAction(
     filled: Boolean = false,
 ) {
     val contentColor = if (filled) UltraVerseColors.backgroundDeep else accent
-    Surface(
+    val shape = RoundedCornerShape(14.dp)
+    Box(
+        // A clipped Box rather than a Surface: the filled state is a solid fill (a gradient from the
+        // accent to itself painted nothing), and Surface only contributed a transparent colour and
+        // zero elevation on top of it.
         modifier = modifier
             .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(
+            .clip(shape)
+            .then(
                 if (filled) {
-                    Brush.linearGradient(listOf(accent, accent))
+                    Modifier.background(accent)
                 } else {
-                    Brush.linearGradient(
-                        listOf(accent.copy(alpha = 0.19f), UltraVerseColors.surface.copy(alpha = 0.88f)),
+                    Modifier.background(
+                        Brush.linearGradient(
+                            listOf(accent.copy(alpha = 0.19f), UltraVerseColors.surface.copy(alpha = 0.88f)),
+                        ),
                     )
                 },
             )
-            .border(1.dp, if (filled) accent else accent.copy(alpha = 0.58f), RoundedCornerShape(14.dp))
+            .border(1.dp, if (filled) accent else accent.copy(alpha = 0.58f), shape)
             .clickable(role = Role.Button, onClick = onClick)
             .semantics { contentDescription = label },
-        color = Color.Transparent,
-        shape = RoundedCornerShape(14.dp),
-        shadowElevation = 0.dp,
     ) {
         Row(
             modifier = Modifier
@@ -217,7 +219,7 @@ private fun WalletAction(
             )
             if (showArrow) {
                 Spacer(Modifier.width(5.dp))
-                androidx.compose.material3.Icon(
+                Icon(
                     imageVector = Icons.Outlined.ArrowOutward,
                     contentDescription = null,
                     tint = contentColor,
