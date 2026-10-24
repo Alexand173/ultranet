@@ -56,6 +56,57 @@ The development host is WSL2 without KVM, so software-rendered emulator performa
 
 Headless software rendering is not stable for long sessions: `adb exec-out screencap` eventually returns an all-black frame and `adb shell input tap` stops reaching the app while uiautomator dumps still look correct. The emulator console prints `Failed to find ColorBuffer` / `Failed to bind to texture` when this happens. A freshly booted emulator captures reliably, so take the screenshots you need right after `am start`, or restart the emulator; when touch input is dead, verify interaction through the instrumentation tests instead.
 
+## Testing on a physical device
+
+A real phone is the better target for UI iteration and for any screenshot you intend to judge, because none of the software-rendering caveats above apply. Nothing in the build needs changing: `abiFilters` already covers `arm64-v8a` and `x86_64`, so the native Dilithium library ships for both.
+
+| Requirement | Value |
+|---|---|
+| CPU ABI | `arm64-v8a` for a phone, `x86_64` for an x86 tablet |
+| OS | API 23 minimum; API 34–36 recommended, because `targetSdk = 36` drives edge-to-edge behaviour |
+| Developer options | enabled, with USB or wireless debugging |
+| Network | HTTPS reach to `https://api.ultranetwork.cc`; cleartext is disabled in the manifest |
+
+### Connecting from WSL2
+
+WSL2 cannot see USB devices by default, so wireless debugging is the simpler route:
+
+```sh
+source android-app/env.sh          # project-local platform-tools on PATH
+adb pair <phone-ip>:<pair-port>    # port and six-digit code from Wireless debugging
+adb connect <phone-ip>:5555
+adb devices                        # must read "device", not "unauthorized"
+```
+
+Accept the RSA debugging prompt on the phone the first time. For USB instead, bind and attach the device from an administrator PowerShell with `usbipd-win` (`usbipd list`, then `usbipd bind --busid <id>`, then `usbipd attach --wsl --busid <id>`); adb inside WSL usually still needs the platform-tools udev rules afterwards, which is the most common failure point.
+
+### Running the suites
+
+```sh
+cd android-app && source ./env.sh
+./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=cc.ultranet.ultraverse.WindowPaletteConsistencyTest
+```
+
+One class per invocation: a comma-separated `class=` argument silently runs only the first entry. Each run overwrites `app/build/outputs/androidTest-results/connected/debug/*.xml`, so read that XML rather than trusting the exit code. With more than one device attached, export `ANDROID_SERIAL=<serial>` — otherwise Gradle fans out across all of them and a stale emulator fails the run with `No connected devices!`.
+
+`WalletCryptoParityTest` is the one to plan around: its four 310 000-iteration PBKDF2 derivations cost about 80 s per case under software emulation and seconds on a phone.
+
+### Confirm both ABIs shipped
+
+The native library is compiled per ABI, so verify the APK carries both slices before trusting it on the device:
+
+```sh
+python3 -c "import zipfile;print([n for n in zipfile.ZipFile('app/build/outputs/apk/debug/app-debug.apk').namelist() if n.endswith('.so')])"
+```
+
+Expected output lists `lib/arm64-v8a/libultranetcrypto.so` and `lib/x86_64/libultranetcrypto.so` (plus `libandroidx.graphics.path.so` in each). The arm64 slice should be a 64-bit AArch64 ELF, `e_machine` `0xB7`; if the slice is missing, the app installs and then dies at the first Dilithium call.
+
+### Device hygiene
+
+- Developer options → **Stay awake**, and keep the device unlocked: `MainActivity` locks the wallet on `ON_STOP`, so a sleeping screen can leave a test on the wrong route.
+- Disable window, transition and animator animations if runs flake.
+- `adb uninstall cc.ultranet.ultraverse` before judging the launch frame: the appearance preference lives in app storage, so a previous *Dark* choice survives a reinstall.
+
 ## Crypto source attribution
 
 `app/src/main/cpp/CMakeLists.txt` compiles `website/crypto/ultra-dilithium5/pqclean` directly. PQClean licensing is documented in `app/src/main/cpp/LICENSE-PQCLEAN` and the source project README. The BIP-0039 English wordlist and MIT notice are in `app/src/main/assets/`.
