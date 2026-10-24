@@ -63,6 +63,13 @@ class AppearanceModeTest {
     fun storedChoiceRoundTripsAndDefaultsToFollowSystem() {
         val previous = store.load()
         try {
+            store.clear()
+            assertEquals(
+                "An empty preference must resolve to the system-following default",
+                AppearanceMode.System,
+                store.load(),
+            )
+
             AppearanceMode.entries.forEach { mode ->
                 store.save(mode)
                 assertEquals(mode, store.load())

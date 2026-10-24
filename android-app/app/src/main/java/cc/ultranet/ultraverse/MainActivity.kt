@@ -19,6 +19,7 @@ import cc.ultranet.ultraverse.ui.UltraVerseApp
 import cc.ultranet.ultraverse.ui.theme.AppearanceMode
 import cc.ultranet.ultraverse.ui.theme.AppearanceStore
 import cc.ultranet.ultraverse.ui.theme.UltraVerseColors
+import cc.ultranet.ultraverse.ui.theme.UltraVerseResourceColors
 import cc.ultranet.ultraverse.ui.theme.UltraVerseTheme
 
 class MainActivity : ComponentActivity() {
@@ -31,7 +32,10 @@ class MainActivity : ComponentActivity() {
         val startsDark = savedAppearance.resolveDark(isSystemNightMode())
         setTheme(if (startsDark) R.style.Theme_UltraVerse_Dark else R.style.Theme_UltraVerse_Light)
         super.onCreate(savedInstanceState)
-        applySystemBars(darkTheme = startsDark, windowBackground = windowBackgroundFor(startsDark))
+        applySystemBars(
+            darkTheme = startsDark,
+            windowBackground = UltraVerseResourceColors.windowBackground(startsDark),
+        )
 
         setContent {
             val context = LocalContext.current
@@ -60,7 +64,10 @@ class MainActivity : ComponentActivity() {
         super.onConfigurationChanged(newConfig)
         // "Follow system" has to re-resolve the bar polarity when the OS flips.
         val darkTheme = storeAppearance().resolveDark(isSystemNightMode())
-        applySystemBars(darkTheme = darkTheme, windowBackground = windowBackgroundFor(darkTheme))
+        applySystemBars(
+            darkTheme = darkTheme,
+            windowBackground = UltraVerseResourceColors.windowBackground(darkTheme),
+        )
     }
 
     private fun storeAppearance(): AppearanceMode = AppearanceStore(this).load()
@@ -95,9 +102,4 @@ private fun AppearanceMode.resolveDark(systemDark: Boolean): Boolean = when (thi
     AppearanceMode.Dark -> true
 }
 
-private fun windowBackgroundFor(darkTheme: Boolean): Int =
-    if (darkTheme) DARK_WINDOW_BACKGROUND else LIGHT_WINDOW_BACKGROUND
 
-/** Mirrors [cc.ultranet.ultraverse.ui.theme.UltraVersePalette] backgrounds for the window frame. */
-private const val LIGHT_WINDOW_BACKGROUND = 0xFFF6FAFC.toInt()
-private const val DARK_WINDOW_BACKGROUND = 0xFF07131F.toInt()

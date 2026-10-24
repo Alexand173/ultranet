@@ -115,7 +115,7 @@ internal fun UltraVerseApp(
                 onApps = {
                     controller.lock()
                     route = WalletRoute.Apps
-                    scope.launch { listState.animateScrollToItem(index = FIRST_GROUP_ITEM_INDEX) }
+                    scope.launch { listState.animateScrollToItem(index = HomeHeader.entries.size) }
                 },
             )
         },
@@ -200,22 +200,27 @@ private fun AppsDirectory(
         contentPadding = PaddingValues(bottom = 20.dp),
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
-        item(key = "brand-header") {
-            BrandHeader(appearance = appearance, onAppearanceChange = onAppearanceChange)
-        }
-        item(key = "wallet-hero") {
-            WalletHero(
-                onCreateWallet = onCreateWallet,
-                onRestoreWallet = onRestoreWallet,
-                onOpenWallet = onOpenWallet,
-            )
-        }
-        item(key = "availability-legend") {
-            AvailabilityLegend(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-            )
+        // Driven by HomeHeader so the LazyColumn order and the Apps scroll target stay in step: the
+        // `when` is exhaustive, so a new header cannot be added without a rendering branch.
+        HomeHeader.entries.forEach { header ->
+            item(key = "header-${header.name}") {
+                when (header) {
+                    HomeHeader.Brand -> BrandHeader(
+                        appearance = appearance,
+                        onAppearanceChange = onAppearanceChange,
+                    )
+                    HomeHeader.Hero -> WalletHero(
+                        onCreateWallet = onCreateWallet,
+                        onRestoreWallet = onRestoreWallet,
+                        onOpenWallet = onOpenWallet,
+                    )
+                    HomeHeader.Legend -> AvailabilityLegend(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                    )
+                }
+            }
         }
         ServiceCatalog.groups.forEach { group ->
             item(key = "group-${group.id}") {
@@ -297,4 +302,5 @@ private fun BrandHeader(
     }
 }
 
-private const val FIRST_GROUP_ITEM_INDEX = 3
+/** Header items that render above the first service group, in list order. */
+private enum class HomeHeader { Brand, Hero, Legend }

@@ -22,6 +22,11 @@ internal class AppearanceStore(context: Context) {
         preferences.edit().putString(KEY_MODE, mode.name).apply()
     }
 
+    /** Drops the stored choice so [load] falls back to [AppearanceMode.System]. */
+    fun clear() {
+        preferences.edit().clear().apply()
+    }
+
     private companion object {
         const val PREFERENCES_NAME = "ultraverse.appearance"
         const val KEY_MODE = "mode"

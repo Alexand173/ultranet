@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Launch-frame colours. The platform theme is applied before Compose exists, so these resources are
+  the canonical values for the window background and accent; UltraVerseResourceColors reads the same
+  values out of UltraVersePalette for Compose drawing, and WindowPaletteConsistencyTest fails if the
+  two ever disagree.
+-->
+<resources>
+    <color name="ultraverse_background_light">#F6FAFC</color>
+    <color name="ultraverse_background_dark">#07131F</color>
+    <color name="ultraverse_accent_light">#0B6F79</color>
+    <color name="ultraverse_accent_dark">#52E9EC</color>
+</resources>

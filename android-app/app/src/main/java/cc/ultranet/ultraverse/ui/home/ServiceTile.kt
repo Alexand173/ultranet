@@ -1,8 +1,8 @@
 package cc.ultranet.ultraverse.ui.home
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,7 +22,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.compositeOver
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -50,24 +49,21 @@ internal fun ServiceTile(
         "${service.name}. Not available yet."
     }
 
+    // The onClick overload clips its ripple and border to `shape`; applying clickable as a modifier
+    // instead let the touch ripple square off the rounded corners.
     Card(
+        onClick = { onOpen(service.destination.orEmpty()) },
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 124.dp)
-            .border(1.dp, outline, shape)
-            .then(
-                if (supported) {
-                    Modifier.clickable(role = Role.Button) { onOpen(service.destination.orEmpty()) }
-                } else {
-                    Modifier
-                },
-            )
             .semantics(mergeDescendants = true) {
                 contentDescription = spokenLabel
             },
+        enabled = supported,
         shape = shape,
         colors = CardDefaults.cardColors(containerColor = background),
         elevation = CardDefaults.cardElevation(defaultElevation = if (supported) 3.dp else 0.dp),
+        border = BorderStroke(1.dp, outline),
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             Column(
@@ -145,7 +141,9 @@ internal fun ServiceTile(
                 if (!supported) {
                     Text(
                         text = "×",
-                        color = UltraVerseColors.unavailable,
+                        // `unavailable` on its own 18% tint measures 4.17:1 in light and 3.97:1 in
+                        // dark; this role is the AA-compliant glyph colour for that badge.
+                        color = UltraVerseColors.unavailableStrong,
                         fontSize = 13.sp,
                         lineHeight = 13.sp,
                         fontWeight = FontWeight.Bold,

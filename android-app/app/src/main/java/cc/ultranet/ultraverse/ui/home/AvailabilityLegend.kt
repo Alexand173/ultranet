@@ -41,7 +41,7 @@ internal fun AvailabilityLegend(modifier: Modifier = Modifier) {
             Text("Supported", color = UltraVerseColors.muted, fontSize = 11.sp)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("×", color = UltraVerseColors.unavailable, fontSize = 13.sp, lineHeight = 13.sp)
+            Text("×", color = UltraVerseColors.unavailableStrong, fontSize = 13.sp, lineHeight = 13.sp)
             Text("Not available yet", color = UltraVerseColors.muted, fontSize = 11.sp)
         }
     }

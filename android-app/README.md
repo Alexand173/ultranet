@@ -15,6 +15,8 @@ A native Kotlin + Jetpack Compose client for the UltraVerse service catalog and 
 - The signed request is retained in memory for identical retry after an ambiguous response. It is not persisted across app process death; after restart, check address history before preparing another transaction.
 - The UI follows the saved appearance choice (Follow system / Light / Dark), not only the OS mode. `UltraVersePalette` carries one role set with a dark and a light instance, exposed through `UltraVerseColors`; screens read roles and never branch on the mode themselves. Light mode maps the cyan accent to an accessible teal (`#0B6F79`), because `#52E9EC` fails contrast on white.
 - Every light-mode role that is used as text clears WCAG AA (4.5:1) on the white, tinted-card, and gradient-end surfaces: `ink` `#0B2233`, `muted` `#3F5C6C`, `dim` `#557180`, `cyan` `#0B6F79`, `gold` `#8A6516`, `supported` `#0E7047`, `unavailable` `#C13342`. The earlier `dim` (`#7D97A6`, 2.9:1) and `gold` (`#9A7420`, 3.7:1) tones failed AA for small labels.
+- The `×` availability glyph uses its own role, `unavailableStrong` (`#A32A36` light, `#FF8894` dark), because `unavailable` on the 18% badge tint measured 4.17:1 in light and 3.97:1 in dark. Both now clear 5.2:1 on the badge, in the legend, and in the bottom-navigation badge, which also needs an explicit `contentColor` — `Badge` cannot resolve `contentColorFor` for a colour outside the Material scheme.
+- Window and launch colours live once, in `res/values/colors.xml`, and `styles.xml` references them. `UltraVerseResourceColors` exposes the same values out of `UltraVersePalette` for Compose drawing, and `WindowPaletteConsistencyTest` fails if the resources and the palette ever drift apart.
 - The hero ring and the header emblem draw `ultranet_coin_disc.png`, a square, transparent-cornered crop of the official render. Regenerate it with `python3 tools/make_coin_disc.py` after replacing `ultranet_official_coin.png` (the launcher icon still uses the full render).
 
 ## Build
@@ -34,7 +36,9 @@ Run local JVM and device tests with:
 
 The connected tests include the website BIP39 seed vector, shared WASM/native key/address/signature vectors, the Rust v1 digest fixture, AES-GCM tamper/wrong-password checks, API envelope and signed-byte-array contract checks, and Compose catalog/native-route regressions.
 
-`AppearanceModeTest` covers the header appearance menu: all three modes are offered, choosing Dark or Light repaints and updates the button's accessible name, and `AppearanceStore` reloads exactly what it saved. Prefer this test over injected taps when validating the switch, because a headless software-rendered emulator can silently drop injected touches.
+`AppearanceModeTest` covers the header appearance menu: all three modes are offered, choosing Dark or Light repaints and updates the button's accessible name, `AppearanceStore` reloads exactly what it saved, and a cleared store resolves to the system-following default. Prefer this test over injected taps when validating the switch, because a headless software-rendered emulator can silently drop injected touches.
+
+`WindowPaletteConsistencyTest` holds `res/values/colors.xml` to `UltraVersePalette`, and `GroupedHomeScreenTest.appsTabReturnsToTheFirstGroupAfterEveryHeaderItem` proves the Apps tab still scrolls past every header slot to the first service group. Run each class in its own Gradle invocation: a comma-separated `class=` argument silently executes only the first entry.
 
 `WalletCryptoParityTest` runs four 310 000-iteration PBKDF2 derivations, so it takes minutes on a software-rendered emulator and seconds on hardware. Use `-Pandroid.testInstrumentationRunnerArguments.class=<class>` to run one class at a time when iterating.
 

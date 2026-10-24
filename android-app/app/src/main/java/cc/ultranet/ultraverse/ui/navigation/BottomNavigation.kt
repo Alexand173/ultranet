@@ -67,7 +67,17 @@ internal fun BottomNavigation(
                         if (enabled) {
                             Icon(imageVector = image, contentDescription = null)
                         } else {
-                            BadgedBox(badge = { Badge(containerColor = UltraVerseColors.unavailable) { Text("×") } }) {
+                            BadgedBox(
+                                badge = {
+                                    // An explicit content colour: Badge defaults to an unresolvable
+                                    // contentColorFor(unavailable), which left the glyph at 3.06:1
+                                    // against the dark-mode badge fill.
+                                    Badge(
+                                        containerColor = UltraVerseColors.unavailable,
+                                        contentColor = UltraVerseColors.background,
+                                    ) { Text("×") }
+                                },
+                            ) {
                                 Icon(imageVector = image, contentDescription = null)
                             }
                         }

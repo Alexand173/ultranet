@@ -3,12 +3,12 @@
     <!-- System-following theme, kept as the manifest default. -->
     <style name="Theme.UltraVerse" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#0B6F79</item>
+        <item name="android:colorAccent">@color/ultraverse_accent_light</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowBackground">#F6FAFC</item>
+        <item name="android:windowBackground">@color/ultraverse_background_light</item>
     </style>
 
     <!--
@@ -18,23 +18,23 @@
     -->
     <style name="Theme.UltraVerse.Light">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#0B6F79</item>
+        <item name="android:colorAccent">@color/ultraverse_accent_light</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowBackground">#F6FAFC</item>
+        <item name="android:windowBackground">@color/ultraverse_background_light</item>
     </style>
 
     <style name="Theme.UltraVerse.Dark">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#52E9EC</item>
+        <item name="android:colorAccent">@color/ultraverse_accent_dark</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowBackground">#07131F</item>
+        <item name="android:windowBackground">@color/ultraverse_background_dark</item>
     </style>
 </resources>

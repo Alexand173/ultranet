@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.sp
 import cc.ultranet.ultraverse.data.ServiceEntry
 import cc.ultranet.ultraverse.data.ServiceGroup
 import cc.ultranet.ultraverse.ui.theme.UltraVerseColors
+import java.util.Locale
 
 @Composable
 internal fun ServiceGroupSection(
@@ -53,7 +54,9 @@ internal fun ServiceGroupSection(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "%02d SERVICES".format(group.services.size),
+                    // Locale.ROOT: the counter is Latin digits in every locale, matching the
+                    // catalogue's fixed-width column treatment.
+                    text = String.format(Locale.ROOT, "%02d SERVICES", group.services.size),
                     color = UltraVerseColors.dim,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,

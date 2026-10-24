@@ -73,6 +73,24 @@ class GroupedHomeScreenTest {
     }
 
     @Test
+    fun appsTabReturnsToTheFirstGroupAfterEveryHeaderItem() {
+        compose.onNodeWithContentDescription("Portfolio. Opens the native local wallet.", substring = true)
+            .performClick()
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithText("Restore wallet").assertIsDisplayed(); true }
+                .getOrDefault(false)
+        }
+
+        compose.onNodeWithContentDescription("Apps. Scrolls to the grouped services.", substring = true)
+            .performClick()
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithText("Payments & addresses").assertIsDisplayed(); true }
+                .getOrDefault(false)
+        }
+        compose.onNodeWithText("Payments & addresses").assertIsDisplayed()
+    }
+
+    @Test
     fun portfolioOpensNativeWalletSetupInsteadOfTheWebsite() {
         compose.onNodeWithContentDescription("Portfolio. Opens the native local wallet.", substring = true).performClick()
         compose.waitUntil(5_000) {

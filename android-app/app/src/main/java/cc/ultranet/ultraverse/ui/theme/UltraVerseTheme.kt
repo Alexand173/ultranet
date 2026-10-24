@@ -9,6 +9,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 
 /**
  * Every colour the app draws with. The dark and light instances keep the same roles so screens can be
@@ -31,6 +32,8 @@ internal data class UltraVersePalette(
     val gold: Color,
     val supported: Color,
     val unavailable: Color,
+    /** Glyph drawn on an `unavailable` tint, where the plain role drops below AA. */
+    val unavailableStrong: Color,
     val heroGradient: List<Color>,
     val cardShadowAlpha: Float,
     val navDividerAlpha: Float,
@@ -52,6 +55,7 @@ private val DarkPalette = UltraVersePalette(
     gold = Color(0xFFD9BD77),
     supported = Color(0xFF51E08A),
     unavailable = Color(0xFFFF5869),
+    unavailableStrong = Color(0xFFFF8894),
     heroGradient = listOf(
         Color(0xFF103948).copy(alpha = 0.72f),
         Color(0xFF10172E).copy(alpha = 0.62f),
@@ -79,6 +83,7 @@ private val LightPalette = UltraVersePalette(
     gold = Color(0xFF8A6516),
     supported = Color(0xFF0E7047),
     unavailable = Color(0xFFC13342),
+    unavailableStrong = Color(0xFFA32A36),
     heroGradient = listOf(
         Color(0xFFE7F6F8),
         Color(0xFFF7FBFC),
@@ -106,6 +111,7 @@ internal object UltraVerseColors {
     val gold: Color @Composable @ReadOnlyComposable get() = LocalUltraVersePalette.current.gold
     val supported: Color @Composable @ReadOnlyComposable get() = LocalUltraVersePalette.current.supported
     val unavailable: Color @Composable @ReadOnlyComposable get() = LocalUltraVersePalette.current.unavailable
+    val unavailableStrong: Color @Composable @ReadOnlyComposable get() = LocalUltraVersePalette.current.unavailableStrong
     val heroGradient: List<Color> @Composable @ReadOnlyComposable get() = LocalUltraVersePalette.current.heroGradient
     val cardShadowAlpha: Float @Composable @ReadOnlyComposable get() = LocalUltraVersePalette.current.cardShadowAlpha
     val navDividerAlpha: Float @Composable @ReadOnlyComposable get() = LocalUltraVersePalette.current.navDividerAlpha
@@ -154,4 +160,17 @@ internal fun UltraVerseTheme(
             content = content,
         )
     }
+}
+
+/**
+ * The palette expressed as raw ARGB for the platform window, which is painted before Compose exists.
+ * `res/values/colors.xml` mirrors these values for the launch theme; [cc.ultranet.ultraverse.WindowPaletteConsistencyTest]
+ * fails if the two drift apart.
+ */
+internal object UltraVerseResourceColors {
+    fun windowBackground(darkTheme: Boolean): Int =
+        (if (darkTheme) DarkPalette else LightPalette).background.toArgb()
+
+    fun accent(darkTheme: Boolean): Int =
+        (if (darkTheme) DarkPalette else LightPalette).cyan.toArgb()
 }
