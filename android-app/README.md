@@ -64,11 +64,13 @@ A local API-36 Google APIs x86_64 AVD may be started with:
 emulator -avd UltraVerse_API_36 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot
 ```
 
-The host is WSL2 with hardware acceleration available. `/dev/kvm` exists and `emulator -accel-check` reports "KVM (version 12) is installed and usable". With acceleration the AVD finishes booting in about ten seconds, `am start -W` reports `Status: ok` with `TotalTime` near 1.5 s, and `adb exec-out screencap` and `adb shell input tap` both reach the app.
+The host is WSL2 with hardware acceleration available. `/dev/kvm` exists and `emulator -accel-check` reports "KVM (version 12) is installed and usable". With acceleration the AVD finishes booting in about ten seconds, `am start -W` reports `Status: ok` with `TotalTime` near 1.5 s, and `adb shell input tap` reaches the app, so `uiautomator dump` plus injected taps can drive a whole flow.
+
+Screen capture is a separate problem that acceleration does not solve. `adb exec-out screencap` returns a real frame for the first one or two captures after a boot and then a black frame (~21 KB instead of ~460 KB), with either `-gpu swiftshader_indirect` or `-gpu off`, and it does not recover without restarting the emulator. Treat the semantics tree as the source of truth for behaviour and take review screenshots on a phone.
 
 Acceleration needs the `kvm` group, which had no members until 2026-10-24. A session that started before `usermod -aG kvm` keeps the old supplementary groups, so run `emulator -accel-check` before blaming the app: restarting the session picks the group up, and `sudo chmod 666 /dev/kvm` unblocks the current one without restarting anything.
 
-Do not fall back to `-accel off` for UI work. Under software emulation first composition costs ~30 s of main-thread CPU plus ~30 s of JIT, which starves SystemUI and `com.google.android.as` into ANRs, makes `am start -W` report `Status: timeout`, and eventually breaks capture and injected taps (`Failed to find ColorBuffer` / `Failed to bind to texture`). Those were symptoms of CPU starvation, not a rendering defect — they disappear with acceleration. The debug APK is at `app/build/outputs/apk/debug/app-debug.apk` after a successful build.
+Do not fall back to `-accel off` for UI work. Under software emulation first composition costs ~30 s of main-thread CPU plus ~30 s of JIT, which starves SystemUI and `com.google.android.as` into ANRs and makes `am start -W` report `Status: timeout`. Those were symptoms of CPU starvation, not a rendering defect — they disappear with acceleration. The debug APK is at `app/build/outputs/apk/debug/app-debug.apk` after a successful build.
 
 ## Testing on a physical device
 
