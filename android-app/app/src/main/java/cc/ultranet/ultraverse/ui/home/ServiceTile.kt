@@ -34,7 +34,7 @@ import cc.ultranet.ultraverse.ui.theme.UltraVerseColors
 @Composable
 internal fun ServiceTile(
     service: ServiceEntry,
-    onOpen: (String) -> Unit,
+    onOpen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val supported = service.availability == Availability.Supported
@@ -52,7 +52,7 @@ internal fun ServiceTile(
     // The onClick overload clips its ripple and border to `shape`; applying clickable as a modifier
     // instead let the touch ripple square off the rounded corners.
     Card(
-        onClick = { onOpen(service.destination.orEmpty()) },
+        onClick = onOpen,
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 124.dp)

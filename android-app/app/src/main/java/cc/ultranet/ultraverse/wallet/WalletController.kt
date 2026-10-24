@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import cc.ultranet.ultraverse.data.ValidatorProposalPayload
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -289,6 +290,48 @@ internal class WalletController(
             throw error
         } catch (error: Exception) {
             state = state.copy(error = error.message ?: "Unable to sign the transfer locally.")
+            null
+        } finally {
+            state = state.copy(isBusy = false)
+        }
+    }
+
+    /**
+     * Signs a validator join proposal locally. It carries zero value, so it deliberately does not
+     * touch the fee estimate or the unresolved-transfer guard that protects value transfers.
+     */
+    suspend fun signValidatorProposal(alias: String, proposalPublicKeyHex: String): ValidatorProposalPayload? {
+        state = state.copy(isBusy = true, error = null)
+        return try {
+            check(activeSeed != null) { "Unlock the local wallet before signing a validator application." }
+            val account = state.account ?: throw IllegalStateException("Refresh the account before signing a validator application.")
+            val normalizedKey = ValidatorProposalSigner.normalizePublicKey(proposalPublicKeyHex)
+            ValidatorProposalSigner.validatePublicKey(normalizedKey)?.let { throw IllegalArgumentException(it) }
+            val generation = operationGeneration
+            val seed = activeSeed?.copyOf() ?: throw IllegalStateException("The wallet is locked.")
+            val proposal = try {
+                withContext(Dispatchers.Default) {
+                    ValidatorProposalSigner.sign(
+                        seed = seed,
+                        sender = account.address,
+                        proposalPublicKeyHex = normalizedKey,
+                        metadata = alias,
+                        nonce = account.nonce,
+                        timestamp = System.currentTimeMillis() / 1000L,
+                    )
+                }
+            } finally {
+                seed.fill(0)
+            }
+            if (generation != operationGeneration) {
+                proposal.wipe()
+                throw IllegalStateException("The wallet was locked before the application could be signed.")
+            }
+            proposal
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            state = state.copy(error = error.message ?: "Unable to sign the validator application locally.")
             null
         } finally {
             state = state.copy(isBusy = false)

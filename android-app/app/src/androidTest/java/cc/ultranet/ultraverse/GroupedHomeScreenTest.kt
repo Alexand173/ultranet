@@ -38,6 +38,8 @@ class GroupedHomeScreenTest {
         compose.onNodeWithText("Build & participate").assertIsDisplayed()
         compose.onNodeWithContentDescription("Validator applications. Supported path.", substring = true)
             .assertIsDisplayed()
+        compose.onNodeWithContentDescription("Validate transactions. Supported path.", substring = true)
+            .assertIsDisplayed()
 
         home.performScrollToIndex(6)
         compose.onNodeWithText("Applications").assertIsDisplayed()
@@ -46,15 +48,41 @@ class GroupedHomeScreenTest {
     }
 
     @Test
-    fun catalogContainsThreeSupportedAndTwelveUnavailableServices() {
+    fun catalogContainsFourSupportedAndTwelveUnavailableServices() {
         assertEquals(4, ServiceCatalog.groups.size)
-        assertEquals(listOf(3, 5, 5, 2), ServiceCatalog.groups.map { it.services.size })
-        assertEquals(15, ServiceCatalog.groups.sumOf { it.services.size })
-        assertEquals(3, ServiceCatalog.supportedCount)
+        assertEquals(listOf(3, 5, 6, 2), ServiceCatalog.groups.map { it.services.size })
+        assertEquals(16, ServiceCatalog.groups.sumOf { it.services.size })
+        assertEquals(4, ServiceCatalog.supportedCount)
         assertEquals(12, ServiceCatalog.unavailableCount)
-        assertEquals(null, ServiceCatalog.groups.first().services.first().destination)
-        assertEquals("/login?next=%2Fappchains", ServiceCatalog.APPCHAINS_PATH)
-        assertEquals("/validator", ServiceCatalog.VALIDATOR_PATH)
+        // Mining lives inside Build & participate, next to the validator application tile.
+        val buildGroup = ServiceCatalog.groups.first { it.id == "build-participate" }
+        assertEquals(
+            listOf(ServiceCatalog.APPCHAINS_ID, ServiceCatalog.VALIDATOR_ID, ServiceCatalog.MINING_ID),
+            buildGroup.services.take(3).map { it.id },
+        )
+    }
+
+    @Test
+    fun supportedServicesOpenNativeScreensInsteadOfABrowser() {
+        compose.onNodeWithTag("ultraverse-home").performScrollToIndex(5)
+        compose.onNodeWithContentDescription("AppChains. Supported path.", substring = true).performClick()
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithText("Public registry").assertIsDisplayed(); true }.getOrDefault(false)
+        }
+        compose.onNodeWithText("Public registry").assertIsDisplayed()
+        compose.onNodeWithText("Create chain").assertIsDisplayed()
+
+        // Back returns to the catalog, then the validator entry opens its own native screen.
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithTag("ultraverse-home").assertExists(); true }.getOrDefault(false)
+        }
+        compose.onNodeWithTag("ultraverse-home").performScrollToIndex(5)
+        compose.onNodeWithContentDescription("Validator applications. Supported path.", substring = true).performClick()
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithText("Apply as validator").assertIsDisplayed(); true }.getOrDefault(false)
+        }
+        compose.onNodeWithText("Apply as validator").assertIsDisplayed()
     }
 
     @Test

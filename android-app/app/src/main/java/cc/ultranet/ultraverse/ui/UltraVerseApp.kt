@@ -1,8 +1,5 @@
 package cc.ultranet.ultraverse.ui
 
-import android.content.ActivityNotFoundException
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -13,7 +10,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,7 +17,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Contrast
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -57,17 +52,23 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import cc.ultranet.ultraverse.R
 import cc.ultranet.ultraverse.data.ServiceCatalog
 import cc.ultranet.ultraverse.data.ServiceEntry
+import cc.ultranet.ultraverse.ui.appchains.AppChainsScreen
 import cc.ultranet.ultraverse.ui.home.AvailabilityLegend
 import cc.ultranet.ultraverse.ui.home.ServiceGroupSection
 import cc.ultranet.ultraverse.ui.home.WalletHero
 import cc.ultranet.ultraverse.ui.navigation.BottomNavigation
 import cc.ultranet.ultraverse.ui.navigation.UltraVerseTab
+import cc.ultranet.ultraverse.ui.operator.MiningScreen
 import cc.ultranet.ultraverse.ui.theme.AppearanceMode
 import cc.ultranet.ultraverse.ui.theme.UltraVerseColors
+import cc.ultranet.ultraverse.ui.validator.ValidatorScreen
 import cc.ultranet.ultraverse.ui.wallet.WalletFlowScreen
 import cc.ultranet.ultraverse.ui.wallet.WalletRoute
 import cc.ultranet.ultraverse.wallet.WalletController
 import kotlinx.coroutines.launch
+
+/** Top-level native destinations. Every supported catalog entry maps to one of these. */
+private enum class HomeSection { Apps, Wallet, AppChains, Validator, Mining }
 
 @Composable
 internal fun UltraVerseApp(
@@ -80,66 +81,84 @@ internal fun UltraVerseApp(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val controller = remember { WalletController(context.applicationContext) }
+    var section by remember { mutableStateOf(HomeSection.Apps) }
     var route by remember { mutableStateOf(WalletRoute.Apps) }
     val currentRoute by rememberUpdatedState(route)
+    val currentSection by rememberUpdatedState(section)
 
     LaunchedEffect(controller) { controller.initialize() }
     DisposableEffect(lifecycleOwner, controller) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
                 controller.lock()
-                if (currentRoute != WalletRoute.Apps) route = WalletRoute.Portfolio
+                // Locking must not leave a signed-in-looking tool screen behind.
+                if (currentSection == HomeSection.Wallet && currentRoute != WalletRoute.Apps) {
+                    route = WalletRoute.Portfolio
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val openUrl: (String) -> Unit = { path ->
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(ServiceCatalog.WEBSITE_ORIGIN + path))
-        try {
-            context.startActivity(intent)
-        } catch (_: ActivityNotFoundException) {
-            scope.launch { snackbarHostState.showSnackbar("No browser is available to open this UltraNet service.") }
+    fun openWallet() {
+        section = HomeSection.Wallet
+        route = WalletRoute.Portfolio
+    }
+
+    val openService: (ServiceEntry) -> Unit = { service ->
+        when (service.id) {
+            ServiceCatalog.WALLET_ID -> openWallet()
+            ServiceCatalog.APPCHAINS_ID -> section = HomeSection.AppChains
+            ServiceCatalog.VALIDATOR_ID -> section = HomeSection.Validator
+            ServiceCatalog.MINING_ID -> section = HomeSection.Mining
+            else -> Unit
         }
     }
-    val selectedTab = if (route == WalletRoute.Apps) UltraVerseTab.Apps else UltraVerseTab.Portfolio
+
+    val showsBottomBar = section == HomeSection.Apps || section == HomeSection.Wallet
+    val selectedTab = if (section == HomeSection.Wallet) UltraVerseTab.Portfolio else UltraVerseTab.Apps
 
     Scaffold(
         containerColor = UltraVerseColors.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            BottomNavigation(
-                selectedTab = selectedTab,
-                onPortfolio = { route = WalletRoute.Portfolio },
-                onApps = {
-                    controller.lock()
-                    route = WalletRoute.Apps
-                    scope.launch { listState.animateScrollToItem(index = HomeHeader.entries.size) }
-                },
-            )
+            if (showsBottomBar) {
+                BottomNavigation(
+                    selectedTab = selectedTab,
+                    onPortfolio = { section = HomeSection.Wallet; route = WalletRoute.Portfolio },
+                    onApps = {
+                        controller.lock()
+                        section = HomeSection.Apps
+                        route = WalletRoute.Apps
+                        scope.launch { listState.animateScrollToItem(index = HomeHeader.entries.size) }
+                    },
+                )
+            }
         },
     ) { scaffoldPadding ->
-        if (route == WalletRoute.Apps) {
-            AppsDirectory(
+        when (section) {
+            HomeSection.Apps -> AppsDirectory(
                 listState = listState,
                 modifier = Modifier.padding(scaffoldPadding),
                 appearance = appearance,
                 onAppearanceChange = onAppearanceChange,
-                onCreateWallet = { route = WalletRoute.Create },
-                onRestoreWallet = { route = WalletRoute.Restore },
-                onOpenWallet = { route = WalletRoute.Portfolio },
-                onOpenService = { service ->
-                    if (service.id == "wallet") route = WalletRoute.Portfolio
-                    else service.destination?.let(openUrl)
-                },
+                onCreateWallet = { openWallet(); route = WalletRoute.Create },
+                onRestoreWallet = { openWallet(); route = WalletRoute.Restore },
+                onOpenWallet = { openWallet() },
+                onOpenService = openService,
             )
-        } else {
-            WalletFlowScreen(
+
+            HomeSection.Wallet -> WalletFlowScreen(
                 state = controller.state,
                 route = route,
                 onRoute = {
-                    if (it == WalletRoute.Apps) controller.lock()
+                    if (it == WalletRoute.Apps) {
+                        controller.lock()
+                        section = HomeSection.Apps
+                    } else {
+                        section = HomeSection.Wallet
+                    }
                     route = it
                 },
                 onCreate = { phrase, password, replace ->
@@ -171,6 +190,35 @@ internal fun UltraVerseApp(
                     controller.lock()
                     route = WalletRoute.Portfolio
                 },
+            )
+
+            HomeSection.AppChains -> AppChainsScreen(
+                onBack = { section = HomeSection.Apps },
+                onFundTreasury = { address, chainName ->
+                    controller.startNewTransfer()
+                    controller.updateRecipient(address)
+                    section = HomeSection.Wallet
+                    route = if (controller.state.unlocked) WalletRoute.Send else WalletRoute.Portfolio
+                    scope.launch {
+                        snackbarHostState.showSnackbar("Treasury of $chainName set as the transfer recipient.")
+                    }
+                },
+                onOpenOperatorTools = { section = HomeSection.Mining },
+            )
+
+            HomeSection.Validator -> ValidatorScreen(
+                onBack = { section = HomeSection.Apps },
+                walletUnlocked = controller.state.unlocked,
+                walletAddress = controller.state.storedWallet?.address,
+                walletReady = controller.state.account != null,
+                onSignProposal = { alias, publicKeyHex -> controller.signValidatorProposal(alias, publicKeyHex) },
+                onOpenWallet = { openWallet() },
+            )
+
+            HomeSection.Mining -> MiningScreen(
+                onBack = { section = HomeSection.Apps },
+                walletAddress = controller.state.storedWallet?.address,
+                onOpenValidator = { section = HomeSection.Validator },
             )
         }
     }
@@ -233,7 +281,7 @@ private fun AppsDirectory(
         }
         item(key = "catalog-footer") {
             Text(
-                text = "Three services link to existing UltraNet flows. Red X marks services not available yet.",
+                text = "Every supported service runs inside this app. Red X marks services not available yet.",
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 16.dp),

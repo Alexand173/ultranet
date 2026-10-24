@@ -6,12 +6,13 @@ import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.Badge
 import androidx.compose.material.icons.outlined.CurrencyExchange
-import androidx.compose.material.icons.outlined.SportsEsports
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.SportsEsports
 import androidx.compose.material.icons.outlined.Storefront
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.ui.graphics.vector.ImageVector
 
@@ -27,7 +28,6 @@ internal data class ServiceEntry(
     val icon: ImageVector,
     val detail: String? = null,
     val actionLabel: String? = null,
-    val destination: String? = null,
 )
 
 internal data class ServiceGroup(
@@ -36,10 +36,15 @@ internal data class ServiceGroup(
     val services: List<ServiceEntry>,
 )
 
+/**
+ * The service catalog. Every supported entry is a native destination; nothing here opens a browser.
+ * The `id` is the routing key used by `UltraVerseApp`.
+ */
 internal object ServiceCatalog {
-    const val WEBSITE_ORIGIN = "https://ultranetwork.cc"
-    const val APPCHAINS_PATH = "/login?next=%2Fappchains"
-    const val VALIDATOR_PATH = "/validator"
+    const val WALLET_ID = "wallet"
+    const val APPCHAINS_ID = "appchains"
+    const val VALIDATOR_ID = "validator"
+    const val MINING_ID = "validate-transactions"
 
     val groups = listOf(
         ServiceGroup(
@@ -47,7 +52,7 @@ internal object ServiceCatalog {
             title = "Payments & addresses",
             services = listOf(
                 ServiceEntry(
-                    id = "wallet",
+                    id = WALLET_ID,
                     name = "Wallet",
                     availability = Availability.Supported,
                     icon = Icons.Outlined.AccountBalanceWallet,
@@ -74,22 +79,28 @@ internal object ServiceCatalog {
             title = "Build & participate",
             services = listOf(
                 ServiceEntry(
-                    id = "appchains",
+                    id = APPCHAINS_ID,
                     name = "AppChains",
                     availability = Availability.Supported,
                     icon = Icons.Outlined.Layers,
-                    detail = "Operator sign-in",
-                    actionLabel = "Open console",
-                    destination = APPCHAINS_PATH,
+                    detail = "Registry, treasury funding, anchoring",
+                    actionLabel = "Open AppChains",
                 ),
                 ServiceEntry(
-                    id = "validator",
+                    id = VALIDATOR_ID,
                     name = "Validator applications",
                     availability = Availability.Supported,
                     icon = Icons.Outlined.VerifiedUser,
-                    detail = "Wallet signature · two distinct Sovereign owners approve",
+                    detail = "Wallet-signed proposal · two distinct Sovereign owners approve",
                     actionLabel = "View onboarding",
-                    destination = VALIDATOR_PATH,
+                ),
+                ServiceEntry(
+                    id = MINING_ID,
+                    name = "Validate transactions",
+                    availability = Availability.Supported,
+                    icon = Icons.Outlined.Terminal,
+                    detail = "Operator-only block production",
+                    actionLabel = "Validate",
                 ),
                 concept("staking", "Staking", Icons.Outlined.AccountBalanceWallet),
                 concept("holder-dao", "Holder-led DAO", Icons.Outlined.Groups),
@@ -106,18 +117,10 @@ internal object ServiceCatalog {
         ),
     )
 
-    val supportedCount: Int = groups.sumOf { group ->
-        group.services.count { it.availability == Availability.Supported }
-    }
-
-    val unavailableCount: Int = groups.sumOf { group ->
-        group.services.count { it.availability == Availability.Unavailable }
-    }
+    val supportedCount: Int = groups.sumOf { group -> group.services.count { it.availability == Availability.Supported } }
+    val unavailableCount: Int = groups.sumOf { group -> group.services.count { it.availability == Availability.Unavailable } }
 
     private fun concept(id: String, name: String, icon: ImageVector) = ServiceEntry(
-        id = id,
-        name = name,
-        availability = Availability.Unavailable,
-        icon = icon,
+        id = id, name = name, availability = Availability.Unavailable, icon = icon,
     )
 }
