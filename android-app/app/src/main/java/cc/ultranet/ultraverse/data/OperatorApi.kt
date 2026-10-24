@@ -7,6 +7,8 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 internal class OperatorHttpException(val statusCode: Int, message: String) : IOException(message)
 
@@ -14,6 +16,12 @@ internal class OperatorHttpException(val statusCode: Int, message: String) : IOE
  * The node endpoints that sit outside the wallet's own surface: block production and the AppChain
  * registry. Everything here is called with `https` only; the admin token is passed as a bearer
  * credential and never logged.
+ *
+ * Unlike [UltraNetWalletApi], these calls are made directly from composables' `LaunchedEffect` and
+ * `rememberCoroutineScope`, which both run on the main dispatcher, so the socket work hops to
+ * [Dispatchers.IO] inside this class rather than relying on each caller to wrap it. Without that
+ * hop the platform raises `NetworkOnMainThreadException`, which killed the screen while it was
+ * still composing.
  */
 internal class UltraNetOperatorApi(
     private val baseUrl: String = API_BASE_URL,
@@ -122,6 +130,15 @@ internal class UltraNetOperatorApi(
                 payload.optString("message").ifBlank { "This node requires an operator session for validator review." },
             )
         }
+        // The deployed node build answers 404: the route is compiled in but only mounted for an
+        // operator session. Saying "rejected (HTTP 404)" made a missing route look like a refusal.
+        if (status == 404) {
+            return ValidatorReviewResult.RequiresOperatorSession(
+                payload.optString("message").ifBlank {
+                    "This node build does not serve the validator review route, so approval status is readable only in an operator session."
+                },
+            )
+        }
         if (status !in 200..299 || !payload.optBoolean("success", true)) {
             return ValidatorReviewResult.RequiresOperatorSession(
                 payload.optString("message").ifBlank { "The node rejected the review request (HTTP $status)." },
@@ -183,7 +200,7 @@ internal class UltraNetOperatorApi(
         else -> AnchorAvailability.Disabled
     }
 
-    private fun get(path: String): JSONObject {
+    private suspend fun get(path: String): JSONObject {
         val (status, text) = getWithStatus(path)
         val payload = JSONObject(text.ifBlank { "{}" })
         if (status !in 200..299 || !payload.optBoolean("success", true)) {
@@ -192,9 +209,10 @@ internal class UltraNetOperatorApi(
         return payload
     }
 
-    private fun getWithStatus(path: String): Pair<Int, String> = request("GET", path, body = null, adminToken = null)
+    private suspend fun getWithStatus(path: String): Pair<Int, String> =
+        request("GET", path, body = null, adminToken = null)
 
-    private fun post(path: String, body: String?, adminToken: CharArray?): JSONObject {
+    private suspend fun post(path: String, body: String?, adminToken: CharArray?): JSONObject {
         val (status, text) = request("POST", path, body, adminToken)
         val payload = JSONObject(text.ifBlank { "{}" })
         if (status !in 200..299 || !payload.optBoolean("success", false)) {
@@ -203,12 +221,13 @@ internal class UltraNetOperatorApi(
         return payload
     }
 
-    private fun request(
+    /** Blocking socket work; `withContext` keeps it off whichever thread called the public method. */
+    private suspend fun request(
         method: String,
         path: String,
         body: String?,
         adminToken: CharArray?,
-    ): Pair<Int, String> {
+    ): Pair<Int, String> = withContext(Dispatchers.IO) {
         val connection = URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection
         try {
             connection.requestMethod = method
@@ -228,7 +247,7 @@ internal class UltraNetOperatorApi(
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
-            return status to text
+            status to text
         } finally {
             connection.disconnect()
         }

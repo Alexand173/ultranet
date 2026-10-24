@@ -123,7 +123,7 @@ internal fun AppChainsScreen(
                 if (store.hasToken()) {
                     anchorTarget = current.chain
                 } else {
-                    actionMessage = "Import the operator admin token in Validator tools before anchoring." to true
+                    actionMessage = "Import the operator admin token in Validate transactions before anchoring." to true
                 }
             },
             onFund = { current.chain.treasuryAddress?.let { onFundTreasury(it, current.chain.name) } },
@@ -146,7 +146,7 @@ internal fun AppChainsScreen(
             onSubmit = { name, owner ->
                 val token = store.load()
                 if (token == null) {
-                    actionMessage = "Import the operator admin token in Validator tools before creating a chain." to true
+                    actionMessage = "Import the operator admin token in Validate transactions before creating a chain." to true
                     return@CreateChainBody false
                 }
                 actionBusy = true
@@ -179,7 +179,7 @@ internal fun AppChainsScreen(
                 val token = store.load()
                 if (token == null) {
                     anchorTarget = null
-                    actionMessage = "Import the operator admin token in Validator tools before anchoring." to true
+                    actionMessage = "Import the operator admin token in Validate transactions before anchoring." to true
                     return@AnchorConfirmSheet
                 }
                 actionBusy = true
@@ -495,7 +495,7 @@ private fun CreateChainBody(
             if (!hasToken) {
                 Spacer(Modifier.height(14.dp))
                 ToolInlineMessage(
-                    text = "Creating a chain is an operator action. Import the admin token in Validator tools first.",
+                    text = "Creating a chain is an operator action. Import the admin token in Validate transactions first.",
                     isError = true,
                     title = "Operator authorization required",
                 )

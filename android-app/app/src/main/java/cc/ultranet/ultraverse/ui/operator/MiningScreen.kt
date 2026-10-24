@@ -47,7 +47,9 @@ import cc.ultranet.ultraverse.ui.tool.ToolPrimaryAction
 import cc.ultranet.ultraverse.ui.tool.ToolTextField
 import cc.ultranet.ultraverse.ui.tool.ToolTopBar
 import cc.ultranet.ultraverse.ui.tool.shortAddress
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private sealed interface MiningUi {
     data object Idle : MiningUi
@@ -125,14 +127,18 @@ internal fun MiningScreen(
 
     fun mine() {
         if (result is MiningUi.Busy) return
-        val token = store.load()
-        if (token == null) {
-            hasToken = false
-            result = MiningUi.Rejected("Import the operator admin token before validating transactions.", authFailure = true)
-            return
-        }
         result = MiningUi.Busy
         scope.launch {
+            // Keystore decryption blocks, so it stays off the main thread.
+            val token = withContext(Dispatchers.IO) { store.load() }
+            if (token == null) {
+                hasToken = false
+                result = MiningUi.Rejected(
+                    "Import the operator admin token before validating transactions.",
+                    authFailure = true,
+                )
+                return@launch
+            }
             try {
                 val outcome = api.mineBlock(token)
                 result = MiningUi.Produced(outcome)

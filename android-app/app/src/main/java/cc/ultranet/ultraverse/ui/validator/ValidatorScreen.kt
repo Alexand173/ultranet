@@ -161,7 +161,7 @@ internal fun ValidatorScreen(
                 if (!store.hasToken()) {
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        text = "Reviewing and approving proposals needs node operator authorization; import the admin token in Validator tools.",
+                        text = "Reviewing and approving proposals needs node operator authorization; import the admin token in Validate transactions.",
                         color = UltraVerseColors.dim,
                         fontSize = 11.sp,
                         modifier = Modifier.padding(horizontal = 16.dp),

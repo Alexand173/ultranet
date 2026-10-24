@@ -86,6 +86,23 @@ class GroupedHomeScreenTest {
     }
 
     @Test
+    fun validateTransactionsOpensTheMiningScreenBehindItsValidatorGate() {
+        compose.onNodeWithTag("ultraverse-home").performScrollToIndex(5)
+        compose.onNodeWithContentDescription("Validate transactions. Supported path.", substring = true)
+            .performClick()
+        compose.waitUntil(10_000) {
+            runCatching { compose.onNodeWithText("Pending transactions").assertIsDisplayed(); true }
+                .getOrDefault(false)
+        }
+        // Mempool card, then the gate: without a wallet there is no validator record to check.
+        compose.onNodeWithText("Pending transactions").assertIsDisplayed()
+        compose.onNodeWithText("You need validator keys to mine. Register as a validator first.")
+            .assertIsDisplayed()
+        compose.onNodeWithText("Operator authorization").assertExists()
+        compose.onNodeWithText("Import admin token").assertExists()
+    }
+
+    @Test
     fun swapAndProfileStayDisabledAndPortfolioUsesWalletPath() {
         compose.onNodeWithContentDescription("Swap. Not available yet.", substring = true)
             .assertIsNotEnabled()

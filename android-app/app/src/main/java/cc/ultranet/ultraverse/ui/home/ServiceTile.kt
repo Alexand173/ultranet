@@ -113,10 +113,12 @@ internal fun ServiceTile(
                 }
 
                 service.actionLabel?.let { action ->
-                    // Pinned to the bottom so the link lines up across an equal-height row.
+                    // Pinned to the bottom so the link lines up across an equal-height row, and a
+                    // right chevron rather than "↗": every destination is in-app, and the outward
+                    // arrow promised a browser hand-off that no longer exists.
                     Spacer(Modifier.weight(1f))
                     Text(
-                        text = "$action ↗",
+                        text = "$action ›",
                         color = UltraVerseColors.supported,
                         fontSize = 10.sp,
                         lineHeight = 14.sp,
