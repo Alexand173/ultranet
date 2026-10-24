@@ -35,7 +35,7 @@ The single journal entry:
 
 | Item | Value |
 |---|---|
-| APK | `android-app/app/build/outputs/apk/debug/app-debug.apk` · sha256 `27aa576da1f7a27e95e226f54c1ca685b85f5e441660d79c2b6de98d3c8ab7a7` |
+| APK | `android-app/app/build/outputs/apk/debug/app-debug.apk` · sha256 `dd29f3b6aa1fb91cc078209090a4aeb3f0b1449e57cade5fa7c5310f71b9d935` |
 | Device | phone, `arm64-v8a`, API 23+, unlocked, animations off |
 | Network | HTTPS to `api.ultranetwork.cc` (cleartext is disabled in the manifest) |
 | Admin token | `ULTRANET_ADMIN_TOKEN` from `/etc/ultranet/ultranet.env`, at least 32 characters |
@@ -106,21 +106,25 @@ prints `NO activated record`, stop — the app's action stays disabled and minin
 `genesis.json` is not a source here: it declares `initial_validator_count: 5` with
 `validator_set_source: "runtime-generated during bootstrap"` and names no validator addresses.
 
-### Known gap: the app's gate matches the applicant, not the validator key
+### The app now derives the validator address
 
-`OperatorApi.hasValidatorRecord` compares the wallet address against `proposal.proposer`, then falls
-back to a substring search of the serialised approval row. Against the current journal, evaluated
-exactly as the app does it:
+`OperatorApi.hasValidatorRecord` delegates to `validatorRecordMatches` in
+`data/ValidatorRecord.kt`: it compares the wallet address against
+`hex(SHA3-256(activated_validator.public_key))` and still accepts the applicant recorded in
+`proposal.proposer`, then matches pending proposals the same way.
 
 | Wallet address | App gate |
 |---|---|
-| `2859eb67…` (applicant / proposer) | **opens** — the address appears in `proposal` |
-| `09442034…` (the validator key's own address) | **stays closed** — the row carries that key as a 2592-byte array, never as a hex address |
+| `09442034…` (the validator key's own derived address) | **opens** |
+| `2859eb67…` (applicant / proposer) | **opens** (kept for journals written before the key was recorded) |
 
-So a wallet holding the validator's own key is refused by the app even though the node holds a valid,
-active record for it. The authoritative check is the derived address in the script above
-(`hex(SHA3-256(activated_validator.public_key))`). Until the app derives it too, unlock the **applicant**
-wallet `2859eb67…`, or patch `hasValidatorRecord` to compare the derived address.
+Both work, and the derived address is the authoritative one. Before this change the gate searched the
+serialised row for the address as text, which can never find a 2592-byte key array — so the approved
+validator key was refused while only its applicant was accepted.
+
+`ValidatorRecordMatchTest` pins the behaviour against the journal captured on 2026-10-24T16:33Z
+(fixture `app/src/androidTest/assets/validator-journal.json`, trimmed to the fields the gate reads;
+the derived digest over the live key is `09442034…`).
 
 ## 3. Wallet on the phone
 
@@ -181,8 +185,8 @@ python3 -m json.tool /tmp/mine.json; unset TOKEN
 
 | Symptom | Cause | Action |
 |---|---|---|
-| Action disabled, gate says no record | the app matches the applicant only, or the address has no record at all | run the step 2 script: `ACTIVATED` proves the node knows the key, so the app's heuristic is the blocker |
-| Action disabled, gate says no record | address matches no activated record | re-run step 2 with the copied address |
+| Action disabled, gate says no record | the address has no activated or pending record | re-run step 2 with the copied address; `NO activated record` means the node does not know that key |
+| Action disabled although step 2 printed `ACTIVATED` | the installed build predates the derived-address gate | install the current debug APK (sha256 `dd29f3b6…` or later) |
 | Gate green, action disabled | token not imported | import the token, 32+ characters |
 | 401 with a token that works in `curl` | trailing whitespace, or the node restarted with a new token | *Manage saved token* → replace |
 | Node unreachable in the app, website fine | phone network blocks the API host | no cleartext fallback by design |
@@ -194,7 +198,7 @@ Keystore entry; the wallet is untouched. Uninstalling removes both. Lock the wal
 
 ```
 Window (UTC):         __________ → __________
-App sha256:           27aa576d…c8ab7a7
+App sha256:           dd29f3b6…71b9d935
 Wallet address:       ______________________________________
 Height before/after:  2 → ______          (next block index: 2)
 Mempool before/after: 3 → ______

@@ -64,28 +64,18 @@ internal class UltraNetOperatorApi(
     }
 
     /**
-     * Whether the node holds any governance record naming this wallet: a pending proposal proposer
-     * or an activated validator in the approval journal. This is the closest honest answer to "do I
-     * have validator keys", because the node never exposes validator secret material to a client.
+     * Whether the node holds any governance record naming this wallet: a pending proposal proposer,
+     * an activated validator's derived address, or the applicant recorded beside it. This is the
+     * closest honest answer to "do I have validator keys", because the node never exposes validator
+     * secret material to a client.
+     *
+     * Both reads are attempted even when the first fails, and the matching itself lives in
+     * [validatorRecordMatches] so it can be pinned against a real journal payload.
      */
     suspend fun hasValidatorRecord(address: String): Boolean {
-        val normalized = address.lowercase()
         val proposals = runCatching { get("/api/governance/proposals").optJSONArray("proposals") }.getOrNull()
-        if (proposals != null) {
-            for (index in 0 until proposals.length()) {
-                val row = proposals.optJSONObject(index) ?: continue
-                if (row.optString("proposer").lowercase() == normalized) return true
-            }
-        }
         val approvals = runCatching { get("/api/governance/approvals").optJSONArray("approvals") }.getOrNull()
-        if (approvals != null) {
-            for (index in 0 until approvals.length()) {
-                val row = approvals.optJSONObject(index) ?: continue
-                if (row.opt("activated_validator")?.toString()?.lowercase()?.contains(normalized) == true) return true
-                if (row.opt("proposal")?.toString()?.lowercase()?.contains(normalized) == true) return true
-            }
-        }
-        return false
+        return validatorRecordMatches(address, proposals, approvals)
     }
 
     suspend fun mineBlock(adminToken: CharArray): MineOutcome {
