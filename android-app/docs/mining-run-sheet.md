@@ -29,17 +29,36 @@ The single journal entry:
 > block after mining.
 >
 > **Second:** the validator's own address (`0944…`) and the address that applied (`2859…`) are
-> **different**. The app's gate opens only for the applicant — see step 2.
+> **different**. Both now open the app's gate: it derives the address from the key the way the node does
+> (`hex(SHA3-256(public_key))`) and keeps the applicant as a fallback for journals written before the
+> key was recorded — see step 2.
 
 ## 0. Preconditions
 
 | Item | Value |
 |---|---|
-| APK | `android-app/app/build/outputs/apk/debug/app-debug.apk` · sha256 `dd29f3b6aa1fb91cc078209090a4aeb3f0b1449e57cade5fa7c5310f71b9d935` |
+| APK | `android-app/app/build/outputs/apk/debug/app-debug.apk` · sha256 `9df975dca07e2e498cec370661948d0f649624b59555042a0a0c66bbe8921eed` (20 994 555 B, measured 2026-10-24T18:15Z) |
 | Device | phone, `arm64-v8a`, API 23+, unlocked, animations off |
 | Network | HTTPS to `api.ultranetwork.cc` (cleartext is disabled in the manifest) |
 | Admin token | `ULTRANET_ADMIN_TOKEN` from `/etc/ultranet/ultranet.env`, at least 32 characters |
 | Wallet address | read off the phone in step 3 |
+
+The digest is per build, not per source: rebuilding identical code produces a different byte sequence, so
+re-hash before writing it into the record block and confirm the dex carries the gate:
+
+```sh
+APK=android-app/app/build/outputs/apk/debug/app-debug.apk
+sha256sum "$APK"
+python3 - "$APK" <<'PY'   # prints True when the gate fix is in this build
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as apk:
+    blob = b"".join(apk.read(name) for name in apk.namelist() if name.endswith(".dex"))
+print("gate fix in dex:", b"validatorRecordMatches" in blob)
+PY
+```
+
+`unzip` is not present on every host, and `unzip … | grep -c` prints `0` both when the patch is missing
+and when the tool is missing — which reads as a false alarm. Use the `python3` form.
 
 ## 1. Node baseline (before touching the phone)
 
@@ -191,9 +210,14 @@ the derived digest over the live key is `09442034…`).
 ## 3. Wallet on the phone
 
 1. `adb install -r app/build/outputs/apk/debug/app-debug.apk`
-2. Confirm both native slices shipped — `adb` unzip check for `lib/arm64-v8a/libultranetcrypto.so`
-   **and** `lib/x86_64/libultranetcrypto.so`. A missing arm64 slice installs fine and dies at the
-   first Dilithium call.
+2. Confirm both native slices shipped — a missing arm64 slice installs fine and dies at the first
+   Dilithium call:
+
+   ```sh
+   python3 -c "import zipfile;print([n for n in zipfile.ZipFile('app/build/outputs/apk/debug/app-debug.apk').namelist() if n.endswith('libultranetcrypto.so')])"
+   ```
+
+   Expected: `lib/arm64-v8a/libultranetcrypto.so` **and** `lib/x86_64/libultranetcrypto.so`.
 3. Create or restore the wallet, then unlock it.
 4. **Portfolio → Account address → copy.** Re-run step 2 against exactly this string.
 
@@ -261,7 +285,7 @@ python3 -m json.tool /tmp/mine.json; unset TOKEN
 |---|---|---|
 | Action disabled, gate says no record | the address has no activated or pending record | re-run step 2 with the copied address; `NO activated record` means the node does not know that key |
 | Gate says no record, but step 2c printed `ACTIVATED` | the phone's address differs from the one you checked, or the record sits past the page of 50 the app reads (2b `has_more true`) | copy the address again from Portfolio and re-run 2a–2c; if it only matches a later cursor page, that is the app's single-page read, not a mismatch in the key |
-| Action disabled although step 2 printed `ACTIVATED` | the installed build predates the derived-address gate | install the current debug APK (sha256 `dd29f3b6…` or later) |
+| Action disabled although step 2c printed `ACTIVATED` | the installed build predates the derived-address gate | install the current debug APK and confirm `validatorRecordMatches` is in its dex (§0) |
 | Gate green, action disabled | token not imported | import the token, 32+ characters |
 | 401 with a token that works in `curl` | trailing whitespace, or the node restarted with a new token | *Manage saved token* → replace |
 | Node unreachable in the app, website fine | phone network blocks the API host | no cleartext fallback by design |
@@ -273,7 +297,7 @@ Keystore entry; the wallet is untouched. Uninstalling removes both. Lock the wal
 
 ```
 Window (UTC):         __________ → __________
-App sha256:           dd29f3b6…71b9d935
+App sha256:           9df975dc…bbe8921eed   (re-hash the installed file; §0)
 Wallet address:       ______________________________________
 Height before/after:  2 → ______          (next block index: 2)
 Mempool before/after: 3 → ______
