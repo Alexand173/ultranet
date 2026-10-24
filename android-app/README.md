@@ -38,13 +38,15 @@ source ./env.sh
 ./gradlew assembleDebug
 ```
 
+`assembleDebug` produces an APK that ART always interprets: the platform caps the compiler filter for debuggable apps, so `cmd package compile -m speed -f` reports `Success` and changes nothing. On a software-emulated host that made first composition cost ~30 s of main-thread CPU plus ~30 s of JIT — enough for `am start -W` to time out and for SystemUI to ANR. `./gradlew assembleRelease` builds a second variant signed with the debug key: it keeps the same `applicationId`, so it installs over the debug build and preserves the stored wallet, but because it is not debuggable the platform AOT-compiles it. Use that one to walk UI flows by hand; keep the debug build for instrumentation and debugging.
+
 Run local JVM and device tests with:
 
 ```sh
 ./gradlew testDebugUnitTest connectedDebugAndroidTest
 ```
 
-The connected tests include the website BIP39 seed vector, shared WASM/native key/address/signature vectors, the Rust v1 digest fixture, AES-GCM tamper/wrong-password checks, API envelope and signed-byte-array contract checks, and Compose catalog/native-route regressions.
+The connected tests include the website BIP39 seed vector, shared WASM/native key/address/signature vectors, the Rust v1 digest fixture, AES-GCM tamper/wrong-password checks, API envelope and signed-byte-array contract checks, Compose catalog/native-route regressions, and `WalletSessionStatementTest`. That last one seeds the encrypted store, unlocks through the real UI (real 310 000-iteration PBKDF2 and real Dilithium key derivation), then walks the three masthead states, the balance carried into AppChains' top bar, and the portfolio statement — and asserts that returning to Portfolio never asks for the password again. Note that the Apps tab deliberately scrolls past the masthead to the first service group, so a test that wants the hero has to scroll back to index 1.
 
 `UltraNetOperatorApi` performs its blocking socket work inside `withContext(Dispatchers.IO)`. The tool screens call it straight from `LaunchedEffect` and `rememberCoroutineScope`, which both run on the main dispatcher, so without that hop every tool screen raised `NetworkOnMainThreadException` and died mid-composition instead of rendering.
 
@@ -52,21 +54,21 @@ The connected tests include the website BIP39 seed vector, shared WASM/native ke
 
 `WindowPaletteConsistencyTest` holds `res/values/colors.xml` to `UltraVersePalette`, and `GroupedHomeScreenTest.appsTabReturnsToTheFirstGroupAfterEveryHeaderItem` proves the Apps tab still scrolls past every header slot to the first service group. Run each class in its own Gradle invocation: a comma-separated `class=` argument silently executes only the first entry.
 
-`WalletCryptoParityTest` runs four 310 000-iteration PBKDF2 derivations, so it takes minutes on a software-rendered emulator and seconds on hardware. Use `-Pandroid.testInstrumentationRunnerArguments.class=<class>` to run one class at a time when iterating.
+`WalletCryptoParityTest` runs four 310 000-iteration PBKDF2 derivations: well under a second per case on a KVM-accelerated emulator or a phone, but minutes per case when the emulator has no acceleration. Use `-Pandroid.testInstrumentationRunnerArguments.class=<class>` to run one class at a time when iterating.
 
 The portfolio shows a balance and nonce only when account data *and* transaction history both load. Without history, pending outgoing spend cannot be subtracted, so the screen reports unavailable data instead of an overstated balance.
 
 A local API-36 Google APIs x86_64 AVD may be started with:
 
 ```sh
-emulator -avd UltraVerse_API_36 -no-window -no-audio -no-boot-anim -accel off -gpu swiftshader_indirect -no-snapshot
+emulator -avd UltraVerse_API_36 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot
 ```
 
-Substituting `-gpu off` moves rasterisation into the guest and boots the same way; both are software paths and both hit the capture issue described below.
+The host is WSL2 with hardware acceleration available. `/dev/kvm` exists and `emulator -accel-check` reports "KVM (version 12) is installed and usable". With acceleration the AVD finishes booting in about ten seconds, `am start -W` reports `Status: ok` with `TotalTime` near 1.5 s, and `adb exec-out screencap` and `adb shell input tap` both reach the app.
 
-The development host is WSL2 without KVM, so software-rendered emulator performance is limited and system-wide ANR warnings may occur. Prefer a hardware-accelerated emulator or physical device for UI iteration. The debug APK is at `app/build/outputs/apk/debug/app-debug.apk` after a successful build.
+Acceleration needs the `kvm` group, which had no members until 2026-10-24. A session that started before `usermod -aG kvm` keeps the old supplementary groups, so run `emulator -accel-check` before blaming the app: restarting the session picks the group up, and `sudo chmod 666 /dev/kvm` unblocks the current one without restarting anything.
 
-Headless software rendering is not stable for long sessions: `adb exec-out screencap` eventually returns an all-black frame and `adb shell input tap` stops reaching the app while uiautomator dumps still look correct. The emulator console prints `Failed to find ColorBuffer` / `Failed to bind to texture` when this happens. A freshly booted emulator captures reliably, so take the screenshots you need right after `am start`, or restart the emulator; when touch input is dead, verify interaction through the instrumentation tests instead.
+Do not fall back to `-accel off` for UI work. Under software emulation first composition costs ~30 s of main-thread CPU plus ~30 s of JIT, which starves SystemUI and `com.google.android.as` into ANRs, makes `am start -W` report `Status: timeout`, and eventually breaks capture and injected taps (`Failed to find ColorBuffer` / `Failed to bind to texture`). Those were symptoms of CPU starvation, not a rendering defect — they disappear with acceleration. The debug APK is at `app/build/outputs/apk/debug/app-debug.apk` after a successful build.
 
 ## Testing on a physical device
 
@@ -101,7 +103,7 @@ cd android-app && source ./env.sh
 
 One class per invocation: a comma-separated `class=` argument silently runs only the first entry. Each run overwrites `app/build/outputs/androidTest-results/connected/debug/*.xml`, so read that XML rather than trusting the exit code. With more than one device attached, export `ANDROID_SERIAL=<serial>` — otherwise Gradle fans out across all of them and a stale emulator fails the run with `No connected devices!`.
 
-`WalletCryptoParityTest` is the one to plan around: its four 310 000-iteration PBKDF2 derivations cost about 80 s per case under software emulation and seconds on a phone.
+`WalletCryptoParityTest` is the one to plan around: its four 310 000-iteration PBKDF2 derivations cost about 80 s per case under software emulation, and well under a second on a phone or a KVM-accelerated emulator.
 
 ### Confirm both ABIs shipped
 

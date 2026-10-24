@@ -26,6 +26,20 @@ android {
         }
     }
 
+    // A debug build is always interpreted: ART caps the compiler filter for debuggable apps, so
+    // `pm compile -m speed` is a no-op and first composition costs ~30 s of main-thread CPU plus
+    // ~30 s of JIT on a software-rendered emulator. That is enough for the CPU-starved SystemUI to
+    // ANR and for `am start -W` / ActivityScenario to time out. This release variant is signed with
+    // the debug key so it installs in place of the debug build (same applicationId, same data, so
+    // the stored wallet survives), but it is not debuggable, so the platform AOT-compiles it at
+    // install time. Use it to walk UI flows locally; keep the debug build for tests and debugging.
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
     buildFeatures {
         compose = true
     }
