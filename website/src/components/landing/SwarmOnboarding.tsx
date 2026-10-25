@@ -18,6 +18,7 @@ import {
   normalizeProposalPublicKey,
   validateProposalPublicKey,
 } from "@/lib/validator-signing";
+import { OPERATOR_VALIDATOR_COUNT, VALIDATOR_COUNT_DETAIL } from "@/lib/network-counts";
 import { useWalletSession } from "@/components/wallet/WalletSessionProvider";
 import WalletConnectionStatus from "@/components/wallet/WalletConnectionStatus";
 import ProposalWalletPrerequisite from "@/components/wallet/ProposalWalletPrerequisite";
@@ -47,10 +48,11 @@ export default function SwarmOnboarding() {
         if (!response.ok) throw new Error(`Stats request failed with ${response.status}`);
         const data = await response.json();
         if (data.success && data.data) {
-          const validatorCount = Number(data.data.validator_count);
           const totalWeight = Number(data.data.total_weight);
           setSwarmStats({
-            nodes: Number.isFinite(validatorCount) ? new Intl.NumberFormat("en-US").format(validatorCount) : "Unavailable",
+            // Operator count, not the node's record count: four of the six records
+            // are bootstrap entries created at genesis. See lib/network-counts.
+            nodes: new Intl.NumberFormat("en-US").format(OPERATOR_VALIDATOR_COUNT),
             staked: Number.isFinite(totalWeight) ? new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(totalWeight) : "Unavailable",
           });
         }
@@ -173,10 +175,10 @@ export default function SwarmOnboarding() {
 
         <div className="relative z-10 space-y-8">
           <div className="space-y-4">
-            <h2 className="text-4xl md:text-5xl font-bold leading-tight">Join the<br /><span className="text-cyan-glow">Validator Swarm</span></h2>
+            <h2 className="text-4xl md:text-5xl font-bold leading-tight">Join the<br /><span className="text-cyan-glow">Validator Network</span></h2>
             <p className="max-w-md text-platinum/60">
-              UltraNet is bootstrapped by a global swarm of infrastructure providers.
-              Validators help anchor state transitions; active rewards follow the node&apos;s protocol and governance configuration.
+              Validator proposals enter a governance queue and require 2-of-3 Sovereign approval before activation.
+              Public validator counts are node-reported records, not proof of independent or currently online operators.
             </p>
           </div>
 
@@ -241,11 +243,12 @@ export default function SwarmOnboarding() {
 
           <div className="grid grid-cols-2 gap-8 py-8 border-y border-platinum/10 font-mono">
             <div>
-              <p className="text-xs text-platinum/40 uppercase">Active Nodes</p>
+              <p className="text-xs text-platinum/40 uppercase">Validators</p>
               <p className="text-2xl text-cyan-glow">{swarmStats.nodes}</p>
+              <p className="mt-1 text-[10px] leading-relaxed text-platinum/30 normal-case">{VALIDATOR_COUNT_DETAIL}</p>
             </div>
             <div>
-              <p className="text-xs text-platinum/40 uppercase">Validator Weight</p>
+              <p className="text-xs text-platinum/40 uppercase">Reported Validator Weight</p>
               <p className="text-2xl text-cyan-glow">{swarmStats.staked}</p>
             </div>
           </div>

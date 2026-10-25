@@ -2,6 +2,7 @@
 
 import { Activity, Blocks, Clock3, Database, Gauge, Layers, ListChecks, RefreshCw, ShieldCheck } from "lucide-react";
 import type { LiveNetworkStats } from "@/lib/api";
+import { OPERATOR_VALIDATOR_COUNT, VALIDATOR_COUNT_DETAIL } from "@/lib/network-counts";
 
 interface OperatorStatsGridProps {
   stats: LiveNetworkStats;
@@ -27,7 +28,7 @@ function formatUpdatedAt(value: string | null): string {
 export default function OperatorStatsGrid({ stats, isRefreshing, onRefresh }: OperatorStatsGridProps) {
   const cards = [
     { label: "Committed blocks", value: formatInteger(stats.totalBlocks), detail: "Current node observation", icon: Blocks },
-    { label: "Active validators", value: formatInteger(stats.validatorCount), detail: "Validator records", icon: ShieldCheck },
+    { label: "Validators", value: formatInteger(OPERATOR_VALIDATOR_COUNT), detail: VALIDATOR_COUNT_DETAIL, icon: ShieldCheck },
     { label: "Validator weight", value: formatInteger(stats.totalWeight), detail: "Reported total weight", icon: Activity },
     { label: "Mempool", value: formatInteger(stats.mempoolSize), detail: "Pending transactions", icon: Database },
     { label: "Total transactions", value: formatInteger(stats.totalTransactions), detail: "Committed node total", icon: ListChecks },
@@ -53,7 +54,7 @@ export default function OperatorStatsGrid({ stats, isRefreshing, onRefresh }: Op
             <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
             {statusLabel}
           </span>
-          <span className="text-platinum/30">UPDATED {formatUpdatedAt(stats.updatedAt)}</span>
+          <span className="text-platinum/30">FETCHED {formatUpdatedAt(stats.updatedAt)}</span>
           <button
             type="button"
             onClick={onRefresh}

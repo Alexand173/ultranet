@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Activity, Blocks, Clock3, ShieldCheck } from "lucide-react";
 import { emptyNetworkStats, fetchNetworkStats, type LiveNetworkStats } from "@/lib/api";
+import { OPERATOR_VALIDATOR_COUNT, VALIDATOR_COUNT_DETAIL } from "@/lib/network-counts";
 
 function formatInteger(value: number | null): string {
   return value === null ? "Unavailable" : new Intl.NumberFormat("en-US").format(value);
@@ -60,7 +61,7 @@ export default function LiveNetworkSnapshot({ compact = false, refreshMs = 15000
   const isLive = stats.status === "live";
   const cards = [
     { label: "Committed blocks", value: formatInteger(stats.totalBlocks), detail: "Current node observation", icon: Blocks },
-    { label: "Active validators", value: formatInteger(stats.validatorCount), detail: "Validator records on this node", icon: ShieldCheck },
+    { label: "Validators", value: formatInteger(OPERATOR_VALIDATOR_COUNT), detail: VALIDATOR_COUNT_DETAIL, icon: ShieldCheck },
     { label: "Validator weight", value: formatWeight(stats.totalWeight), detail: "Reported total weight", icon: Activity },
     { label: "Latest proving", value: formatMilliseconds(stats.provingTimeMs), detail: "Only shown when measured", icon: Clock3 },
   ];
@@ -84,7 +85,7 @@ export default function LiveNetworkSnapshot({ compact = false, refreshMs = 15000
         {cards.map((card) => <MetricCard key={card.label} {...card} />)}
       </div>
       <p className="text-xs leading-relaxed text-learn-muted">
-        Values are read from the configured UltraNet API. Unavailable is intentional: this page never invents TPS, balances, transactions, or validator counts.
+        Values are read from the configured UltraNet API. The fetch time is local to this page; the endpoint does not provide a metric-generation timestamp. Unavailable is intentional: this page never invents TPS, balances, transactions, or validator counts.
       </p>
     </section>
   );
