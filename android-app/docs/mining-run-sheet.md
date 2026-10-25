@@ -1,14 +1,15 @@
 # Mining run sheet — UltraVerse on UltraNet
 
-**Baseline captured 2026-10-24T16:33Z** (`/api/stats`, `/api/governance/proposals`, `/api/governance/approvals`):
+**Baseline captured 2026-10-25T10:07Z**, after block 2 (the sovereign supply correction) was mined:
 
 | Fact | Value |
 |---|---|
-| `chain_length` | **2** — blocks index 0 (genesis) and 1 exist; the next block is index **2** |
-| `mempool_size` | **3** |
-| `validator_count` | **6** |
-| `total_transactions` / `total_blocks` | 2 / 2 |
-| highest block | index 1, `hash 02784c34…`, `gas_used 81938`, `difficulty 0`, `epoch 1` |
+| `chain_length` | **3** — blocks index 0 (genesis), 1 and 2 exist; the next block is index **3** |
+| `mempool_size` | **3**, all of them **stale and invalid** (see the warning below) |
+| `validator_count` | **6** records — 2 operators plus 4 bootstrap entries; the site now shows 2 |
+| `total_transactions` / `total_blocks` | 1 / 3 |
+| highest block | index 2, `hash 02ac7da4…`, one transaction (`3b8ef38a…` → `0x0`, amount 0), `gas_used 31932`, `epoch 2` |
+| sovereign `3b8ef38a…` | **1,000,000.000000** after the correction; the faucet `787e…` keeps its stranded 1,000.001000 |
 | pending validator proposals | **none** (`{"proposals": []}`) |
 | approval journal | **1 entry** (`total_count 1`, `has_more false`) |
 
@@ -23,10 +24,14 @@ The single journal entry:
 | `is_active` / `stake` / `weight` | `true` / `1000` / `1` |
 | `joined_at` / `last_epoch` / `slash_count` | `1788338774` / `1` / `0` |
 
-> **Read this first:** the mempool is **not** empty. The first successful `/api/mine` will consume those
-> three transactions and produce block **index 2**, not 3 — block indices are zero-based, so
-> `/api/block/2` currently answers `{"success":false,"message":"Block not found"}` and becomes the new
-> block after mining.
+> **Read this first:** `mempool_size` reads **3** but those three entries are **stale and invalid** — they
+> date from before the 2026-10-25 node fix and no longer pass validation. Mining skips them, so
+> `POST /api/mine` answers `400 "No valid transactions available for mining"` and the app reports
+> *No block produced*. **That is the expected result of this baseline, not a defect.** To see a block
+> produced on the phone, submit one valid transaction first (see step 4a).
+>
+> The next block index is **3** — indices are zero-based, so `/api/block/3` currently answers
+> `{"success":false,"message":"Block not found"}` and becomes the new block after mining.
 >
 > **Second:** the validator's own address (`0944…`) and the address that applied (`2859…`) are
 > **different**. Both now open the app's gate: it derives the address from the key the way the node does
@@ -233,17 +238,32 @@ the derived digest over the live key is `09442034…`).
 | *Import admin token* → Save | *"Admin token saved on this device."*; under 32 characters is rejected locally |
 | Balance chip in the top bar | shows balance and spendable; tapping opens Portfolio, Back returns here |
 
+### 4a. This baseline cannot produce a block, and that is correct
+
+`mempool_size` reads 3, but those records are stale — mined blocks from before the 2026-10-25 node fix
+left them, and they no longer pass validation. A tap on **Validate transactions** therefore answers
+`400 No valid transactions available for mining` and the screen shows *No block produced*. That is the
+screen correctly reporting a refused mine; it is not an authorization failure and not a regression.
+
+Two ways to also see a successful mine:
+
+- **Send one valid transaction first.** Any funded wallet can; the phone wallet itself holds 0.000000
+  ULTRA, so it needs funding before it can send. Once a transfer is `pending`, `mempool_size` becomes 4
+  and the next tap produces the block.
+- **Accept the refusal as the result.** The gate, the token, the mempool read and the honest reporting
+  are all still exercised — which is what this run is really about.
+
 ## 5. Mine, then verify outside the app
 
 Tap **Validate transactions**, then:
 
 ```sh
 curl -sS https://api.ultranetwork.cc/api/stats | tee /tmp/stats-after.json | python3 -m json.tool
-curl -sS https://api.ultranetwork.cc/api/block/2 | python3 -m json.tool   # index = chain_length before mining
+curl -sS https://api.ultranetwork.cc/api/block/3 | python3 -m json.tool   # index = chain_length before mining
 ```
 
-Block indices are zero-based: with `chain_length 2` the existing blocks are 0 and 1, so the block
-produced by this run is index **2**, and `chain_length` becomes 3. Fetching `/api/block/3` would return
+Block indices are zero-based: with `chain_length 3` the existing blocks are 0, 1 and 2, so the block
+produced by this run is index **3**, and `chain_length` becomes 4. Fetching `/api/block/4` would return
 `Block not found` even after a successful mine.
 
 The approval journal must not move during a mining run — mining consumes mempool transactions, it does
@@ -299,8 +319,8 @@ Keystore entry; the wallet is untouched. Uninstalling removes both. Lock the wal
 Window (UTC):         __________ → __________
 App sha256:           9df975dc…bbe8921eed   (re-hash the installed file; §0)
 Wallet address:       ______________________________________
-Height before/after:  2 → ______          (next block index: 2)
-Mempool before/after: 3 → ______
+Height before/after:  3 → ______          (next block index: 3)
+Mempool before/after: 3 → ______         (stale entries; a valid tx must be sent first)
 Validator count:      6 → ______
 Gate cross-check:     ACTIVATED / none   (derived: ____________________)
 Approval journal:     1 row → ______      (has_more false · unchanged by run: y/n)
