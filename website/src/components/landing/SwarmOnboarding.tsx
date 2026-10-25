@@ -37,7 +37,12 @@ export default function SwarmOnboarding() {
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [proposalStatus, setProposalStatus] = useState<ProposalStatus>("idle");
   const [proposalMessage, setProposalMessage] = useState("");
-  const [swarmStats, setSwarmStats] = useState({ nodes: "Unavailable", staked: "Unavailable" });
+  // The operator count is not node-derived, so it is present from the first paint: waiting for
+  // /api/stats to answer would flash "Unavailable" for a number that never depends on the node.
+  const [swarmStats, setSwarmStats] = useState(() => ({
+    nodes: new Intl.NumberFormat("en-US").format(OPERATOR_VALIDATOR_COUNT),
+    staked: "Unavailable",
+  }));
   const aliasInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -57,7 +62,10 @@ export default function SwarmOnboarding() {
           });
         }
       } catch {
-        if (!controller.signal.aborted) setSwarmStats({ nodes: "Unavailable", staked: "Unavailable" });
+        // A failed stats read leaves the weight unknown; the operator count is unaffected.
+        if (!controller.signal.aborted) {
+          setSwarmStats({ nodes: new Intl.NumberFormat("en-US").format(OPERATOR_VALIDATOR_COUNT), staked: "Unavailable" });
+        }
       }
     };
     void fetchSwarm();
