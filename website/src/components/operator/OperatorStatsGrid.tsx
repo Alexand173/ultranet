@@ -84,7 +84,9 @@ export default function OperatorStatsGrid({ stats, isRefreshing, onRefresh }: Op
         ))}
       </div>
       <p className="font-mono text-[10px] leading-relaxed text-platinum/35" aria-live="polite">
-        Unavailable means the connected node does not expose that measurement; no value is fabricated by this console.
+        Unavailable means the connected node does not expose that measurement; no value is fabricated by this
+        console. The validator figure is operator-verified, and the node&apos;s record count — which includes
+        bootstrap entries — is shown beside it rather than being passed off as the validator count.
       </p>
     </section>
   );

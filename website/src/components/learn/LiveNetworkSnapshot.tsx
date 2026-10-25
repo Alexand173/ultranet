@@ -85,7 +85,11 @@ export default function LiveNetworkSnapshot({ compact = false, refreshMs = 15000
         {cards.map((card) => <MetricCard key={card.label} {...card} />)}
       </div>
       <p className="text-xs leading-relaxed text-learn-muted">
-        Values are read from the configured UltraNet API. The fetch time is local to this page; the endpoint does not provide a metric-generation timestamp. Unavailable is intentional: this page never invents TPS, balances, transactions, or validator counts.
+        Block, weight and proving values are read from the configured UltraNet API; the fetch time is local
+        to this page because the endpoint provides no metric-generation timestamp. Unavailable is
+        intentional: this page never invents TPS, balances or transactions. The validator figure is the
+        operator-verified count, shown with the node&apos;s record count beside it because the two are not
+        the same number.
       </p>
     </section>
   );

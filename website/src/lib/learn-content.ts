@@ -240,7 +240,7 @@ export const LEARN_ARTICLES: Record<LearnSlug, LearnArticle> = {
         id: "validators-and-weight",
         title: "Validators and total weight",
         paragraphs: [
-          "Validator count reports the active validator records known to the node. Total weight is the sum exposed by the node's validator set. Neither number should be replaced by a marketing estimate when the API is unavailable.",
+          "Validator count is the operator-verified number of real validators. The node separately reports a record count that includes bootstrap entries written at genesis, so the two numbers differ and are not interchangeable. Total weight is the sum exposed by the node's validator set. None of these should be replaced by a marketing estimate when the API is unavailable.",
         ],
       },
       {
