@@ -2756,6 +2756,30 @@ impl UltraBlockchain {
 
     // ============================================================
     // 8.3 RUDARENJE BLOKA
+    /// Bind one transaction into a block Merkle tree.
+    ///
+    /// The miner and the block validator must apply exactly the same rule. They
+    /// once diverged — `mine_block` bound only `MoveCall` payloads while
+    /// `validate_block` also bound `SovereignSupplyCorrection` — so a block
+    /// carrying a supply correction was built with the correction in its root
+    /// and validated without it. The node then rejected its own block with
+    /// "❌ Merkle root mismatch!" and could not mine for as long as the
+    /// correction stayed in the mempool. Sharing one function removes the
+    /// possibility of that drift returning.
+    ///
+    /// Legacy version-1 transfers keep their historical shape: sender key only,
+    /// no payload binding.
+    fn bind_block_transaction_merkle(tree: &mut MerkleTree, tx: &Transaction) {
+        tree.insert(tx.sender.as_bytes(), &tx.amount.to_le_bytes());
+        if matches!(
+            &tx.payload,
+            TransactionPayload::MoveCall { .. }
+                | TransactionPayload::SovereignSupplyCorrection { .. }
+        ) {
+            tree.insert(format!("{}:move", tx.sender).as_bytes(), &tx.get_hash());
+        }
+    }
+
     // ============================================================
     pub fn mine_block(&mut self) -> Result<UltraBlock, String> {
         // 1. Preuzmi transakcije iz mempool-a
@@ -2874,14 +2898,7 @@ impl UltraBlockchain {
         // Kreiraj Merkle root
         let mut block_merkle_tree = MerkleTree::new(256);
         for tx in &valid_txs {
-            let key = tx.sender.as_bytes();
-            let value = &tx.amount.to_le_bytes();
-            block_merkle_tree.insert(key, value);
-
-            // ✅ MOVE VM: Dodaj payload u Merkle root
-            if let TransactionPayload::MoveCall { .. } = &tx.payload {
-                block_merkle_tree.insert(format!("{}:move", tx.sender).as_bytes(), &tx.get_hash());
-            }
+            Self::bind_block_transaction_merkle(&mut block_merkle_tree, tx);
         }
         let merkle_root_vec = block_merkle_tree.get_root();
         let mut merkle_root_array = [0u8; 32];
@@ -3255,19 +3272,7 @@ impl UltraBlockchain {
         // 3. Provera Merkle root-a
         let mut merkle_tree = MerkleTree::new(256);
         for tx in &block.transactions {
-            let key = tx.sender.as_bytes();
-            let value = &tx.amount.to_le_bytes();
-            merkle_tree.insert(key, value);
-
-            // Bind payload-bearing protocol operations into the block Merkle
-            // root. Legacy version-1 transfers retain their historical shape.
-            if matches!(
-                &tx.payload,
-                TransactionPayload::MoveCall { .. }
-                    | TransactionPayload::SovereignSupplyCorrection { .. }
-            ) {
-                merkle_tree.insert(format!("{}:move", tx.sender).as_bytes(), &tx.get_hash());
-            }
+            Self::bind_block_transaction_merkle(&mut merkle_tree, tx);
         }
         let root = merkle_tree.get_root();
         let mut root_array = [0u8; 32];
@@ -4785,6 +4790,76 @@ mod signature_verification_tests {
             .contains("Insufficient signatures"));
 
         cleanup_test_chain("approval_envelope");
+    }
+
+    /// The block Merkle rule must bind a correction exactly like the validator does.
+    ///
+    /// Regression for the asymmetry that made a supply correction unminable on
+    /// the production chain: `mine_block` bound only `MoveCall` payloads while
+    /// `validate_block` also bound `SovereignSupplyCorrection`, so the node
+    /// rebuilt a different root from the same block and rejected it with
+    /// "Merkle root mismatch". Both paths now call `bind_block_transaction_merkle`,
+    /// and this test pins the rule those paths share.
+    #[test]
+    fn block_merkle_rule_binds_corrections_but_leaves_legacy_transfers_alone() {
+        let correction = Transaction {
+            sender: UltraBlockchain::SOVEREIGN_ADDR.to_string(),
+            sender_public_key: vec![],
+            recipient: crate::supply_correction::SUPPLY_CORRECTION_RECIPIENT.to_string(),
+            amount: 0,
+            signature: vec![],
+            zk_proof: vec![],
+            nullifier: [7u8; 32],
+            timestamp: 1_700_000_000,
+            fee: 0,
+            nonce: 0,
+            gas_limit: crate::supply_correction::SUPPLY_CORRECTION_GAS_LIMIT,
+            gas_price: crate::supply_correction::SUPPLY_CORRECTION_GAS_PRICE,
+            proof_type: ProofType::Ownership,
+            payload: TransactionPayload::SovereignSupplyCorrection {
+                correction_id: crate::supply_correction::correction_id(),
+                target_address: crate::supply_correction::target_address().to_string(),
+                expected_balance: 1,
+                target_balance: crate::supply_correction::target_balance_base_units(),
+            },
+            chain_id: UltraBlockchain::L1_CHAIN_ID,
+            version: UltraBlockchain::SUPPLY_CORRECTION_TRANSACTION_VERSION,
+        };
+        let mut legacy = correction.clone();
+        legacy.payload = TransactionPayload::StandardTransfer;
+        legacy.version = UltraBlockchain::LEGACY_TRANSACTION_VERSION;
+        legacy.nonce = 1;
+
+        // Expected roots, built by hand from the documented rule.
+        let mut expected_correction_tree = MerkleTree::new(256);
+        expected_correction_tree.insert(correction.sender.as_bytes(), &correction.amount.to_le_bytes());
+        expected_correction_tree.insert(
+            format!("{}:move", correction.sender).as_bytes(),
+            &correction.get_hash(),
+        );
+        let mut expected_legacy_tree = MerkleTree::new(256);
+        expected_legacy_tree.insert(legacy.sender.as_bytes(), &legacy.amount.to_le_bytes());
+
+        let mut correction_tree = MerkleTree::new(256);
+        UltraBlockchain::bind_block_transaction_merkle(&mut correction_tree, &correction);
+        let mut legacy_tree = MerkleTree::new(256);
+        UltraBlockchain::bind_block_transaction_merkle(&mut legacy_tree, &legacy);
+
+        assert_eq!(
+            correction_tree.get_root(),
+            expected_correction_tree.get_root(),
+            "a correction must be bound by sender value *and* its payload hash"
+        );
+        assert_eq!(
+            legacy_tree.get_root(),
+            expected_legacy_tree.get_root(),
+            "legacy version-1 transfers must keep their historical single-key shape"
+        );
+        assert_ne!(
+            correction_tree.get_root(),
+            legacy_tree.get_root(),
+            "binding the payload must change the root, which is what the validator relies on"
+        );
     }
 
     #[test]
