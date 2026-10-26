@@ -1,22 +1,58 @@
 #!/usr/bin/env python3
-import json
-import time
-import secrets
+"""Fund the UltraNet faucet from the Sovereign account.
+
+The Sovereign account requires 2-of-3 signatures, so this script loads `sovereign_keys.json`, signs
+the canonical version-1 transaction digest with the first two owners, and submits the envelope.
+
+Two values are deliberately not constants:
+
+  * `nonce` is read from the node before signing. A stale nonce is rejected outright, and the
+    Sovereign account moves it on every transfer.
+  * `timestamp` is taken at signing time. The node rejects a transaction older than one hour with
+    "Transaction is too old!", which is what a hardcoded timestamp eventually guarantees.
+
+The fee, gas limit and gas price come from the node's own `/api/transaction/estimate`, and the
+script aborts if that quote disagrees with what it is about to sign.
+"""
 import hashlib
+import json
+import secrets
 import subprocess
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
 from pqc.sign import dilithium5
 
 # CONFIG
+NODE_URL = "https://api.ultranetwork.cc"
 SOVEREIGN_ADDR = "3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c"
-FAUCET_ADDR = "787e68b2c5ac93d3eaaa5db72ab4bb0404e1ef3f4315e0c83d557a09d800a358"
-AMOUNT = 1_000_000_000       # 1.000 ULTRA
-FEE = 10_000_000             # 10 ULTRA
-GAS_LIMIT = 1_000_000
-GAS_PRICE = 1
-NONCE = 0                    # proveri pre pokretanja
+FAUCET_ADDR = "fe0b9a9227ebb2bb40b408c5b10b0155a2591fdf97ce43580a1ab873271af1f8"
+
+AMOUNT = 100_000_000        # 100.000000 ULTRA of float for the faucet
+EXPECTED_FEE = 1_000_000    # 1.000000 ULTRA — the quote the node returns for this transfer
 CHAIN_ID = 0
 VERSION = 1
-API_URL = "https://api.ultranetwork.cc/api/transaction"
+API_URL = NODE_URL + "/api/transaction"
+
+# The edge in front of the API answers 403 to clients that send no usable User-Agent.
+USER_AGENT = "UltraNet-send-ultra/2.0"
+
+
+def node_get(path: str):
+    request = urllib.request.Request(NODE_URL + path, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as error:
+        raise SystemExit(f"{path} answered HTTP {error.code} {error.reason}")
+    except urllib.error.URLError as error:
+        raise SystemExit(f"{path} is unreachable: {error.reason}")
+    if not payload.get("success") or payload.get("data") is None:
+        raise SystemExit(f"{path} returned no data: {payload.get('message')}")
+    return payload["data"]
+
 
 # Učitaj sovereign ključeve
 with open("sovereign_keys.json") as f:
@@ -40,17 +76,46 @@ sk1_hex = owner1["secret_key"]
 sk0 = bytes.fromhex(sk0_hex)
 sk1 = bytes.fromhex(sk1_hex)
 
+# Live state: the nonce the node expects next, and the fee it quotes for this exact transfer.
+account = node_get(f"/api/account/{SOVEREIGN_ADDR}")
+NONCE = account["nonce"]
+balance = account["balance_base_units"]
+
+query = urllib.parse.urlencode({"recipient": FAUCET_ADDR, "amount": AMOUNT})
+estimate = node_get("/api/transaction/estimate?" + query)
+if estimate["recipient"] != FAUCET_ADDR or estimate["amount"] != AMOUNT:
+    raise SystemExit("The node quoted a different transfer than the one configured here.")
+if estimate["fee"] != EXPECTED_FEE:
+    raise SystemExit(
+        f"The node now quotes a fee of {estimate['fee']} base units, not the expected {EXPECTED_FEE}. "
+        "Review the policy before signing: the fee is part of the signed digest."
+    )
+
+FEE = estimate["fee"]
+GAS_LIMIT = estimate["gas_limit"]
+GAS_PRICE = estimate["gas_price"]
+timestamp = int(time.time())
+total = AMOUNT + FEE
+
+print(f"Sovereign : {SOVEREIGN_ADDR}")
+print(f"Faucet    : {FAUCET_ADDR}")
+print(f"Amount    : {AMOUNT / 1_000_000:.6f} ULTRA")
+print(f"Network fee: {FEE / 1_000_000:.6f} ULTRA  (gas_limit {GAS_LIMIT}, gas_price {GAS_PRICE})")
+print(f"Total debit: {total / 1_000_000:.6f} ULTRA of {balance / 1_000_000:.6f} ULTRA")
+print(f"Nonce     : {NONCE}")
+print(f"Timestamp : {timestamp}")
+
+if total > balance:
+    raise SystemExit("The Sovereign balance does not cover this transfer plus its fee.")
+
 nullifier_bytes = secrets.token_bytes(32)
 nullifier_list = list(nullifier_bytes)
-timestamp = 1788108456   # add 10 seconds to be safe
-
 
 sender_bytes = SOVEREIGN_ADDR.encode('utf-8')
 recipient_bytes = FAUCET_ADDR.encode('utf-8')
 amount_bytes = AMOUNT.to_bytes(8, 'little')
 fee_bytes = FEE.to_bytes(8, 'little')
 timestamp_bytes = timestamp.to_bytes(8, 'little')
-nullifier_bytes = bytes(nullifier_list)
 nonce_bytes = NONCE.to_bytes(8, 'little')
 gas_limit_bytes = GAS_LIMIT.to_bytes(8, 'little')
 gas_price_bytes = GAS_PRICE.to_bytes(8, 'little')

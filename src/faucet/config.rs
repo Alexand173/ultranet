@@ -4,8 +4,14 @@ use crate::{faucet::captcha::TURNSTILE_HOSTNAME, UltraBlockchain};
 
 pub const DEFAULT_BIND: &str = "127.0.0.1:8090";
 pub const DEFAULT_NODE_API_BASE_URL: &str = "http://127.0.0.1:8081";
+/// The address the production signer derives on `ubuntu-4gb-nbg1-2`.
+///
+/// It is only a fallback for a deployment that omits `FAUCET_ADDRESS`: the service refuses to start
+/// when the configured address differs from the one its signer derives. The previously documented
+/// `787e68b2…` is not this faucet — it holds a stranded balance with no reachable key, so defaulting
+/// to it would point a fresh deployment at funds it can never spend.
 pub const DEFAULT_FAUCET_ADDRESS: &str =
-    "787e68b2c5ac93d3eaaa5db72ab4bb0404e1ef3f4315e0c83d557a09d800a358";
+    "fe0b9a9227ebb2bb40b408c5b10b0155a2591fdf97ce43580a1ab873271af1f8";
 pub const DEFAULT_CLAIM_AMOUNT_BASE_UNITS: u64 = 1_000_000;
 pub const DEFAULT_DAILY_DEBIT_CAP_BASE_UNITS: u64 = 100_000_000;
 pub const DEFAULT_MIN_BALANCE_RESERVE_BASE_UNITS: u64 = 200_000_000;

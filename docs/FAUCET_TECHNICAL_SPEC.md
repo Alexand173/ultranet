@@ -73,14 +73,20 @@ source debit:  1,010,000 base units = 1.010000 $ULTRA
 
 The faucet budget counts `amount + fee`, not only the amount received by the user.
 
-The operator supplied the following faucet account snapshot during planning:
+The deployed faucet account is:
 
 ```text
-address:             787e68b2c5ac93d3eaaa5db72ab4bb0404e1ef3f4315e0c83d557a09d800a358
-balance_base_units:  1,000,000,000
-balance_ultra:       1,000.000000
-reported decimals:   6
+address:              fe0b9a9227ebb2bb40b408c5b10b0155a2591fdf97ce43580a1ab873271af1f8
+balance_base_units:   0
+balance_ultra:        0.000000
+reported decimals:    6
+planned float:        1,000,000,000 base units = 1,000.000000 $ULTRA
+measured:             2026-10-26
 ```
+
+The address is the one the production signer derives; intake stays disabled until the account is
+funded past `FAUCET_MIN_BALANCE_RESERVE_BASE_UNITS`. The previously documented `787e68b2…` is a
+different account — it holds a stranded balance and has no reachable key, so it is not this faucet.
 
 At the fixed claim policy, the theoretical balance-only maximum is `floor(1,000,000,000 / 1,010,000) = 990` claims. This is not an operating target. The service must retain a reserve, honor a much smaller global daily cap, and disable intake before the hot wallet is depleted.
 
@@ -611,7 +617,7 @@ Never store a private key in this table. The signer key is loaded through a dedi
 ### 9.1 Key custody
 
 - Generate the faucet key in a controlled offline or hardened provisioning workflow.
-- Verify the derived public address exactly equals `787e68b2c5ac93d3eaaa5db72ab4bb0404e1ef3f4315e0c83d557a09d800a358` before enabling claims.
+- Verify the derived public address exactly equals `fe0b9a9227ebb2bb40b408c5b10b0155a2591fdf97ce43580a1ab873271af1f8` before enabling claims.
 - Store only this dedicated faucet key. Do not copy sovereign keys, validator keys, recovery phrases, or `ULTRANET_ADMIN_TOKEN` to the faucet host.
 - Prefer systemd credentials, a local secret manager, or an HSM-backed signer over a plain environment variable.
 - If a file is unavoidable, use a root-owned path readable only by `root` and `ultranet-faucet`, `umask 077`, restrictive permissions, and encrypted backups.
@@ -810,7 +816,7 @@ Proposed `/etc/ultranet-faucet/faucet.env` values:
 ```dotenv
 FAUCET_BIND=127.0.0.1:8090
 FAUCET_NODE_API_BASE_URL=http://127.0.0.1:8081
-FAUCET_ADDRESS=787e68b2c5ac93d3eaaa5db72ab4bb0404e1ef3f4315e0c83d557a09d800a358
+FAUCET_ADDRESS=fe0b9a9227ebb2bb40b408c5b10b0155a2591fdf97ce43580a1ab873271af1f8
 FAUCET_CLAIM_AMOUNT_BASE_UNITS=1000000
 FAUCET_DAILY_DEBIT_CAP_BASE_UNITS=100000000
 FAUCET_MIN_BALANCE_RESERVE_BASE_UNITS=200000000
