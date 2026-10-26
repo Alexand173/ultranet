@@ -42,6 +42,7 @@ internal data class ServiceGroup(
  */
 internal object ServiceCatalog {
     const val WALLET_ID = "wallet"
+    const val PAY_ID = "ultranet-pay"
     const val APPCHAINS_ID = "appchains"
     const val VALIDATOR_ID = "validator"
     const val MINING_ID = "validate-transactions"
@@ -59,7 +60,14 @@ internal object ServiceCatalog {
                     detail = "Local \$ULTRA wallet",
                     actionLabel = "Open wallet",
                 ),
-                concept("ultranet-pay", "UltraNet Pay", Icons.AutoMirrored.Outlined.ReceiptLong),
+                ServiceEntry(
+                    id = PAY_ID,
+                    name = "UltraNet Pay",
+                    availability = Availability.Supported,
+                    icon = Icons.AutoMirrored.Outlined.ReceiptLong,
+                    detail = "One address, one amount, one tap",
+                    actionLabel = "Open Pay",
+                ),
                 concept("name-service", "Name Service", Icons.Outlined.Badge),
             ),
         ),

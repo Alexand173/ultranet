@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -223,11 +224,15 @@ internal fun ToolTextField(
     minLines: Int = 1,
     keyboardOptions: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default,
     visualTransformation: androidx.compose.ui.text.input.VisualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,
+    /** Optional semantics tag, so a screen's field can be driven by an instrumentation test. */
+    testTag: String? = null,
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .then(if (testTag != null) Modifier.testTag(testTag) else Modifier),
         label = { Text(label, fontSize = 12.sp) },
         placeholder = placeholder?.let { { Text(it, fontSize = 13.sp, color = UltraVerseColors.dim) } },
         supportingText = supporting?.let { { Text(it, fontSize = 11.sp, color = if (isError) UltraVerseColors.unavailableStrong else UltraVerseColors.dim) } },

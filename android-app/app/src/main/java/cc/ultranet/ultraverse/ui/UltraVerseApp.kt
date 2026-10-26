@@ -67,13 +67,14 @@ import cc.ultranet.ultraverse.ui.wallet.LocalWalletBalance
 import cc.ultranet.ultraverse.ui.wallet.WalletBalanceHeaderState
 import cc.ultranet.ultraverse.ui.wallet.WalletFlowScreen
 import cc.ultranet.ultraverse.ui.wallet.WalletRoute
+import cc.ultranet.ultraverse.ui.pay.PayScreen
 import cc.ultranet.ultraverse.wallet.WalletController
 import cc.ultranet.ultraverse.wallet.WalletUiState
 import cc.ultranet.ultraverse.wallet.availableAfterPending
 import kotlinx.coroutines.launch
 
 /** Top-level native destinations. Every supported catalog entry maps to one of these. */
-private enum class HomeSection { Apps, Wallet, AppChains, Validator, Mining }
+private enum class HomeSection { Apps, Wallet, Pay, AppChains, Validator, Mining }
 
 @Composable
 internal fun UltraVerseApp(
@@ -116,6 +117,7 @@ internal fun UltraVerseApp(
     val openService: (ServiceEntry) -> Unit = { service ->
         when (service.id) {
             ServiceCatalog.WALLET_ID -> openWallet()
+            ServiceCatalog.PAY_ID -> section = HomeSection.Pay
             ServiceCatalog.APPCHAINS_ID -> section = HomeSection.AppChains
             ServiceCatalog.VALIDATOR_ID -> section = HomeSection.Validator
             ServiceCatalog.MINING_ID -> section = HomeSection.Mining
@@ -211,6 +213,27 @@ internal fun UltraVerseApp(
                     controller.lock()
                     route = WalletRoute.Portfolio
                 },
+            )
+
+            HomeSection.Pay -> PayScreen(
+                state = controller.state,
+                onBack = { section = HomeSection.Apps },
+                onOpenWallet = { openWallet() },
+                onOpenPortfolio = { portfolioReturn = null; openWallet() },
+                onRecipientChange = controller::updateRecipient,
+                onAmountChange = controller::updateAmount,
+                onEstimate = { recipient, amount -> scope.launch { controller.estimateTransfer(recipient, amount) } },
+                onConfirm = {
+                    scope.launch {
+                        // prepareTransfer re-checks the unresolved-transfer guard, the loaded
+                        // history and the live fee before the seed is touched.
+                        if (controller.prepareTransfer() != null) controller.submitTransfer()
+                    }
+                },
+                // startNewTransfer refuses while a signed transfer is unresolved; that refusal is
+                // exactly what keeps this screen from offering a second payment over an unknown one.
+                onReset = { runCatching { controller.startNewTransfer() } },
+                onRefresh = { scope.launch { controller.refreshAccount() } },
             )
 
             HomeSection.AppChains -> AppChainsScreen(

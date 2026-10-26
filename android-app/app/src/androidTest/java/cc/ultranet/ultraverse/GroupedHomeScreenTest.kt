@@ -31,7 +31,7 @@ class GroupedHomeScreenTest {
         compose.onNodeWithText("Payments & addresses").assertIsDisplayed()
         compose.onNodeWithContentDescription("Wallet. Supported path.", substring = true)
             .assertIsDisplayed()
-        compose.onNodeWithContentDescription("UltraNet Pay. Not available yet.", substring = true)
+        compose.onNodeWithContentDescription("UltraNet Pay. Supported path.", substring = true)
             .assertIsDisplayed()
 
         home.performScrollToIndex(5)
@@ -48,12 +48,13 @@ class GroupedHomeScreenTest {
     }
 
     @Test
-    fun catalogContainsFourSupportedAndTwelveUnavailableServices() {
+    fun catalogContainsFiveSupportedAndElevenUnavailableServices() {
         assertEquals(4, ServiceCatalog.groups.size)
         assertEquals(listOf(3, 5, 6, 2), ServiceCatalog.groups.map { it.services.size })
         assertEquals(16, ServiceCatalog.groups.sumOf { it.services.size })
-        assertEquals(4, ServiceCatalog.supportedCount)
-        assertEquals(12, ServiceCatalog.unavailableCount)
+        // UltraNet Pay joined the supported set: a payment screen is a native destination now.
+        assertEquals(5, ServiceCatalog.supportedCount)
+        assertEquals(11, ServiceCatalog.unavailableCount)
         // Mining lives inside Build & participate, next to the validator application tile.
         val buildGroup = ServiceCatalog.groups.first { it.id == "build-participate" }
         assertEquals(
@@ -83,6 +84,22 @@ class GroupedHomeScreenTest {
             runCatching { compose.onNodeWithText("Apply as validator").assertIsDisplayed(); true }.getOrDefault(false)
         }
         compose.onNodeWithText("Apply as validator").assertIsDisplayed()
+    }
+
+    @Test
+    fun payTileOpensANativeFormThatAsksForAWalletFirst() {
+        compose.onNodeWithTag("ultraverse-home").performScrollToIndex(3)
+        compose.onNodeWithContentDescription("UltraNet Pay. Supported path.", substring = true).performClick()
+        // A clean install has no stored wallet, so Pay withholds the form and names the reason.
+        compose.waitUntil(10_000) {
+            runCatching { compose.onNodeWithText("No wallet on this device").assertIsDisplayed(); true }
+                .getOrDefault(false)
+        }
+        compose.onNodeWithText("Send \$ULTRA to one address").assertIsDisplayed()
+        compose.onNodeWithText("Set up wallet").assertExists()
+        // Nothing is payable before a wallet exists, so no fee controls or confirmation are offered.
+        compose.onNodeWithText("Get the network fee").assertDoesNotExist()
+        compose.onNodeWithText("Confirm and send").assertDoesNotExist()
     }
 
     @Test
