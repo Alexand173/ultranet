@@ -48,6 +48,88 @@ The initial beta policy is fixed and server-selected:
 
 The deployed faucet address held `0` base units on 2026-10-26, so it cannot pay a claim until a float is transferred to it: it needs more than `FAUCET_MIN_BALANCE_RESERVE_BASE_UNITS` (`200.000000` $ULTRA) plus the claim amount and its fee. At the historical `1,000,000,000` base units (`1,000.000000` $ULTRA) snapshot the balance-only ceiling was 990 claims, but the service must stop at the configured reserve and daily cap. Budget reservations include both amount and fee.
 
+## Funding the float
+
+The float is a normal version-1 L1 transfer from the Sovereign account, which requires 2-of-3 owner
+signatures. `send_ultra.py` performs it. It is a dry run unless `--send` is passed.
+
+A 100 $ULTRA transfer does **not** clear the `200.000000` reserve above, so claims stay blocked after
+it. Fund at least `201.000000` to make the first claim payable, and keep the reserve in mind when
+choosing the amount.
+
+### Prerequisites, once per machine
+
+```bash
+# 1. The Python binding to the repository's own PQClean Dilithium-5 (no downloads):
+tools/pqclean_dilithium5/build.sh          # builds and installs the `pqc` package into ./venv
+
+# 2. Sovereign key material, never committed and never copied to the faucet host:
+ls -l sovereign_keys.json                   # at least two owner records, mode 0600
+```
+
+The node signs with the `pqcrypto-dilithium 0.5` crate and the binding compiles the same vendored C,
+so signatures are byte-identical. Do not substitute an ML-DSA library: FIPS 204 is a different scheme
+and its signatures do not verify on this chain.
+
+### Step 1 — dry run and read every line
+
+```bash
+./venv/bin/python send_ultra.py --check-file /tmp/sig-artifact.json
+```
+
+The script fetches the live nonce and the node's fee quote, signs with two owners, and refuses to
+continue if either signature fails to verify. Nothing is submitted and `transfer.json` is not written.
+Confirm before going further:
+
+- `Nonce` equals `nonce` from `GET /api/account/<sovereign>`; a stale nonce is rejected outright.
+- `Network fee` equals `fee` from `GET /api/transaction/estimate` for this recipient and amount; the
+  script aborts if the quote disagrees with its expectation.
+- `Total debit` is `amount + fee` and sits below the Sovereign balance.
+- `Timestamp` is within the hour; the node rejects older envelopes as *"Transaction is too old!"*.
+- `signature : 9254 bytes (2 x 4627)`.
+
+### Step 2 — verify the signature outside the binding
+
+```bash
+cargo run --locked --example verify_sig_artifact -- /tmp/sig-artifact.json
+```
+
+Expected: `node verifies : true`, and `derived address` equal to one of the Sovereign owner addresses
+in `ULTRANET_AUTHORIZED_NODE_IDENTIFIERS`. This uses the same dilithium5 verifier the node runs, so a
+`false` here means do not proceed — no transaction can succeed.
+
+### Step 3 — sign and submit
+
+```bash
+./venv/bin/python send_ultra.py --send
+```
+
+The response is the node's answer verbatim. `success: true` and `status: "pending"` mean the transfer
+is in the mempool, not confirmed — confirmation needs a block.
+
+### Step 4 — reconcile on chain
+
+```bash
+BASE=https://api.ultranetwork.cc
+curl -sS "$BASE/api/account/<faucet-address>" | python3 -m json.tool   # balance +100
+curl -sS "$BASE/api/account/<sovereign>"     | python3 -m json.tool   # balance −101, nonce +1
+curl -sS "$BASE/api/stats"                   | python3 -m json.tool   # mempool +1 until mined
+```
+
+The approval journal must not move (`GET /api/governance/approvals`): funding is a transfer, not a
+governance action. Then mine the pending transfer, or leave it for the next block producer.
+
+### If the response is ambiguous
+
+Do **not** re-run the script. Every run produces a new timestamp, nullifier and nonce, so a second run
+is a second transfer, not a retry. Read the Sovereign account and its history first:
+
+- `nonce` increased and the destination balance rose → the first transfer landed.
+- `nonce` unchanged and the mempool has no matching entry → nothing landed; a fresh dry run is safe.
+
+Intake stays `FAUCET_ENABLED=false` until the reserve, Turnstile, proxy, backup and monitoring gates in
+this runbook are all satisfied — funding the address does not enable claims.
+
 The public intake default is disabled. Do not change `FAUCET_ENABLED=true` until all preflight gates below are complete.
 
 ## Credential provisioning

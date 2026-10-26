@@ -14,6 +14,7 @@ Two values are deliberately not constants:
 The fee, gas limit and gas price come from the node's own `/api/transaction/estimate`, and the
 script aborts if that quote disagrees with what it is about to sign.
 """
+import argparse
 import hashlib
 import json
 import secrets
@@ -24,6 +25,22 @@ import urllib.parse
 import urllib.request
 
 from pqc.sign import dilithium5
+
+parser = argparse.ArgumentParser(
+    description="Fund the UltraNet faucet from the Sovereign account (dry run unless --send).",
+)
+parser.add_argument(
+    "--send",
+    action="store_true",
+    help="sign, write transfer.json and submit the envelope. Without this flag the script only dry-runs.",
+)
+parser.add_argument(
+    "--check-file",
+    default="",
+    help="write the digest, signature and public key to this path so an independent verifier "
+         "(the Rust node) can confirm the binding is byte-compatible.",
+)
+args = parser.parse_args()
 
 # CONFIG
 NODE_URL = "https://api.ultranetwork.cc"
@@ -131,6 +148,13 @@ sig0 = dilithium5.sign(digest, sk0)
 print("Signing with owner1...")
 sig1 = dilithium5.sign(digest, sk1)
 
+# Verify both signatures against their own owner key before anything can be submitted: a binding
+# that signs with the wrong scheme fails here instead of on chain.
+if not dilithium5.verify(sig0, digest, sender_pubkey_bytes):
+    raise SystemExit("owner0's signature does not verify under owner0's public key; refusing to continue.")
+if not dilithium5.verify(sig1, digest, bytes.fromhex(owner1["public_key"])):
+    raise SystemExit("owner1's signature does not verify under owner1's public key; refusing to continue.")
+
 combined_sig = list(sig0 + sig1)
 if len(combined_sig) != 9254:
     raise ValueError(f"Combined signature length is {len(combined_sig)}, expected 9254")
@@ -150,6 +174,32 @@ tx = {
     "chain_id": CHAIN_ID,
     "version": VERSION
 }
+
+if args.check_file:
+    with open(args.check_file, "w") as handle:
+        json.dump(
+            {
+                "digest": digest.hex(),
+                "signature": sig0.hex(),
+                "public_key": sender_pubkey_hex,
+                "combined_signature_bytes": len(combined_sig),
+            },
+            handle,
+        )
+    print(f"Wrote the signing artifact to {args.check_file} for independent verification.")
+
+if not args.send:
+    redacted = {
+        key: (value if key not in {"sender_public_key", "signature", "nullifier"} else f"<{len(value)} entries>")
+        for key, value in tx.items()
+    }
+    print()
+    print("DRY RUN — nothing was submitted and transfer.json was not written.")
+    print(f"  digest    : {digest.hex()}")
+    print(f"  signature : {len(combined_sig)} bytes (2 x {dilithium5.SIGNATURE_BYTES})")
+    print(json.dumps(redacted, indent=2))
+    print("Re-run with --send to sign and submit this transfer.")
+    raise SystemExit(0)
 
 with open("transfer.json", "w") as f:
     json.dump(tx, f, indent=2)

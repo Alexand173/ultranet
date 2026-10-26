@@ -84,3 +84,7 @@ node_modules/
 _Gemini*
 Cargo.toml:24:1
 src/main.rs:3134-3351
+
+# Native build output for the pqc Python binding (see tools/pqclean_dilithium5/README.md)
+tools/pqclean_dilithium5/build/
+__pycache__/

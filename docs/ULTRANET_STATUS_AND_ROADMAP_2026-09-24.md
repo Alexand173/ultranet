@@ -222,7 +222,7 @@ The observed `null` is expected from the current code path, but it is not eviden
 - [Public chain validation API](https://api.ultranetwork.cc/api/validate)
 - [Public protocol manifest API](https://api.ultranetwork.cc/api/manifest)
 - [Public sovereign account API](https://api.ultranetwork.cc/api/account/3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c)
-- [Public faucet account API](https://api.ultranetwork.cc/api/account/787e68b2c5ac93d3eaaa5db72ab4bb0404e1ef3f4315e0c83d557a09d800a358)
+- [Public faucet account API](https://api.ultranetwork.cc/api/account/fe0b9a9227ebb2bb40b408c5b10b0155a2591fdf97ce43580a1ab873271af1f8)
 - [Public AI history API](https://api.ultranetwork.cc/api/ai/history)
 
 This report makes no changes to source code, runtime state, token balances, credentials, or network configuration.
