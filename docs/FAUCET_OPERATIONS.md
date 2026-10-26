@@ -13,8 +13,12 @@ This runbook operates the isolated faucet described in [`FAUCET_TECHNICAL_SPEC.m
 The faucet is a low-balance online signer for one dedicated address:
 
 ```text
-787e68b2c5ac93d3eaaa5db72ab4bb0404e1ef3f4315e0c83d557a09d800a358
+fe0b9a9227ebb2bb40b408c5b10b0155a2591fdf97ce43580a1ab873271af1f8
 ```
+
+`787e68b2…` was the originally documented address. It is not this faucet: it holds `1,000.001000`
+$ULTRA and no key for it is reachable, so it is a stranded balance — never fund it, and never point a
+signer at it.
 
 It may call only:
 
@@ -42,7 +46,7 @@ The initial beta policy is fixed and server-selected:
 | Minimum source reserve | `200,000,000` | `200.000000 $ULTRA` |
 | Address cooldown | `86,400` seconds | 24 rolling hours |
 
-The operator-supplied faucet snapshot was `1,000,000,000` base units (`1,000.000000 $ULTRA`). The balance-only ceiling is 990 claims, but the service must stop at the configured reserve and daily cap. Budget reservations include both amount and fee.
+The deployed faucet address held `0` base units on 2026-10-26, so it cannot pay a claim until a float is transferred to it: it needs more than `FAUCET_MIN_BALANCE_RESERVE_BASE_UNITS` (`200.000000` $ULTRA) plus the claim amount and its fee. At the historical `1,000,000,000` base units (`1,000.000000` $ULTRA) snapshot the balance-only ceiling was 990 claims, but the service must stop at the configured reserve and daily cap. Budget reservations include both amount and fee.
 
 The public intake default is disabled. Do not change `FAUCET_ENABLED=true` until all preflight gates below are complete.
 
@@ -162,7 +166,7 @@ Run all checks locally or through a private administrative shell. Do not perform
    ```bash
    curl --fail --silent http://127.0.0.1:8081/api/validate
    curl --fail --silent \
-     http://127.0.0.1:8081/api/account/787e68b2c5ac93d3eaaa5db72ab4bb0404e1ef3f4315e0c83d557a09d800a358
+     http://127.0.0.1:8081/api/account/fe0b9a9227ebb2bb40b408c5b10b0155a2591fdf97ce43580a1ab873271af1f8
    curl --fail --silent \
      'http://127.0.0.1:8081/api/transaction/estimate?recipient=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&amount=1000000'
    ```
