@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>UltraNet faucet — 1 $ULTRA per address</title>
+    <meta name="description" content="Claim 1.000000 $ULTRA to an UltraNet address, once per 24 hours.">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23f7f9fb'/%3E%3Cpath d='M8 3v6.5M5.5 7 8 9.5 10.5 7' stroke='%232c5f8a' stroke-width='1.4' fill='none'/%3E%3Cpath d='M3.5 12.5h9' stroke='%231f4a3f' stroke-width='1.4'/%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fjalla+One&family=Spline+Sans:wght@400;500;600&display=swap">
+    <link rel="stylesheet" href="/styles.css">
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main class="sheet">
+      <header class="sheet-head">
+        <h1>Faucet</h1>
+        <p class="rate">
+          <span class="amount">1.000000</span> $ULTRA per address, once every 24 hours.
+        </p>
+      </header>
+
+      <form id="claim-form" novalidate autocomplete="off">
+        <div class="field">
+          <label for="recipient">Recipient address</label>
+          <input
+            id="recipient"
+            name="recipient"
+            type="text"
+            inputmode="text"
+            autocapitalize="none"
+            autocomplete="off"
+            spellcheck="false"
+            maxlength="64"
+            pattern="[0-9a-f]{64}"
+            placeholder="64 lowercase hex characters"
+            aria-describedby="recipient-help"
+            required
+          >
+          <div class="rule" id="address-rule" aria-hidden="true"></div>
+          <p id="recipient-help" class="help">
+            The address in your UltraNet wallet. Lowercase hexadecimal; <code>0x</code> is not part of it.
+          </p>
+        </div>
+
+        <div class="well">
+          <div class="well-label" id="verify-label">Verification</div>
+          <div id="turnstile-widget" role="group" aria-labelledby="verify-label"></div>
+          <p class="well-note" id="verify-note">Required before the claim is accepted.</p>
+        </div>
+
+        <button id="submit-button" class="claim" type="submit" disabled>
+          <span id="submit-label">Claim 1 $ULTRA</span>
+        </button>
+      </form>
+
+      <section id="receipt" class="receipt" hidden aria-labelledby="receipt-title">
+        <h2 id="receipt-title">Claim accepted</h2>
+        <p class="receipt-amount"><span>1.000000</span> $ULTRA</p>
+        <p class="receipt-line">
+          <span class="receipt-key">claim</span>
+          <span id="receipt-id" class="receipt-id"></span>
+        </p>
+        <p class="receipt-state" id="receipt-state">Waiting for a block to confirm it.</p>
+        <div class="pending-rule" aria-hidden="true"></div>
+      </section>
+
+      <p id="status" class="status-row" role="status" aria-live="polite" data-tone="neutral">
+        <svg class="status-glyph" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+          <path d="M4 7h7a3 3 0 0 1 0 6H8" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M8.6 15.4c0 .9-.6 1.6-1.4 1.6s-1.4-.7-1.4-1.6S6.5 13 7.2 13s1.4 1.5 1.4 2.4Z" fill="currentColor"/>
+        </svg>
+        <span id="status-text">Paste an address to begin.</span>
+      </p>
+
+      <footer class="sheet-foot">
+        <a href="/api/faucet/status">Faucet status</a>
+        <span aria-hidden="true">·</span>
+        <span>UltraNet</span>
+      </footer>
+    </main>
+  </body>
+</html>

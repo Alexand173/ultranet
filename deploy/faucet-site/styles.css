@@ -1,0 +1,362 @@
+/* UltraNet faucet claim page.
+   Palette and surfaces follow the "calibration sheet" direction: paper ground, evergreen ink,
+   one sapphire accent, a recessed verification well, flat tonal status rows, no elevation. */
+
+:root {
+  --paper: oklch(98.8% 0.0029 264.5);
+  --card: oklch(100% 0 0);
+  --ink: oklch(31.3% 0.0357 175.3);
+  --ink-muted: oklch(45% 0.03 175.3);
+  --ink-quiet: oklch(52% 0.025 175.3);
+  --keyline: oklch(88% 0.011 250);
+  --keyline-strong: oklch(74% 0.02 250);
+  --well: oklch(93.5% 0.037 249.3);
+  --well-edge: oklch(86.3% 0.0608 249.3);
+  --accent: oklch(46.8% 0.1414 259.5);
+  --accent-ink: oklch(98.8% 0.0029 264.5);
+  --caution: oklch(77.4% 0.1106 49.1);
+  --caution-ink: oklch(0% 0 0);
+  --fail: oklch(65.7% 0.1577 40.4);
+  --neutral-band: oklch(94% 0.008 250);
+  --radius-field: 4px;
+  --radius-panel: 8px;
+  --unit: 4px;
+  --display: "Fjalla One", "Segoe UI", system-ui, sans-serif;
+  --body: "Spline Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  min-height: 100svh;
+  padding: calc(var(--unit) * 8) calc(var(--unit) * 4) calc(var(--unit) * 6);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 1rem;
+  line-height: 1.55;
+}
+
+/* The sheet: a clipped double keyline, no shadow. */
+.sheet {
+  width: 100%;
+  max-width: 34rem;
+  background: var(--card);
+  border: 1px solid var(--keyline-strong);
+  border-radius: var(--radius-panel);
+  padding: calc(var(--unit) * 7) calc(var(--unit) * 6) calc(var(--unit) * 5);
+  box-shadow: inset 0 0 0 3px var(--card), inset 0 0 0 4px var(--keyline);
+}
+
+.sheet-head h1 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: clamp(1.9rem, 6vw, 2.4rem);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+}
+
+.rate {
+  margin: calc(var(--unit) * 2) 0 0;
+  color: var(--ink-muted);
+  max-width: 30ch;
+}
+
+.amount,
+.receipt-amount span {
+  font-family: var(--display);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+form { margin-top: calc(var(--unit) * 6); }
+
+.field label {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-bottom: calc(var(--unit) * 2);
+}
+
+.field input {
+  width: 100%;
+  min-height: 3.25rem;
+  padding: calc(var(--unit) * 3) calc(var(--unit) * 3);
+  border: 1px solid var(--keyline-strong);
+  border-radius: var(--radius-field);
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.9375rem;
+  letter-spacing: 0.01em;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.field input::placeholder {
+  color: var(--ink-quiet);
+  font-family: var(--body);
+  letter-spacing: 0;
+}
+
+.field input:hover { border-color: var(--ink-quiet); }
+
+.field input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px oklch(46.8% 0.1414 259.5 / 0.18);
+}
+
+.field input[aria-invalid="true"]:not(:placeholder-shown) { border-color: var(--fail); }
+
+/* 64 cells: one per address character, inked only for valid hex in position. */
+.rule {
+  display: grid;
+  grid-template-columns: repeat(64, 1fr);
+  gap: 1px;
+  margin-top: calc(var(--unit) * 2);
+  height: 6px;
+}
+
+.rule i {
+  background: var(--keyline);
+  border-radius: 0.5px;
+}
+
+.rule i.on { background: var(--accent); }
+.rule i.bad { background: var(--fail); }
+
+.help {
+  margin: calc(var(--unit) * 2) 0 0;
+  color: var(--ink-quiet);
+  font-size: 0.8125rem;
+}
+
+.help code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: var(--neutral-band);
+  padding: 0 0.25em;
+  border-radius: 2px;
+}
+
+/* Verification well: recessed acrylic with corner brackets. */
+.well {
+  position: relative;
+  margin-top: calc(var(--unit) * 5);
+  padding: calc(var(--unit) * 4);
+  background: var(--well);
+  border: 1px solid var(--well-edge);
+  border-radius: var(--radius-panel);
+  box-shadow: inset 0 -2px 0 var(--well-edge);
+}
+
+.well::before,
+.well::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--keyline-strong);
+}
+
+.well::before {
+  top: 6px;
+  left: 6px;
+  border-right: 0;
+  border-bottom: 0;
+}
+
+.well::after {
+  right: 6px;
+  bottom: 6px;
+  border-left: 0;
+  border-top: 0;
+}
+
+.well-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+#turnstile-widget { margin-top: calc(var(--unit) * 2); min-height: 65px; }
+
+.well-note {
+  margin: calc(var(--unit) * 2) 0 0;
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+
+/* Claim button: a hairline that inks itself solid only when the claim is ready. */
+.claim {
+  position: relative;
+  width: 100%;
+  min-height: 3.25rem;
+  margin-top: calc(var(--unit) * 5);
+  padding: calc(var(--unit) * 3) calc(var(--unit) * 4);
+  border: 1px solid var(--keyline-strong);
+  border-radius: var(--radius-field);
+  background:
+    repeating-linear-gradient(135deg, transparent 0 5px, oklch(46.8% 0.1414 259.5 / 0.09) 5px 6px),
+    var(--card);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.claim:hover:not(:disabled) { border-color: var(--accent); }
+
+.claim:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px oklch(46.8% 0.1414 259.5 / 0.28);
+}
+
+.claim[data-ready="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.claim:disabled {
+  cursor: not-allowed;
+  color: var(--ink-quiet);
+  background: var(--card);
+  border-style: dashed;
+}
+
+/* Status row: a flat tonal band, never a pill. */
+.status-row {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--unit) * 2);
+  margin: calc(var(--unit) * 5) 0 0;
+  padding: calc(var(--unit) * 3);
+  border-radius: var(--radius-field);
+  background: var(--neutral-band);
+  font-size: 0.9375rem;
+}
+
+.status-row[data-tone="success"] { background: oklch(92% 0.045 175.3); }
+.status-row[data-tone="caution"] { background: oklch(95% 0.05 60); }
+.status-row[data-tone="error"] { background: oklch(94% 0.045 30); }
+
+.status-glyph {
+  width: 1.125rem;
+  height: 1.125rem;
+  flex: none;
+  margin-top: 0.15rem;
+  color: var(--ink-muted);
+}
+
+.status-row[data-tone="success"] .status-glyph { color: oklch(38% 0.08 175.3); }
+.status-row[data-tone="error"] .status-glyph { color: var(--fail); }
+
+/* Receipt: the claim id is the layout; the unfinished rule is the waiting state. */
+.receipt {
+  margin-top: calc(var(--unit) * 6);
+  padding-top: calc(var(--unit) * 5);
+  border-top: 1px solid var(--keyline);
+}
+
+.receipt h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.5rem;
+  font-weight: 400;
+}
+
+.receipt-amount {
+  margin: calc(var(--unit) * 2) 0 calc(var(--unit) * 4);
+  font-size: 1.0625rem;
+  color: var(--ink-muted);
+}
+
+.receipt-amount span { font-size: 1.75rem; }
+
+.receipt-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--unit) * 2);
+  margin: 0;
+}
+
+.receipt-key {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-quiet);
+}
+
+.receipt-id {
+  font-family: var(--mono);
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.receipt-state {
+  margin: calc(var(--unit) * 3) 0 0;
+  color: var(--ink-muted);
+  font-size: 0.9375rem;
+}
+
+.pending-rule {
+  margin-top: calc(var(--unit) * 4);
+  height: 2px;
+  width: 62%;
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent) 72%, oklch(46.8% 0.1414 259.5 / 0.18) 72%, transparent 100%);
+}
+
+.pending-rule.done { width: 100%; background: oklch(38% 0.08 175.3); }
+.pending-rule.stopped { width: 100%; background: var(--fail); }
+
+.sheet-foot {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--unit) * 2);
+  margin-top: calc(var(--unit) * 6);
+  padding-top: calc(var(--unit) * 3);
+  border-top: 1px solid var(--keyline);
+  font-size: 0.8125rem;
+  color: var(--ink-quiet);
+}
+
+.sheet-foot a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (max-width: 30rem) {
+  body { padding: calc(var(--unit) * 4) calc(var(--unit) * 3) calc(var(--unit) * 5); }
+  .sheet { padding: calc(var(--unit) * 5) calc(var(--unit) * 4) calc(var(--unit) * 4); }
+  .rule { gap: 0.5px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
