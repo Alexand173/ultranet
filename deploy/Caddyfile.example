@@ -29,8 +29,8 @@ dashboard.example.com {
 
 # Enable only after local integration, signer/address, backup/restore,
 # Cloudflare WAF, origin-lockdown, and canary gates are complete.
-# The preferred future UI/API origin is this same hostname. The repository
-# currently has no faucet UI, so this block is API-only until one is deployed.
+# The UI/API origin is this same hostname. `deploy/faucet-site/` is the claim page; install it
+# at /var/www/faucet (see the handle below). Keep every other path on the 404.
 faucet.example.com {
     request_body {
         max_size 16KB
@@ -89,6 +89,18 @@ faucet.example.com {
                 response_header_timeout 20s
             }
         }
+    }
+
+    # The claim page: the form, its stylesheet and its script. Nothing else is served from disk,
+    # and /internal/* stays unreachable because it matches none of these paths.
+    @faucet_page {
+        method GET HEAD
+        path / /styles.css /app.js
+    }
+
+    handle @faucet_page {
+        root * /var/www/faucet
+        file_server
     }
 
     # Never proxy /internal/*, unsupported methods, or unknown paths.
