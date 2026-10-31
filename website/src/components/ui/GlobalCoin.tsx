@@ -77,7 +77,7 @@ export default function GlobalCoin() {
           {/* object-contain guarantees the full coin rim text is never cropped */}
           <Image
             src={COIN_IMAGE}
-            alt="ULTRA Blockchain Network coin — decentralized, scalable, secure"
+            alt="Decorative UltraNet coin illustration"
             fill
             sizes="192px"
             className="absolute inset-0 z-10 w-full h-full object-contain"
@@ -93,9 +93,9 @@ export default function GlobalCoin() {
           />
         </div>
 
-        {/* Micro Status Label */}
+        {/* Decorative label; this coin graphic is not a node-health indicator. */}
         <div className="absolute -top-6 left-1/2 -translate-x-1/2 font-mono text-[8px] text-cyan-glow/40 whitespace-nowrap uppercase tracking-widest">
-          Node_Status: Active
+          Protocol_Illustration
         </div>
       </motion.div>
     </div>

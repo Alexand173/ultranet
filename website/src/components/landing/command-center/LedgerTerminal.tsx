@@ -41,8 +41,8 @@ export default function LedgerTerminal({ className }: { className?: string }) {
 
   return (
     <TerminalFrame
-      title="Ledger // Live_Block_Stream"
-      liveLabel={status === "live" ? "MEMPOOL_LIVE" : status === "loading" ? "CONNECTING" : "NO_DATA"}
+      title="Ledger // Recent_Committed_Transactions"
+      liveLabel={status === "live" ? "COMMITTED_TX_FEED" : status === "loading" ? "CONNECTING" : "NO_DATA"}
       cornerAccent="tr"
       className={className}
     >

@@ -40,7 +40,7 @@ export default function DocsHub() {
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 bg-cyan-glow animate-pulse" />
               <span className="font-mono text-[10px] text-platinum/40 uppercase tracking-widest">
-                System_Status // Online
+                DOCS_STATUS // AVAILABLE
               </span>
             </div>
           </div>
@@ -102,13 +102,13 @@ export default function DocsHub() {
               </div>
               <div>
                 <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.24em] text-cyan-glow/70">
-                  Canonical_Source // v7.1_Sovereign
+                  Repository_Guide // v7.1_Sovereign
                 </div>
                 <h2 className="text-2xl font-bold uppercase tracking-tight text-platinum transition-colors group-hover:text-white sm:text-3xl">
                   Read the UltraNet Technical Whitepaper
                 </h2>
                 <p className="mt-3 max-w-3xl font-mono text-xs leading-relaxed text-platinum/45">
-                  The complete 34-chapter protocol guide with rendered architecture diagrams, implementation references, and the source-of-truth genesis notice.
+                  The guide index lists 34 topics. Some entries are placeholders; this documentation is not an independent protocol or security audit.
                 </p>
               </div>
             </div>
@@ -165,8 +165,8 @@ export default function DocsHub() {
       <div className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between overflow-hidden border-t border-platinum/10 bg-[#010B13] px-4 py-3 sm:px-8">
         <div className="flex min-w-0 gap-4 sm:gap-8">
           <div className="flex items-center gap-2">
-            <span className="text-[9px] text-platinum/30 uppercase font-mono tracking-widest">Chapters:</span>
-            <span className="text-[10px] text-cyan-glow font-mono">34/34</span>
+            <span className="text-[9px] text-platinum/30 uppercase font-mono tracking-widest">Listed topics:</span>
+            <span className="text-[10px] text-cyan-glow font-mono">{CHAPTERS.length}</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[9px] text-platinum/30 uppercase font-mono tracking-widest">Protocol:</span>

@@ -10,28 +10,28 @@ import { EXPLORER_URL } from "@/lib/links";
 const DOCS_CELLS = [
   {
     title: "Block-STM Parallel Execution",
-    description: "16-way logical sharding with optimistic concurrency control. Near-linear scaling across CPU cores.",
+    description: "The repository defines 16 initial logical state shards. No reproducible throughput or near-linear scaling benchmark is published here.",
     icon: <Cpu className="w-8 h-8 text-cyan-glow" />,
     size: "col-span-1 row-span-1",
     tag: "Performance",
   },
   {
     title: "Mysticeti DAG Consensus",
-    description: "Low-latency Bullshark ordering rule. 27.79µs vertex commit time with post-quantum finality.",
+    description: "The public manifest lists 27.79µs per vertex; it is a configured manifest value, not a live latency benchmark.",
     icon: <Network className="w-8 h-8 text-cyan-glow" />,
     size: "col-span-1 row-span-1",
     tag: "Consensus",
   },
   {
-    title: "Post-Quantum Dilithium-5",
-    description: "NIST-standardized lattice-based signatures. Secured against future quantum adversarial clusters.",
+    title: "Dilithium-5 Signatures",
+    description: "The protocol uses Dilithium-5 for transaction authorization; no cryptographic claim is a substitute for independent review.",
     icon: <ShieldAlert className="w-8 h-8 text-cyan-glow" />,
     size: "col-span-1 row-span-1",
     tag: "Security",
   },
   {
-    title: "Layer-3 AppChain Anchoring",
-    description: "Modular sub-networks with native STARK verifiability and L1 security inheritance.",
+    title: "Layer-3 AppChain Work",
+    description: "The repository contains AppChain and anchoring code; deployed proof guarantees and L1 security inheritance require separate validation.",
     icon: <Zap className="w-8 h-8 text-cyan-glow" />,
     size: "col-span-1 row-span-1",
     tag: "Scalability",
@@ -199,8 +199,7 @@ export default function BentoDocs() {
             </div>
             <h3 className="text-3xl font-bold text-platinum">UltraNet v7.1 Architecture</h3>
             <p className="max-w-md text-platinum/60 leading-relaxed">
-              A comprehensive deep-dive into the 34 technical subsystems that make UltraNet 
-              the most resilient ledger ever engineered. From FHE privacy layers to sharded state trie pruning.
+              A guide to the documented UltraNet architecture and its implementation references. Some listed chapters are placeholders, and documentation is not an independent security or resilience audit.
             </p>
           </div>
           

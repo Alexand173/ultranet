@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "@/styles/globals.css";
 
 export const metadata: Metadata = {
-  title: "UltraNet | The 100-Year Sovereign Engine",
-  description: "Ultra-modern, post-quantum blockchain protocol for a multi-decade operational horizon.",
+  title: "UltraNet | Blockchain Network",
+  description: "UltraNet protocol documentation, wallet tools, validator onboarding, and node-reported network data.",
   authors: [{ name: "Vladan Jotov" }],
   creator: "Vladan Jotov",
   publisher: "Vladan Jotov",

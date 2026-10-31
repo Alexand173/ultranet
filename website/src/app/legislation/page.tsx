@@ -9,16 +9,16 @@ type VerificationState = "idle" | "checking" | "verified" | "error";
 
 const ARTICLES = [
   {
-    title: "Article I: Protocol Immutability",
-    content: "The consensus rules of UltraNet are hardcoded into the Genesis block and cannot be altered by any entity, including the Sovereign owners, after block height 1,000,000.",
+    title: "Source Note I: Consensus Guarantees",
+    content: "The repository includes consensus and recursive-proof code, but the current source does not establish an immutable-finality guarantee after a specific proof depth or block height. Treat such claims as unverified until independently tested.",
   },
   {
-    title: "Article II: Privacy Sovereignty",
-    content: "Zero-knowledge proofs and Fully Homomorphic Encryption are core protocol invariants. No entity shall have the right to request decryption of the global state trie.",
+    title: "Source Note II: Privacy Claims",
+    content: "Zero-knowledge and FHE components exist in the repository. Their presence alone does not establish that all protocol state is confidential or that privacy guarantees have been independently audited.",
   },
   {
-    title: "Article III: Economic Sustainability",
-    content: "The halving schedule and total supply cap are protected by recursive SNARK audits. Any deviation results in an immediate network stall to prevent inflation corruption.",
+    title: "Source Note III: Economic Parameters",
+    content: "Source defines a 1,000,000 $ULTRA genesis allocation and a 31,557,600-block halving interval. The reviewed code does not establish a 21,000,000 $ULTRA supply cap or recursive-SNARK enforcement of these economic rules.",
   },
 ];
 
@@ -35,11 +35,11 @@ export default function LegislationPage() {
       const payload = await response.json().catch(() => null);
 
       if (!response.ok || !payload?.success || payload.data?.valid !== true) {
-        throw new Error(payload?.message || "The node did not verify the current chain.");
+        throw new Error(payload?.message || "The node did not validate its current chain state.");
       }
 
       setVerificationState("verified");
-      setVerificationMessage("Genesis chain integrity confirmed by the connected node.");
+      setVerificationMessage("The connected node reports its chain as valid. This check does not audit the statements on this page.");
     } catch (error) {
       setVerificationState("error");
       setVerificationMessage(error instanceof Error ? error.message : "Unable to verify legislation against the node.");
@@ -52,8 +52,7 @@ export default function LegislationPage() {
         <Scale className="w-16 h-12 text-cyan-glow mx-auto" aria-hidden="true" />
         <h1 className="text-4xl md:text-6xl font-bold tracking-tighter uppercase">Protocol Legislation</h1>
         <p className="text-platinum/40 font-mono text-sm max-w-2xl mx-auto uppercase">
-          The legal framework governing the 100-year operation of the UltraNet blockchain.
-          Mathematical law verified by code.
+          Repository source notes for current protocol claims. The chain-validation button checks the connected node&apos;s chain only; it does not verify these notes as signed law or audit.
         </p>
       </div>
 
@@ -78,11 +77,9 @@ export default function LegislationPage() {
       </div>
 
       <div className="p-12 neon-inset text-center space-y-6">
-        <h3 className="text-2xl font-bold uppercase">Digital Seal of Authority</h3>
+        <h3 className="text-2xl font-bold uppercase">Connected Node Chain Check</h3>
         <p className="text-sm text-platinum/40 font-mono">
-          SIGNED_BY: SOVEREIGN_GENESIS_VAULT<br />
-          TIMESTAMP: 2026-07-21T15:53:31Z<br />
-          HASH: 0x3B8EF38ADA262F3290BBAB6A89B9AE43692...
+          GET /api/validate reports whether the connected node considers its current chain valid. It does not sign or certify the website&apos;s static source notes.
         </p>
 
         {verificationMessage && (
@@ -106,7 +103,7 @@ export default function LegislationPage() {
           aria-busy={verificationState === "checking"}
           className="px-8 py-3 bg-cyan-glow text-ink-black font-black uppercase text-xs tracking-widest hover:scale-105 disabled:cursor-wait disabled:opacity-60 transition-transform"
         >
-          {verificationState === "checking" ? "VERIFYING_CHAIN..." : "VERIFY_LEGISLATION.sh"}
+          {verificationState === "checking" ? "CHECKING_NODE_CHAIN..." : "CHECK_NODE_CHAIN.sh"}
         </button>
       </div>
     </main>

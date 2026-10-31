@@ -15,15 +15,14 @@ export default function UnifiedScalabilityDoc() {
             <p>
               Traditional multi-chain and side-chain architectures fragment liquidity and force developers to manage complex asynchronous bridges. 
               UltraNet solves this through <strong>Unified Sharding</strong>, where the network maintains a single logical state while executing transactions 
-              across 16 parallel shards.
+              using 16 configured logical state shards; runtime parallelism and throughput depend on execution path and workload.
             </p>
           </section>
 
           <section className="bg-cyan-glow/5 border border-cyan-glow/10 p-8 rounded-sm">
             <h2 className="text-xl font-bold text-cyan-glow uppercase tracking-tight mb-4">02. Block-STM Parallelism</h2>
             <p className="mb-4">
-              Our <strong>Block-STM (Software Transactional Memory)</strong> engine allows transactions to execute speculatively in parallel. 
-              On modern multi-core hardware, this delivers near-linear speedups without requiring developers to pre-declare dependency sets.
+              The repository contains a <strong>Block-STM (Software Transactional Memory)</strong> implementation for speculative parallel execution. Throughput and scaling depend on workload and hardware; this page does not publish a reproducible benchmark.
             </p>
             <ul className="list-disc list-inside space-y-2 text-platinum/80 font-mono text-sm">
               <li>Optimistic execution across 16 logical shards</li>
@@ -35,9 +34,7 @@ export default function UnifiedScalabilityDoc() {
           <section>
             <h2 className="text-2xl font-bold text-platinum uppercase tracking-tight mb-6">03. Recursive SNARK Compression</h2>
             <p>
-              To ensure the chain remains light and verifiable for 100 years, UltraNet utilizes <strong>Recursive SNARKs</strong>. 
-              Each new block includes a proof that attests to the validity of the previous block&apos;s proof plus the current state transition.
-              This allows a new node to verify the entire history of the blockchain in constant time (ms) rather than re-playing years of transactions.
+              The repository contains <strong>Recursive SNARK</strong> code and proof-history structures. The current source does not establish constant-time verification of the entire chain history or a 100-year verification guarantee; that behavior requires end-to-end validation and independent review.
             </p>
           </section>
 
@@ -51,11 +48,10 @@ export default function UnifiedScalabilityDoc() {
               </p>
             </div>
             <div className="border border-platinum/10 p-6">
-              <div className="text-[10px] text-platinum/30 uppercase mb-2">Hardware_Target</div>
-              <h4 className="text-sm font-bold text-platinum uppercase mb-4">Linear Throughput</h4>
+              <div className="text-[10px] text-platinum/30 uppercase mb-2">Performance_Evidence</div>
+              <h4 className="text-sm font-bold text-platinum uppercase mb-4">No Published Scaling Benchmark</h4>
               <p className="text-xs text-platinum/60 leading-relaxed">
-                The protocol is designed to scale with CPU core count. A 64-core validator can process 4x the throughput 
-                of a 16-core validator with no software changes.
+                A 64-core versus 16-core throughput claim needs a reproducible workload, configuration, and measured results. No such benchmark is provided here.
               </p>
             </div>
           </div>

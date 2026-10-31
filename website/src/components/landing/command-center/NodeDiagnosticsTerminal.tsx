@@ -44,7 +44,7 @@ export default function NodeDiagnosticsTerminal({ className }: { className?: str
     };
   }, []);
 
-  const label = validatorCount === null ? "UNAVAILABLE_NODES" : `${validatorCount}_NODES`;
+  const label = validatorCount === null ? "UNAVAILABLE_RECORDS" : `${validatorCount}_RECORDS`;
 
   return (
     <TerminalFrame
@@ -63,16 +63,16 @@ export default function NodeDiagnosticsTerminal({ className }: { className?: str
           <div className={cn("grid grid-cols-[1fr_130px] px-6 py-5 text-lg font-mono border-b border-platinum/[0.03]", status === "live" ? "bg-cyan-glow/[0.03]" : "bg-platinum/[0.01]")}>
             <span className="text-platinum/60 truncate flex items-center gap-3">
               <ShieldCheck className="h-5 w-5 shrink-0 text-cyan-glow/40" aria-hidden="true" />
-              Active_Validators
+              Validator_Records
             </span>
             <span className="text-right text-cyan-glow">{formatCount(validatorCount)}</span>
           </div>
           <div className="px-6 py-5 text-sm leading-relaxed text-platinum/40">
-            Per-validator ping, stake, and identity details are not exposed by the current public stats endpoint. This panel will not fabricate rows or latency values.
+            This is the node-reported validator-record count, not a verified count of online or independent operators. Per-validator ping, stake, and identity details are not exposed by this endpoint.
           </div>
         </div>
         <div className="px-6 py-3 border-t border-platinum/5 text-xs font-mono text-platinum/20 uppercase tracking-widest">
-          {status === "live" ? "NODE_STATS: LIVE" : status === "loading" ? "NODE_STATS: CONNECTING" : "NODE_STATS: UNAVAILABLE"}
+          {status === "live" ? "API_STATS: RESPONSE_RECEIVED" : status === "loading" ? "API_STATS: CONNECTING" : "API_STATS: UNAVAILABLE"}
         </div>
       </div>
     </TerminalFrame>

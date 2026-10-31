@@ -6,39 +6,25 @@ export default function RealTimeFinalityDoc() {
     <DocPage
       pillar="R"
       icon={<Terminal className="w-6 h-6" />}
-      title="Real-time Finality"
-      subtitle="Block-STM parallel execution engine delivering 100k+ TPS on commodity hardware."
+      title="Execution and Performance Evidence"
+      subtitle="Implementation notes are not throughput, latency, or finality benchmarks. No measured TPS or proving duration is published by the current public stats endpoint."
       content={
         <div className="space-y-12">
           <section>
-            <h2 className="text-2xl font-bold text-platinum uppercase tracking-tight mb-6">01. Sub-Second Confirmations</h2>
+            <h2 className="text-2xl font-bold text-platinum uppercase tracking-tight mb-6">01. Current Public Measurements</h2>
             <p>
-              Latency is the enemy of adoption. UltraNet is engineered for <strong>Real-time Finality</strong>, with 
-              confirmations typically occurring in under 600ms. This is achieved by pipelining the execution, 
-              validation, and commitment phases of the block lifecycle.
+              The public stats endpoint currently exposes no TPS or proving-time measurement, and the current API does not publish a measured finality latency. No sub-second confirmation or throughput guarantee is asserted here. Check the live node snapshot for available measurements.
             </p>
           </section>
 
           <section className="bg-cyan-glow/5 border border-cyan-glow/10 p-8 rounded-sm">
-            <h2 className="text-xl font-bold text-cyan-glow uppercase tracking-tight mb-4">02. Optimized Proving Pipeline</h2>
+            <h2 className="text-xl font-bold text-cyan-glow uppercase tracking-tight mb-4">02. Measurement Boundary</h2>
             <p className="mb-6">
-              The <strong>506ms Proving Time</strong> seen on our dashboard isn&apos;t just a number—it&apos;s the result of
-              aggressive hardware-aware optimization of our ZK and FHE stacks.
+              The node API returns <code>last_proving_time_ms: null</code> because it does not currently record elapsed proving time. The public response also contains no TPS value. Until reproducible, environment-scoped benchmarks are published, treat throughput and latency figures as unavailable.
             </p>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between border-b border-platinum/10 pb-2">
-                <span className="text-xs font-mono text-platinum/50 uppercase">Mempool Admission</span>
-                <span className="text-xs font-mono text-cyan-glow">&lt; 10ms</span>
-              </div>
-              <div className="flex items-center justify-between border-b border-platinum/10 pb-2">
-                <span className="text-xs font-mono text-platinum/50 uppercase">Block-STM Execution</span>
-                <span className="text-xs font-mono text-cyan-glow">~ 40ms</span>
-              </div>
-              <div className="flex items-center justify-between border-b border-platinum/10 pb-2">
-                <span className="text-xs font-mono text-platinum/50 uppercase">ZK/FHE Finalization</span>
-                <span className="text-xs font-mono text-cyan-glow">~ 500ms</span>
-              </div>
-            </div>
+            <p className="text-sm leading-relaxed text-platinum/60">
+              Block-STM and proof components exist in the repository, but component presence is not evidence of production throughput, end-to-end confirmation latency, or a service-level guarantee.
+            </p>
           </section>
 
           <section>

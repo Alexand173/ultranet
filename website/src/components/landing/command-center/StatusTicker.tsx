@@ -3,12 +3,10 @@
 import { cn } from "@/lib/utils";
 
 const TICKER_ITEMS = [
-  "STATUS: ACTIVE_L1_NODE",
-  "TFHE_PROTOCOL_V.7.1 // Q_RESISTANT",
-  "SHARD_INTEGRITY: VERIFIED",
-  "DILITHIUM-5_SIG: ENABLED",
-  "GOSSIP_LAYER: SYNCED",
-  "MYSTICETI_DAG: COMMIT_OK",
+  "PUBLIC_API_METRICS // NODE_REPORTED",
+  "VALIDATOR_COUNT // RECORDS_NOT_ONLINE_OPERATORS",
+  "TPS_AND_PROVING // ONLY_WHEN_MEASURED",
+  "API_RESPONSE // NODE_REPORTED_NOT_INDEPENDENTLY_AUDITED",
 ];
 
 interface StatusTickerProps {
@@ -29,7 +27,7 @@ export default function StatusTicker({ position, blockHeight, provingTime }: Sta
     >
       <div className="shrink-0 flex items-center gap-2 px-4 border-r border-platinum/10 h-full text-cyan-glow/80">
         <span className="w-1.5 h-1.5 bg-cyan-glow rounded-full animate-pulse shadow-[0_0_8px_#0FFFFF]" />
-        {position === "top" ? "SOVEREIGN_ENGINE" : "NETWORK_OPERATIONAL"}
+        PUBLIC_API_METRICS
       </div>
 
       <div className="relative min-w-0 flex-1 overflow-hidden h-full flex items-center">

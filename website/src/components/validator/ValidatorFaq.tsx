@@ -27,7 +27,7 @@ const FAQ_ITEMS: FaqItem[] = [
     question: "How much can a validator earn?",
     answer: (
       <>
-        The current documented Era 0 base reward is <strong className="text-platinum">50.0 $ULTRA per successfully mined block</strong>, subject to halving and AI Governor adjustment. A validator also receives 100% of the transaction fees in its packaged block. Actual results depend on approval, uptime, participation, network conditions, and protocol state.
+        The code defines an Era 0 base reward of <strong className="text-platinum">50 base units (0.000050 $ULTRA) per successfully mined block</strong>, subject to the implemented reward schedule. This is not 50 whole $ULTRA. Actual payouts depend on the deployed protocol state; no income is guaranteed.
       </>
     ),
   },

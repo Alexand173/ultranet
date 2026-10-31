@@ -5,7 +5,7 @@ import { fetchNetworkStats, type LiveNetworkStats } from "@/lib/api";
 import TerminalFrame from "./TerminalFrame";
 
 interface GaugeConfig {
-  key: keyof Pick<LiveNetworkStats, "tps" | "provingTimeMs" | "validatorCount" | "totalWeight">;
+  key: keyof Pick<LiveNetworkStats, "tps" | "provingTimeMs" | "validatorCount" | "totalWeight" | "mempoolSize">;
   label: string;
   suffix: string;
 }
@@ -13,8 +13,8 @@ interface GaugeConfig {
 const GAUGES: GaugeConfig[] = [
   { key: "tps", label: "TPS", suffix: "" },
   { key: "provingTimeMs", label: "PROVING", suffix: "ms" },
-  { key: "validatorCount", label: "VALIDATORS", suffix: "" },
-  { key: "totalWeight", label: "WEIGHT", suffix: "" },
+  { key: "validatorCount", label: "VALIDATOR_RECORDS", suffix: "" },
+  { key: "mempoolSize", label: "MEMPOOL", suffix: "" },
 ];
 
 function formatValue(value: number | null, suffix: string): string {
@@ -80,7 +80,7 @@ export default function ShardedStateTerminal({ className }: { className?: string
   return (
     <TerminalFrame
       title="Gametocyte // Sharded_State"
-      liveLabel={stats.status === "live" ? "NODE_STATS_LIVE" : stats.status === "loading" ? "CONNECTING" : "NO_DATA"}
+      liveLabel={stats.status === "live" ? "API_STATS_RESPONSE" : stats.status === "loading" ? "CONNECTING" : "NO_DATA"}
       cornerAccent="bl"
       className={className}
     >

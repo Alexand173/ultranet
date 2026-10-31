@@ -22,10 +22,10 @@ const SPARKLE_POSITIONS = [
 
 const LETTER_CONTENT: Record<string, { title: string; desc: string; slug: string }> = {
   U: { title: "Unified_Scalability", desc: "Cross-shard orchestration and atomic block finality via recursive ZK-SNARKs.", slug: "unified-scalability" },
-  L: { title: "Layer_0_Foundation", desc: "Secure p2p networking with sub-millisecond propagation and DAG consensus.", slug: "layer-0-foundation" },
+  L: { title: "Layer_0_Foundation", desc: "Repository P2P architecture notes; no live propagation benchmark is published.", slug: "layer-0-foundation" },
   T: { title: "Trusted_Execution", desc: "Fully Homomorphic Encryption (FHE) enclaves for private on-chain state.", slug: "trusted-execution" },
-  R: { title: "Real-time_Finality", desc: "Block-STM parallel execution engine delivering 100k+ TPS on commodity hardware.", slug: "real-time-finality" },
-  A: { title: "Autonomous_Intelligence", desc: "On-chain LLM inference and decentralized agentic governance modules.", slug: "autonomous-intelligence" },
+  R: { title: "Execution_Benchmarks", desc: "Block-STM implementation notes; current public API does not expose measured TPS or finality latency.", slug: "real-time-finality" },
+  A: { title: "AI_Governor", desc: "Rule-based in-process metrics and parameter suggestions; no on-chain LLM or agent voting is demonstrated.", slug: "autonomous-intelligence" },
 };
 
 export default function CoinNexus({ className }: { className?: string }) {
@@ -241,11 +241,11 @@ export default function CoinNexus({ className }: { className?: string }) {
               <div className="grid grid-cols-2 gap-4 pt-4 border-t border-platinum/10">
                 <div>
                   <div className="text-[9px] text-platinum/30 uppercase mb-1">Status</div>
-                  <div className="text-[10px] text-green-400 font-mono uppercase tracking-widest">Active_Link</div>
+                  <div className="text-[10px] text-platinum/60 font-mono uppercase tracking-widest">Docs_Link</div>
                 </div>
                 <div>
                   <div className="text-[9px] text-platinum/30 uppercase mb-1">Integrity</div>
-                  <div className="text-[10px] text-platinum/80 font-mono">99.998%</div>
+                  <div className="text-[10px] text-platinum/80 font-mono">Not measured</div>
                 </div>
               </div>
 
@@ -272,8 +272,8 @@ export default function CoinNexus({ className }: { className?: string }) {
           <div className="text-xl md:text-2xl lg:text-3xl font-medium text-cyan-glow">{formatUltraAmount(GENESIS_ALLOCATION_BASE_UNITS)} $ULTRA</div>
         </div>
         <div className="text-center">
-          <div className="text-xs lg:text-sm uppercase text-platinum/40 mb-1">Staked</div>
-          <div className="text-xl md:text-2xl lg:text-3xl font-medium text-cyan-glow">64.2%</div>
+          <div className="text-xs lg:text-sm uppercase text-platinum/40 mb-1">Validator Weight</div>
+          <div className="text-xl md:text-2xl lg:text-3xl font-medium text-cyan-glow">See live node data</div>
         </div>
       </div>
 

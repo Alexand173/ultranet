@@ -10,10 +10,11 @@ export interface ReleaseAsset {
 }
 
 export const RELEASE_TAG = "v7.1.7" as const;
-export const RELEASE_PIPELINE_STATUS = "VERIFIED // SUCCESS" as const;
+export const RELEASE_PIPELINE_STATUS = "STATUS NOT QUERIED" as const;
 export const RELEASE_PIPELINE_STATUS_DESCRIPTION =
-  "All platform builds and published asset verification passed." as const;
+  "This page does not poll GitHub Actions. Check the current workflow run before relying on pipeline status." as const;
 export const RELEASE_REPOSITORY_URL = "https://github.com/Alexand173/ultranet";
+export const RELEASE_WORKFLOW_URL = `${RELEASE_REPOSITORY_URL}/actions/workflows/release.yml`;
 export const RELEASE_URL = `${RELEASE_REPOSITORY_URL}/releases/tag/${RELEASE_TAG}`;
 export const RELEASE_ASSET_BASE_URL = `${RELEASE_REPOSITORY_URL}/releases/download/${RELEASE_TAG}`;
 export const RELEASE_CHECKSUM_FILE_NAME = "SHA256SUMS.txt" as const;

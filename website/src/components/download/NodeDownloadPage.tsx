@@ -20,6 +20,7 @@ import {
   RELEASE_REPOSITORY_URL,
   RELEASE_TAG,
   RELEASE_URL,
+  RELEASE_WORKFLOW_URL,
   releaseAssetUrl,
 } from "@/lib/releases";
 
@@ -63,12 +64,20 @@ export default function NodeDownloadPage() {
               <dd className="mt-2 font-mono text-sm text-cyan-glow">STABLE // PUBLIC</dd>
             </div>
           </dl>
-          <div className="mt-3 flex flex-col gap-1 border border-emerald-300/20 bg-emerald-300/[0.04] px-4 py-3 font-mono sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+          <div className="mt-3 flex flex-col gap-1 border border-platinum/10 bg-platinum/[0.02] px-4 py-3 font-mono sm:flex-row sm:items-center sm:justify-between sm:gap-6">
             <div>
               <p className="text-[10px] uppercase tracking-[0.18em] text-platinum/40">Release pipeline</p>
-              <p className="mt-1 text-sm text-emerald-300">{RELEASE_PIPELINE_STATUS}</p>
+              <p className="mt-1 text-sm text-platinum/75">{RELEASE_PIPELINE_STATUS}</p>
             </div>
             <p className="text-xs leading-relaxed text-platinum/50">{RELEASE_PIPELINE_STATUS_DESCRIPTION}</p>
+            <a
+              href={RELEASE_WORKFLOW_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-cyan-glow hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-glow"
+            >
+              Check current workflow runs <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>
           </div>
         </div>
       </section>

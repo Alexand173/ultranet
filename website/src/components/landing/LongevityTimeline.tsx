@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 const MILESTONES = [
-  { era: "GENESIS", year: "2026", goal: "Sovereign Bootstrapping", status: "ACTIVE" },
+  { era: "GENESIS", year: "2026", goal: "Sovereign Bootstrapping", status: "ROADMAP" },
   { era: "DECENTRALIZATION", year: "2031", goal: "Validator Swarm Maturity", status: "PENDING" },
   { era: "STABILITY", year: "2046", goal: "Full Autonomous AI Governance", status: "FUTURE" },
   { era: "LEGACY", year: "2126", goal: "100-Year Protocol Attestation", status: "FUTURE" },
@@ -39,7 +39,7 @@ export default function LongevityTimeline() {
                 </span>
                 <span className={cn(
                   "text-[8px] font-bold px-2 py-1 border rounded-sm tracking-widest",
-                  m.status === "ACTIVE" ? "border-cyan-glow text-cyan-glow shadow-[0_0_10px_#0FFFFF]" : "border-platinum/20 text-platinum/20"
+                  m.status === "ROADMAP" ? "border-cyan-glow/50 text-cyan-glow/70" : "border-platinum/20 text-platinum/20"
                 )}>
                   {m.status}
                 </span>

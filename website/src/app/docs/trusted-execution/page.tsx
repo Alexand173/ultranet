@@ -6,25 +6,21 @@ export default function TrustedExecutionDoc() {
     <DocPage
       pillar="T"
       icon={<Shield className="w-6 h-6" />}
-      title="Trusted Execution"
-      subtitle="Fully Homomorphic Encryption (FHE) enclaves for private on-chain state."
+      title="FHE Implementation Notes"
+      subtitle="FHE-related code is present in the repository; this page does not claim production privacy, enclave isolation, or an independently audited deployment."
       content={
         <div className="space-y-12">
           <section>
             <h2 className="text-2xl font-bold text-platinum uppercase tracking-tight mb-6">01. Computational Privacy</h2>
             <p>
-              In UltraNet, privacy is not just about hiding transaction amounts; it&apos;s about <strong>Confidential Computing</strong>.
-              While Zero-Knowledge (ZK) proofs allow you to prove a statement about hidden data, <strong>Fully Homomorphic Encryption (FHE)</strong>
-              allows the network to <em>perform math</em> on that data without ever seeing the numbers.
+              <strong>Fully Homomorphic Encryption (FHE)</strong> can support computation over ciphertexts. The presence of FHE-related code does not by itself establish that UltraNet currently provides private on-chain state or end-to-end confidential transactions.
             </p>
           </section>
 
           <section className="bg-cyan-glow/5 border border-cyan-glow/10 p-8 rounded-sm">
             <h2 className="text-xl font-bold text-cyan-glow uppercase tracking-tight mb-4">02. TFHE-rs Engine</h2>
             <p className="mb-4 text-sm font-mono text-platinum/80 leading-relaxed">
-              We integrate the <strong>Zama TFHE-rs</strong> library into the Move Virtual Machine. This enables a new class of 
-              confidential smart contracts. Imagine a decentralized exchange (DEX) where the order book is encrypted, 
-              preventing front-running and MEV.
+              The repository includes TFHE-related code and Move runtime integration. Production support for confidential contracts, encrypted order books, front-running protection, or MEV resistance is not established by the current public telemetry.
             </p>
             <div className="flex gap-4 overflow-x-auto pb-2">
               <code className="text-[10px] bg-platinum/5 border border-platinum/10 p-2 whitespace-nowrap">compute_add(cipher_a, cipher_b)</code>
@@ -36,20 +32,17 @@ export default function TrustedExecutionDoc() {
           <section>
             <h2 className="text-2xl font-bold text-platinum uppercase tracking-tight mb-6">03. The Move Virtual Machine</h2>
             <p>
-              UltraNet uses the <strong>Move VM</strong> for its resource-oriented safety. We have extended the Move runtime with
-              native FHE instructions. This ensures that assets are physically represented as &quot;Resources&quot; that cannot be
-              duplicated or dropped, even when their underlying values are encrypted ciphertexts.
+              The repository contains a Move VM adapter and FHE-related operations. Their execution and security properties depend on the implemented runtime path; this page does not treat them as an independently verified production guarantee.
             </p>
           </section>
 
           <div className="p-6 border border-cyan-glow/20 bg-[#0A1A1F]">
             <h4 className="text-sm font-bold text-cyan-glow uppercase mb-3 flex items-center gap-2">
               <div className="w-1.5 h-1.5 bg-cyan-glow" /> 
-              FHE Gas Multiplier: 5000x
+              API-Reported FHE Gas Multiplier: 5000x
             </h4>
             <p className="text-xs text-platinum/60 leading-relaxed">
-              FHE operations are computationally heavy. Our economic model applies a 5000x gas multiplier to homomorphic operations 
-              to reflect the real hardware cost (Programmable Bootstrapping) and maintain network stability.
+              The current FHE stats endpoint reports a configured multiplier value of 5000. This API field alone does not demonstrate that the factor is applied across execution or establish measured hardware cost; verify the relevant runtime path before treating it as an economic rule.
             </p>
           </div>
         </div>

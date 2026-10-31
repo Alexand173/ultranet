@@ -5,28 +5,28 @@ import { CheckSquare, ShieldCheck } from "lucide-react";
 
 const LAWS = [
   {
-    id: "LAW_01A",
+    id: "SRC_01",
     title: "Consensus Finality",
-    text: "No block height shall be reversed once recursive SNARK depth exceeds 10 rounds.",
-    section: "Consensus Rules",
+    text: "Recursive proof components exist in the repository; the current implementation does not establish an irreversible-finality guarantee after 10 rounds.",
+    section: "Implementation Notes",
   },
   {
-    id: "LAW_01B",
-    title: "Emission Integrity",
-    text: "Total supply capped at 21,000,000 $ULTRA. Halving interval strictly 31,557,600 seconds.",
-    section: "Consensus Rules",
+    id: "SRC_02",
+    title: "Supply and Halving",
+    text: "The code defines a 1,000,000 $ULTRA genesis allocation and a 31,557,600-block halving interval. No enforced 21,000,000 $ULTRA cap is established here.",
+    section: "Implementation Notes",
   },
   {
-    id: "LAW_02A",
-    title: "Double-Spend Slashing",
-    text: "Validators submitting conflicting nullifiers will be pruned from the state trie immediately.",
-    section: "Validator Conduct",
+    id: "SRC_03",
+    title: "Nullifier Handling",
+    text: "Nullifier storage exists in the transaction path; automatic validator pruning for conflicting nullifiers is not established by the reviewed implementation.",
+    section: "Implementation Notes",
   },
   {
-    id: "LAW_03A",
-    title: "Sovereign Handover",
-    text: "Genesis multi-sig authority expires automatically at block height 1,000,000.",
-    section: "Governance",
+    id: "SRC_04",
+    title: "Sovereign Approval",
+    text: "The configured threshold is 2-of-3. No automatic authority expiry at block height 1,000,000 is established by the current source.",
+    section: "Implementation Notes",
   },
 ];
 
@@ -37,8 +37,8 @@ export default function LegislationTable() {
     <section className="py-16 px-4 max-w-5xl mx-auto space-y-12 relative z-10">
       <div className="text-center space-y-4">
         <ShieldCheck className="w-12 h-12 text-cyan-glow mx-auto" />
-        <h2 className="text-4xl md:text-5xl font-bold uppercase tracking-widest">Sovereign Legislation</h2>
-        <p className="text-platinum/40 font-mono">immutable_protocol_laws.json</p>
+        <h2 className="text-4xl md:text-5xl font-bold uppercase tracking-widest">Protocol Source Notes</h2>
+        <p className="text-platinum/40 font-mono">REPOSITORY SUMMARY // NOT AN AUDIT OR SIGNED LAW</p>
       </div>
 
       <div className="space-y-12">
@@ -74,7 +74,7 @@ export default function LegislationTable() {
 
       <div className="p-8 border border-dashed border-platinum/20 text-center rounded-lg">
         <p className="text-xs text-platinum/30 font-mono">
-          DIGITAL_SIGNATURE_VERIFIED_BY_PROTOCOL_GENESIS_VAULT // 0x3B8EF...
+          STATIC_REPOSITORY_SUMMARY // NO_DIGITAL_SEAL_VERIFICATION_PERFORMED
         </p>
       </div>
     </section>

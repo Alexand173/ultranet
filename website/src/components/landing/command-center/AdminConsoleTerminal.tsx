@@ -6,10 +6,10 @@ import { ChevronRight } from "lucide-react";
 import TerminalFrame from "./TerminalFrame";
 
 const LOG_LINES = [
-  "> DOMINIE_ROOT_ACCESS // UNSTAINED_SIG_VERIFIED",
-  "> LOADING_STATE_TRIE... OK",
-  "> FHE_ENGINE_HANDSHAKE... COMPLETE",
-  "> AWAITING_ROOT_COMMAND_",
+  "> UI_DEMO // NOT_CONNECTED_TO_A_NODE",
+  "> PUBLIC_STATUS_DATA_IS_READ_ONLY",
+  "> NO_ADMIN_SESSION_OR_COMMANDS_ACTIVE",
+  "> DEMONSTRATION_COMPLETE_",
 ];
 
 export default function AdminConsoleTerminal({ className }: { className?: string }) {
@@ -23,8 +23,8 @@ export default function AdminConsoleTerminal({ className }: { className?: string
 
   return (
     <TerminalFrame
-      title="Dominie_Root // Admin_Console"
-      liveLabel="ROOT_TTY"
+      title="Interface_Demo // No_Node_Connection"
+      liveLabel="ILLUSTRATION"
       cornerAccent="br"
       className={className}
     >
@@ -35,7 +35,7 @@ export default function AdminConsoleTerminal({ className }: { className?: string
           <span className="w-2.5 h-2.5 rounded-full bg-amber-400/60" />
           <span className="w-2.5 h-2.5 rounded-full bg-cyan-glow/60" />
           <span className="ml-2 text-xs font-mono text-platinum/20 uppercase tracking-widest">
-            root@sovereign:~
+            demo://not-connected
           </span>
         </div>
 

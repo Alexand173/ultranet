@@ -13,7 +13,7 @@ export default function VisualNoise() {
   if (!isMounted) return null;
 
   return (
-    <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+    <div aria-hidden="true" className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
       {/* Floating Technical Labels */}
       {Array.from({ length: 12 }).map((_, i) => (
         <motion.div
@@ -34,7 +34,7 @@ export default function VisualNoise() {
           }}
           className="absolute font-mono text-[6px] text-cyan-glow uppercase tracking-[0.4em] whitespace-nowrap"
         >
-          System_Check: {Math.random().toString(16).substring(2, 8)} {"//"} OK
+          Visual_Decoration: {Math.random().toString(16).substring(2, 8)} {"//"} NOT_LIVE
         </motion.div>
       ))}
 
