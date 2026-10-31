@@ -87,6 +87,18 @@ EXPECTED_FEE = max(1, AMOUNT // 100)
 USER_AGENT = "UltraNet-send-ultra/2.0"
 
 
+def node_json(path: str):
+    """Raw node payload, for routes that do not use the `{success, data}` envelope."""
+    request = urllib.request.Request(NODE_URL + path, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        raise SystemExit(f"{path} answered HTTP {error.code} {error.reason}")
+    except urllib.error.URLError as error:
+        raise SystemExit(f"{path} is unreachable: {error.reason}")
+
+
 def node_get(path: str):
     request = urllib.request.Request(NODE_URL + path, headers={"User-Agent": USER_AGENT})
     try:
@@ -142,7 +154,32 @@ if estimate["fee"] != EXPECTED_FEE:
 FEE = estimate["fee"]
 GAS_LIMIT = estimate["gas_limit"]
 GAS_PRICE = estimate["gas_price"]
-timestamp = int(time.time())
+
+# The node's freshness check compares in unsigned arithmetic: `now - tx.timestamp > 3600`
+# (src/lib.rs:2381). A timestamp even one second in the node's future wraps that subtraction and
+# is reported as "Transaction is too old!" — which is what happened on 2026-10-31, when the node
+# clock ran 21 s behind this host. Sign slightly behind the node's own clock instead of trusting
+# the local one.
+SIGNING_MARGIN = 5
+
+
+def node_timestamp() -> int:
+    started = int(time.time())
+    # `/api/appchain/overview` stamps `updated_at` with the node's own `now_seconds()`.
+    node_now = node_json("/api/appchain/overview").get("updated_at")
+    if not isinstance(node_now, int) or node_now <= 0:
+        raise SystemExit("The node did not report its clock; refusing to guess a timestamp.")
+    offset = node_now - started
+    if abs(offset) > 86_400:
+        raise SystemExit(
+            f"The node clock is {offset} s away from this host. Refusing to sign until that is "
+            "explained: the envelope would be signed outside the accepted window."
+        )
+    print(f"Node clock: {offset:+d} s vs this host; signing {SIGNING_MARGIN} s behind it")
+    return node_now - SIGNING_MARGIN
+
+
+timestamp = node_timestamp()
 total = AMOUNT + FEE
 
 print(f"Sovereign : {SOVEREIGN_ADDR}")

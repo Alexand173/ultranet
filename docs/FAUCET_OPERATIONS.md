@@ -66,6 +66,25 @@ The fee is **not flat**: the node charges `max(1, amount / 100)` — one percent
 `2.010000` and debits `203.010000`, not `202.000000`. The script derives that expectation from the
 rule and aborts if the node's quote disagrees, so a policy change can never be silently signed.
 
+### Sign from the node's clock, not this host's
+
+`validate_transaction` accepts `tx.timestamp` only within `[now - 3600, now + 60]`, and it evaluated
+the lower bound in unsigned arithmetic (`now - tx.timestamp > 3600`, `src/lib.rs:2381`). A timestamp
+even **one second** in the node's future wrapped that subtraction to about `1.8e19` and came back as
+*"Transaction is too old!"*. That refused the first attempt at this funding on 2026-10-31, because
+the signing host's clock ran 21 s ahead of the node.
+
+`send_ultra.py` now stamps the envelope from the node's own clock — `/api/appchain/overview` reports
+`now_seconds()` in `updated_at` — placed 5 s behind it, and prints what it measured:
+
+```
+Node clock: -21 s vs this host; signing 5 s behind it
+```
+
+`UltraBlockchain::check_transaction_freshness` replaces the inline comparison with saturating
+subtraction so the two bounds agree, but the **deployed** binary keeps the old behaviour until it is
+rebuilt and restarted. The script is correct against both.
+
 ### Prerequisites, once per machine
 
 ```bash
@@ -136,6 +155,21 @@ curl -sS "$BASE/api/stats"                   | python3 -m json.tool   # mempool 
 
 The approval journal must not move (`GET /api/governance/approvals`): funding is a transfer, not a
 governance action. Then mine the pending transfer, or leave it for the next block producer.
+
+### Recorded funding
+
+The first real float, executed 2026-10-31 from the signing host:
+
+| Field | Value |
+| --- | --- |
+| amount / fee / debit | `202.000000` / `2.020000` / `204.020000` |
+| transaction hash | `57794d435d16385972b0467ebaac6c4fa718a65c9656763b42cff143d1aa9642` |
+| block | index 3 (`chain_length` 3 → 4), one transaction, `gas_used 81938` |
+| Sovereign after | `999,795.980000`, nonce 5 |
+| faucet after | `202.000000`, against the `201.010000` the first claim requires |
+
+The address holds the float; claims remain gated by `FAUCET_ENABLED` and the intake prerequisites
+above, which funding does not satisfy.
 
 ### If the response is ambiguous
 

@@ -1440,6 +1440,23 @@ impl UltraBlockchain {
                 .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
     }
 
+    /// Accepts a timestamp inside the transaction window and rejects anything outside it.
+    ///
+    /// `now - timestamp` is unsigned, so a timestamp up to 60 s in the future — which the first
+    /// check deliberately allows — wrapped to about 1.8e19 and reported "Transaction is too old!".
+    /// A node clock barely behind the signer therefore rejected every otherwise valid transfer;
+    /// that is what refused the first 202 $ULTRA faucet funding on 2026-10-31, when the node read
+    /// 21 s behind the signing host. Saturating subtraction makes the two bounds agree.
+    pub fn check_transaction_freshness(timestamp: u64, now: u64) -> Result<(), String> {
+        if timestamp > now.saturating_add(60) {
+            return Err("Transaction is in the future!".to_string());
+        }
+        if now.saturating_sub(timestamp) > 3600 {
+            return Err("Transaction is too old!".to_string());
+        }
+        Ok(())
+    }
+
     pub fn minimum_transfer_fee(amount: u64) -> u64 {
         if amount == 0 {
             0
@@ -2375,12 +2392,7 @@ impl UltraBlockchain {
 
         // 4. Provera vremena
         let now = Utc::now().timestamp() as u64;
-        if tx.timestamp > now + 60 {
-            return Err("Transaction is in the future!".to_string());
-        }
-        if now - tx.timestamp > 3600 {
-            return Err("Transaction is too old!".to_string());
-        }
+        Self::check_transaction_freshness(tx.timestamp, now)?;
 
         // 5. Provera fee-ja
         let min_fee = Self::minimum_transfer_fee(tx.amount);
@@ -4524,6 +4536,34 @@ mod signature_verification_tests {
         assert!(Arc::ptr_eq(&primary.zk_engine, &p2p.zk_engine));
         assert!(Arc::ptr_eq(&primary.recursive_zk, &p2p.recursive_zk));
         assert!(Arc::ptr_eq(&primary.fhe_engine, &p2p.fhe_engine));
+    }
+
+    #[test]
+    fn freshness_accepts_a_timestamp_slightly_ahead_of_the_node_clock() {
+        let now = 1_000_000_u64;
+        assert!(UltraBlockchain::check_transaction_freshness(now - 30, now).is_ok());
+        assert!(UltraBlockchain::check_transaction_freshness(now, now).is_ok());
+        // The window deliberately allows 60 s of future skew. Before the saturating fix, a
+        // timestamp 21 s ahead — the measured skew on 2026-10-31 — wrapped `now - timestamp` and
+        // came back as "Transaction is too old!", which refused a valid 202 $ULTRA transfer.
+        assert!(UltraBlockchain::check_transaction_freshness(now + 21, now).is_ok());
+        assert!(UltraBlockchain::check_transaction_freshness(now + 60, now).is_ok());
+    }
+
+    #[test]
+    fn freshness_rejects_a_timestamp_outside_the_window() {
+        let now = 1_000_000_u64;
+        assert_eq!(
+            UltraBlockchain::check_transaction_freshness(now + 61, now).unwrap_err(),
+            "Transaction is in the future!"
+        );
+        assert!(UltraBlockchain::check_transaction_freshness(now - 3_600, now).is_ok());
+        assert_eq!(
+            UltraBlockchain::check_transaction_freshness(now - 3_601, now).unwrap_err(),
+            "Transaction is too old!"
+        );
+        // A timestamp far beyond the clock must not overflow the upper bound either.
+        assert!(UltraBlockchain::check_transaction_freshness(u64::MAX, now).is_err());
     }
 
     fn open_test_chain(name: &str) -> UltraBlockchain {
