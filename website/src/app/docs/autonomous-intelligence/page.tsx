@@ -1,61 +1,148 @@
-import DocPage from "@/components/docs/DocPage";
+"use client";
+
+import { useEffect, useState } from "react";
 import { Brain } from "lucide-react";
+import DocPage from "@/components/docs/DocPage";
+import { API_BASE_URL } from "@/lib/links";
+
+type GovernorResponse = {
+  success?: unknown;
+  history?: unknown;
+  sustainability_score?: unknown;
+};
+
+type GovernorSnapshot = {
+  status: "loading" | "live" | "unavailable";
+  score: number | null;
+  sampleCount: number | null;
+  updatedAt: string | null;
+};
+
+const INITIAL_SNAPSHOT: GovernorSnapshot = {
+  status: "loading",
+  score: null,
+  sampleCount: null,
+  updatedAt: null,
+};
+
+function formatSnapshot(snapshot: GovernorSnapshot): string {
+  if (snapshot.status !== "live" || snapshot.score === null || snapshot.sampleCount === null) {
+    return "Unavailable";
+  }
+  if (snapshot.sampleCount === 0) return `Default ${snapshot.score.toFixed(1)}`;
+  return snapshot.score.toFixed(1);
+}
 
 export default function AutonomousIntelligenceDoc() {
+  const [snapshot, setSnapshot] = useState<GovernorSnapshot>(INITIAL_SNAPSHOT);
+
+  useEffect(() => {
+    let mounted = true;
+    let controller: AbortController | null = null;
+
+    const load = async () => {
+      controller?.abort();
+      const request = new AbortController();
+      controller = request;
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/ai/history`, {
+          signal: request.signal,
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) throw new Error("Governor telemetry is unavailable.");
+
+        const payload = await response.json() as GovernorResponse;
+        if (
+          payload.success !== true ||
+          !Array.isArray(payload.history) ||
+          typeof payload.sustainability_score !== "number" ||
+          !Number.isFinite(payload.sustainability_score)
+        ) {
+          throw new Error("Governor telemetry response is incomplete.");
+        }
+
+        if (mounted) {
+          setSnapshot({
+            status: "live",
+            score: payload.sustainability_score,
+            sampleCount: payload.history.length,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      } catch {
+        if (mounted && !request.signal.aborted) {
+          setSnapshot({ status: "unavailable", score: null, sampleCount: null, updatedAt: null });
+        }
+      }
+    };
+
+    void load();
+    const interval = window.setInterval(() => void load(), 30000);
+    return () => {
+      mounted = false;
+      controller?.abort();
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  const scoreStatus = snapshot.status === "live"
+    ? snapshot.sampleCount === 0 ? "DEFAULT // NO SAMPLES" : "API_SAMPLES_REPORTED"
+    : snapshot.status === "loading" ? "CONNECTING" : "UNAVAILABLE";
+
   return (
     <DocPage
       pillar="A"
       icon={<Brain className="w-6 h-6" />}
-      title="Autonomous Intelligence"
-      subtitle="On-chain LLM inference and decentralized agentic governance modules."
+      title="AI Governor Implementation"
+      subtitle="A repository-level, rule-based governor; no on-chain LLM or decentralized agent voting is demonstrated by the current implementation."
       content={
         <div className="space-y-12">
           <section>
-            <h2 className="text-2xl font-bold text-platinum uppercase tracking-tight mb-6">01. The AI Governor</h2>
+            <h2 className="text-2xl font-bold text-platinum uppercase tracking-tight mb-6">01. Current Code Path</h2>
             <p>
-              UltraNet is the first blockchain with a <strong>Self-Regulating Economy</strong>. The AI Governor is an on-chain 
-              module that analyzes network health metrics (congestion, stale block rates, staking ratio) and automatically 
-              tunes the mining difficulty and token emission rates to maintain long-term stability.
+              The Rust <strong>AIGovernor</strong> stores a bounded in-process history of chain metrics and computes a heuristic sustainability score. It can suggest difficulty changes and calculates a reward from block count and transaction density. This is a rule-based module, not evidence of an on-chain LLM, autonomous agents, or independently validated economic governance.
             </p>
           </section>
 
           <section className="bg-cyan-glow/5 border border-cyan-glow/10 p-8 rounded-sm">
-            <h2 className="text-xl font-bold text-cyan-glow uppercase tracking-tight mb-4">02. Sustainability Score</h2>
-            <p className="mb-4">
-              The Governor computes a <strong>Sustainability Score (0-100)</strong> every epoch. This score determines the 
-              multiplier for validator rewards.
-            </p>
-            <div className="flex items-center gap-2 mb-8">
-              <div className="flex-1 h-1 bg-platinum/10 rounded-full overflow-hidden">
-                <div className="w-[88%] h-full bg-cyan-glow shadow-[0_0_10px_rgba(15,255,255,0.5)]" />
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-cyan-glow uppercase tracking-tight">02. Public Governor Snapshot</h2>
+                <p className="mt-3 max-w-2xl text-sm leading-relaxed text-platinum/60">
+                  Values come from the connected node&apos;s <code>/api/ai/history</code> response and refresh every 30 seconds. A score with zero history entries is the module&apos;s initialized default, not a measured network-health score.
+                </p>
               </div>
-              <span className="font-mono text-cyan-glow text-sm">88.4 / 100</span>
+              <span className="font-mono text-[10px] uppercase tracking-widest text-platinum/45" aria-live="polite">
+                {scoreStatus}
+              </span>
             </div>
-            <ul className="grid grid-cols-2 gap-4 font-mono text-[10px] text-platinum/50 uppercase">
-              <li>- Network_Health: Optimal</li>
-              <li>- Stake_Ratio: 64.2%</li>
-              <li>- Inflation_Target: 1.5%</li>
-              <li>- Agentic_Bias: 0.02</li>
-            </ul>
+
+            <div className="mt-8 grid gap-4 sm:grid-cols-2">
+              <div className="border border-platinum/10 p-5">
+                <p className="font-mono text-[10px] uppercase tracking-widest text-platinum/40">Sustainability score</p>
+                <p className="mt-3 font-space-grotesk text-2xl font-bold text-cyan-glow">{formatSnapshot(snapshot)}</p>
+                <p className="mt-2 text-xs text-platinum/45">Not a reward multiplier or an audited stability guarantee.</p>
+              </div>
+              <div className="border border-platinum/10 p-5">
+                <p className="font-mono text-[10px] uppercase tracking-widest text-platinum/40">Recorded samples</p>
+                <p className="mt-3 font-space-grotesk text-2xl font-bold text-platinum">
+                  {snapshot.sampleCount === null ? "Unavailable" : new Intl.NumberFormat("en-US").format(snapshot.sampleCount)}
+                </p>
+                <p className="mt-2 text-xs text-platinum/45">
+                  {snapshot.updatedAt ? `Read ${new Intl.DateTimeFormat("en-US", { timeStyle: "medium" }).format(new Date(snapshot.updatedAt))}` : "No API observation available"}
+                </p>
+              </div>
+            </div>
           </section>
 
           <section>
-            <h2 className="text-2xl font-bold text-platinum uppercase tracking-tight mb-6">03. Agentic Governance</h2>
+            <h2 className="text-2xl font-bold text-platinum uppercase tracking-tight mb-6">03. Governance Boundary</h2>
             <p>
-              While the Sovereign Genesis Authority oversees the initial bootstrap phase, UltraNet is designed for 
-              <strong>Agentic Governance</strong>. Decentralized AI agents, holding $ULTRA, can propose and vote 
-              on protocol improvements, ensuring that the network can evolve at machine speed without human bottlenecks.
+              Validator proposals require the configured 2-of-3 Sovereign approval threshold. The public source does not show AI agents holding tokens and voting on protocol proposals. Treat the AI Governor as implementation code and its API output as node-reported telemetry, not decentralized governance or an independent audit.
             </p>
           </section>
-
-          <div className="p-6 border border-platinum/10 font-mono text-center">
-            <div className="text-[10px] text-platinum/30 uppercase mb-4 tracking-[0.3em]">Governance_Model</div>
-            <h4 className="text-sm font-bold text-platinum uppercase mb-2">Hybrid Sovereignty</h4>
-            <p className="text-xs text-platinum/60 leading-relaxed max-w-xl mx-auto">
-              A unique 2-of-3 multi-signature override remains active for emergency interventions, 
-              providing a &quot;circuit breaker&quot; for the autonomous governor in unforeseen black-swan events.
-            </p>
-          </div>
         </div>
       }
     />
