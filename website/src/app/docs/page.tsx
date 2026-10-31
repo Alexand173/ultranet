@@ -142,7 +142,10 @@ export default function DocsHub() {
                     <ChapterContent chapter={chapter} />
                   </Link>
                 ) : (
-                  <div className="p-8 h-full opacity-60 grayscale cursor-not-allowed">
+                  // A container opacity multiplies every child colour, so an
+                  // "unavailable" card built with opacity-60 dropped its own
+                  // labels to 2.61:1. Dim the surface instead of the text.
+                  <div className="p-8 h-full bg-black/40 grayscale cursor-not-allowed">
                     <ChapterContent chapter={chapter} isComingSoon />
                   </div>
                 )}

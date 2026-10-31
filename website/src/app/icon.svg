@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" shape-rendering="geometricPrecision">
+  <title>UltraNet</title>
+  <rect width="32" height="32" fill="#010B13"/>
+  <path d="M16 2.5 27.5 9v14L16 29.5 4.5 23V9Z" fill="#0FFFFF"/>
+  <path d="M16 6.6 23.9 11v10L16 25.4 8.1 21V11Z" fill="#010B13"/>
+  <path d="M12 11.4v6.2a4 4 0 0 0 8 0v-6.2" fill="none" stroke="#0FFFFF" stroke-width="2.6" stroke-linecap="round"/>
+</svg>

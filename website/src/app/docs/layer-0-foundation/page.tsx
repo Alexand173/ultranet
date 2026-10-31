@@ -53,7 +53,7 @@ export default function Layer0FoundationDoc() {
           </section>
 
           <section className="border-l-2 border-platinum/10 pl-8 py-4">
-            <h4 className="text-sm font-bold text-platinum uppercase mb-2">Post-Quantum Handshake</h4>
+            <h3 className="text-sm font-bold text-platinum uppercase mb-2">Post-Quantum Handshake</h3>
             <p className="text-sm text-platinum/60 leading-relaxed">
               The current P2P implementation uses persistent libp2p Ed25519 identities with Noise transport authentication. Dilithium-5 signatures are used for UltraNet transaction authorization; they are not the P2P handshake identity. No security claim is absolute, and the implementation has not been independently audited here.
             </p>

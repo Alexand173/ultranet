@@ -45,7 +45,7 @@ export default function LongevityTimeline() {
                 </span>
               </div>
               <div className="space-y-2">
-                <h4 className="text-lg font-bold tracking-widest">{m.era}</h4>
+                <h3 className="text-lg font-bold tracking-widest">{m.era}</h3>
                 <p className="text-xs text-platinum-muted leading-relaxed uppercase">{m.goal}</p>
               </div>
             </div>

@@ -41,7 +41,7 @@ export default function UnifiedScalabilityDoc() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="border border-platinum/10 p-6">
               <div className="text-[10px] text-platinum-muted uppercase mb-2">Technical_Spec</div>
-              <h4 className="text-sm font-bold text-platinum uppercase mb-4">Cross-Shard Atomicity</h4>
+              <h3 className="text-sm font-bold text-platinum uppercase mb-4">Cross-Shard Atomicity</h3>
               <p className="text-xs text-platinum/60 leading-relaxed">
                 Atomic messaging protocol ensures that if a transaction debits Shard A, it is guaranteed to credit Shard B 
                 within the same block boundary, or both revert.
@@ -49,7 +49,7 @@ export default function UnifiedScalabilityDoc() {
             </div>
             <div className="border border-platinum/10 p-6">
               <div className="text-[10px] text-platinum-muted uppercase mb-2">Performance_Evidence</div>
-              <h4 className="text-sm font-bold text-platinum uppercase mb-4">No Published Scaling Benchmark</h4>
+              <h3 className="text-sm font-bold text-platinum uppercase mb-4">No Published Scaling Benchmark</h3>
               <p className="text-xs text-platinum/60 leading-relaxed">
                 A 64-core versus 16-core throughput claim needs a reproducible workload, configuration, and measured results. No such benchmark is provided here.
               </p>

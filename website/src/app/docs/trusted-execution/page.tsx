@@ -37,10 +37,10 @@ export default function TrustedExecutionDoc() {
           </section>
 
           <div className="p-6 border border-cyan-glow/20 bg-[#0A1A1F]">
-            <h4 className="text-sm font-bold text-cyan-glow uppercase mb-3 flex items-center gap-2">
+            <h3 className="text-sm font-bold text-cyan-glow uppercase mb-3 flex items-center gap-2">
               <div className="w-1.5 h-1.5 bg-cyan-glow" /> 
               API-Reported FHE Gas Multiplier: 5000x
-            </h4>
+            </h3>
             <p className="text-xs text-platinum/60 leading-relaxed">
               The current FHE stats endpoint reports a configured multiplier value of 5000. This API field alone does not demonstrate that the factor is applied across execution or establish measured hardware cost; verify the relevant runtime path before treating it as an economic rule.
             </p>
