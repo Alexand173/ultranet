@@ -11,17 +11,19 @@ import {
   type StoredWallet,
 } from "@/lib/wallet-crypto";
 import WalletSetup from "@/components/transactions/WalletSetup";
+import type { WalletLockedInitialAction } from "@/lib/ultraverse";
 
 interface WalletLockedProps {
   wallet: StoredWallet;
   onUnlocked: (material: LocalWalletKeyMaterial) => void;
   onCreated: (wallet: StoredWallet, password: string) => Promise<void> | void;
+  initialAction?: WalletLockedInitialAction;
 }
 
 type WalletLockedView = "locked" | "restore" | "replace-confirm" | "replace-create";
 
-export default function WalletLocked({ wallet, onUnlocked, onCreated }: WalletLockedProps) {
-  const [view, setView] = useState<WalletLockedView>("locked");
+export default function WalletLocked({ wallet, onUnlocked, onCreated, initialAction = "locked" }: WalletLockedProps) {
+  const [view, setView] = useState<WalletLockedView>(initialAction);
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<"idle" | "unlocking" | "error">("idle");
   const [error, setError] = useState("");

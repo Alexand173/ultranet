@@ -38,6 +38,7 @@ import TransactionReview from "@/components/transactions/TransactionReview";
 import TransactionResult from "@/components/transactions/TransactionResult";
 import type { TransferDraft, TransferState } from "@/components/transactions/transaction.types";
 import type { LocalWalletKeyMaterial, StoredWallet } from "@/lib/wallet-crypto";
+import { getWalletLockedInitialAction, type WalletSetupMode } from "@/lib/ultraverse";
 
 const EMPTY_DRAFT: TransferDraft = {
   recipient: "",
@@ -49,7 +50,7 @@ const EMPTY_DRAFT: TransferDraft = {
 
 type NetworkState = "loading" | "connected" | "delayed" | "unavailable";
 
-export default function TransactionPage({ returnTo }: { returnTo?: string }) {
+export default function TransactionPage({ returnTo, setupMode }: { returnTo?: string; setupMode?: WalletSetupMode }) {
   const router = useRouter();
   const { sessionState, storedWallet, walletAddress, storageError, localProvider, unlock, lock } = useWalletSession();
   const [account, setAccount] = useState<AccountSnapshot | null>(null);
@@ -323,6 +324,26 @@ export default function TransactionPage({ returnTo }: { returnTo?: string }) {
     setTransferState("idle");
   };
 
+  if (setupMode && sessionState === "unlocked") {
+    return (
+      <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay px-6 py-28 sm:px-10 lg:px-12">
+        <section className="mx-auto max-w-3xl border-y border-platinum/15 py-12" aria-labelledby="wallet-setup-intent-title">
+          <h1 id="wallet-setup-intent-title" className="font-space-grotesk text-3xl font-bold uppercase tracking-tight text-platinum sm:text-4xl">
+            Lock wallet to continue
+          </h1>
+          <p className="mt-4 max-w-2xl text-sm leading-7 text-platinum/65">
+            {setupMode === "restore"
+              ? "Lock the current wallet before restoring it with its recovery phrase."
+              : "Lock the current wallet before creating another. Replacing it requires a separate confirmation."}
+          </p>
+          <button type="button" onClick={handleLock} className="mt-7 inline-flex min-h-11 items-center justify-center bg-cyan-glow px-5 py-3 font-mono text-xs font-black uppercase tracking-[0.14em] text-ink-black transition-colors hover:bg-platinum focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black">
+            Lock wallet and continue
+          </button>
+        </section>
+      </main>
+    );
+  }
+
   if (sessionState === "checking") {
     return <main className="relative min-h-screen bg-ink-black px-6 pb-24 pt-36 sm:px-10 lg:px-12"><div className="mx-auto max-w-7xl border-y border-platinum/15 py-16"><p className="font-mono text-xs uppercase tracking-[0.2em] text-cyan-glow">WALLET_STATUS / READING_LOCAL_STORAGE</p><p className="mt-4 text-sm text-platinum/50">Checking this device for a protected UltraNet wallet…</p></div></main>;
   }
@@ -332,11 +353,11 @@ export default function TransactionPage({ returnTo }: { returnTo?: string }) {
   }
 
   if (sessionState === "none") {
-    return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-[1680px] px-6 pt-28 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} /><EducationalWalletCallout variant="dark" placement="send-ultra" /></div><WalletSetup onCreated={handleCreated} /></main>;
+    return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-[1680px] px-6 pt-28 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} />{!setupMode && <EducationalWalletCallout variant="dark" placement="send-ultra" />}</div><WalletSetup key={setupMode ?? "create"} initialMode={setupMode} onCreated={handleCreated} /></main>;
   }
 
   if (sessionState === "locked" && storedWallet) {
-    return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-[1680px] px-6 pt-28 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} /><EducationalWalletCallout variant="dark" placement="send-ultra" /></div><WalletLocked wallet={storedWallet} onUnlocked={handleUnlock} onCreated={handleCreated} /></main>;
+    return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-[1680px] px-6 pt-28 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} />{!setupMode && <EducationalWalletCallout variant="dark" placement="send-ultra" />}</div><WalletLocked key={setupMode ?? "locked"} initialAction={getWalletLockedInitialAction(setupMode)} wallet={storedWallet} onUnlocked={handleUnlock} onCreated={handleCreated} /></main>;
   }
 
   if (!account || !walletAddress || !storedWallet) {

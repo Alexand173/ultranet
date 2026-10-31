@@ -28,7 +28,7 @@ export default function RootLayout({
         <VisualNoise />
         <GlobalCommandSearch />
         {/* Global High-Density Background Flash Overlay */}
-        <div className="fixed inset-0 pointer-events-none z-[60] overflow-hidden opacity-10 mix-blend-screen">
+        <div data-global-visual-overlay className="fixed inset-0 pointer-events-none z-[60] overflow-hidden opacity-10 mix-blend-screen">
           <div className="absolute top-0 left-0 w-full h-[1px] bg-cyan-glow/50 animate-[scanline_10s_linear_infinite]" />
         </div>
         

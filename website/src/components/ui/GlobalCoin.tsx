@@ -47,6 +47,7 @@ export default function GlobalCoin() {
     pathname === "/" ||
     pathname === "/validator" ||
     pathname === "/docs/whitepaper" ||
+    pathname === "/ultraverse" ||
     pathname === "/login" ||
     pathname.startsWith("/operator") ||
     pathname.startsWith("/appchains")

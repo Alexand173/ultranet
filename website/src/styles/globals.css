@@ -35,6 +35,12 @@
     overflow-x: hidden;
   }
 
+  body:has([data-page-shell="ultraverse"])::after,
+  body:has([data-page-shell="ultraverse"]) [data-global-visual-overlay] {
+    display: none;
+    animation: none;
+  }
+
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-space-grotesk);
     text-transform: uppercase;

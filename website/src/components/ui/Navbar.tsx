@@ -14,6 +14,7 @@ const NAV_LINKS = [
   { name: "WHITEPAPER", href: "/docs/whitepaper" },
   { name: "DOWNLOAD_NODE", href: "/download" },
   { name: "VALIDATOR", href: "/validator" },
+  { name: "ULTRAVERSE", href: "/ultraverse" },
   { name: "SEND ULTRA", href: SEND_ULTRA_PATH },
   { name: "JOIN_SWARM", href: "/#swarm" },
 ];
@@ -22,7 +23,7 @@ export default function Navbar() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
 
-  if (pathname === "/login" || pathname.startsWith("/operator") || pathname.startsWith("/appchains")) return null;
+  if (pathname === "/login" || pathname === "/ultraverse" || pathname.startsWith("/operator") || pathname.startsWith("/appchains")) return null;
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-ink-black/80 backdrop-blur-md border-b border-platinum/10">

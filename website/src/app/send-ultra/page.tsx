@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import TransactionPage from "@/components/transactions/TransactionPage";
 import { getSafeReturnPath } from "@/lib/redirects";
+import { parseWalletSetupMode } from "@/lib/ultraverse";
 
 export const metadata: Metadata = {
   title: "Send $ULTRA | UltraNet",
@@ -15,6 +16,7 @@ export default async function SendUltraPage({
   const params = await searchParams;
   const rawReturnTo = typeof params.returnTo === "string" ? params.returnTo : undefined;
   const returnTo = getSafeReturnPath(rawReturnTo) ?? undefined;
+  const setupMode = parseWalletSetupMode(params.setup);
 
-  return <TransactionPage returnTo={returnTo} />;
+  return <TransactionPage returnTo={returnTo} setupMode={setupMode} />;
 }

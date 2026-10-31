@@ -1,16 +1,18 @@
 "use client";
 
 import { motion } from "framer-motion";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 export default function VisualNoise() {
+  const pathname = usePathname();
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
-  if (!isMounted) return null;
+  if (!isMounted || pathname === "/ultraverse") return null;
 
   return (
     <div aria-hidden="true" className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
