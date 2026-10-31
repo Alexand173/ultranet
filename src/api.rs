@@ -3225,6 +3225,57 @@ async fn get_latest_transactions(state: web::Data<AppState>) -> impl Responder {
     }))
 }
 
+/// Upper bound on the pending transactions returned by `GET /api/mempool`. The mempool itself
+/// accepts more; this only keeps one public response bounded.
+const MEMPOOL_PAGE_LIMIT: usize = 100;
+
+/// Newest first and capped, so a flooded mempool cannot inflate a single public response.
+/// Records keep the same `pending` view that address history already exposes.
+fn mempool_snapshot(transactions: &[Transaction]) -> Vec<TransactionView> {
+    let mut views = transactions
+        .iter()
+        .map(|transaction| transaction_view(transaction, "pending"))
+        .collect::<Vec<_>>();
+
+    views.sort_by(|left, right| {
+        right
+            .timestamp
+            .cmp(&left.timestamp)
+            .then_with(|| right.nonce.cmp(&left.nonce))
+            .then_with(|| left.hash.cmp(&right.hash))
+    });
+    views.truncate(MEMPOOL_PAGE_LIMIT);
+    views
+}
+
+// List the transactions currently waiting in the mempool. Public read: it exposes the same
+// fields as `/api/address/{address}/transactions`, never a private key or signature payload.
+async fn get_mempool(state: web::Data<AppState>) -> impl Responder {
+    let blockchain = state.blockchain.read();
+
+    let pending = match blockchain.storage.get_all_pending_transactions() {
+        Ok(transactions) => transactions,
+        Err(error) => {
+            return HttpResponse::InternalServerError().json(ApiResponse {
+                success: false,
+                message: format!("Mempool unavailable: {error}"),
+                data: None,
+            });
+        }
+    };
+
+    let transactions = mempool_snapshot(&pending);
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "message": "Mempool",
+        "count": pending.len(),
+        "returned": transactions.len(),
+        "limit": MEMPOOL_PAGE_LIMIT,
+        "transactions": transactions,
+    }))
+}
+
 // Get transaction by hash
 async fn get_transaction(state: web::Data<AppState>, hash: web::Path<String>) -> impl Responder {
     let blockchain = state.blockchain.read();
@@ -3497,6 +3548,7 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
     println!("   GET  /api/transaction/estimate - Fee estimate");
     println!("   GET  /api/account/:address - Account balance and nonce");
     println!("   GET  /api/address/:address/transactions - Address history");
+    println!("   GET  /api/mempool - List pending transactions");
     println!("   POST /api/mine - Mine block");
     println!("   GET  /api/chain - Chain state");
     println!("   GET  /api/balance/:address - Balance");
@@ -3582,6 +3634,7 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
                 "/api/transactions/latest",
                 web::get().to(get_latest_transactions),
             )
+            .route("/api/mempool", web::get().to(get_mempool))
             .route("/api/auth/challenge", web::post().to(auth_challenge))
             .route("/api/auth/login", web::post().to(auth_login))
             .route("/api/auth/session", web::get().to(auth_session))
@@ -3628,16 +3681,19 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
 #[cfg(test)]
 mod configuration_tests {
     use super::{
-        configure_admin_routes, csrf_cookie, missing_admin_token_error, parse_api_bind,
-        parse_cors_origins, require_admin_token, resolve_admin_auth, session_cookie,
-        validate_admin_token, AdminAuthConfig, AuthChallengeRequest, AuthLoginRequest,
-        ADMIN_TOKEN_ENV, ADMIN_TOKEN_FILE_ENV, MAX_ADMIN_TOKEN_BYTES,
+        configure_admin_routes, csrf_cookie, get_mempool, mempool_snapshot,
+        missing_admin_token_error, parse_api_bind, parse_cors_origins, require_admin_token,
+        resolve_admin_auth, session_cookie, validate_admin_token, AdminAuthConfig, AppState,
+        AuthChallengeRequest, AuthLoginRequest, ADMIN_TOKEN_ENV, ADMIN_TOKEN_FILE_ENV,
+        MAX_ADMIN_TOKEN_BYTES, MEMPOOL_PAGE_LIMIT,
     };
     use crate::{
         auth::{AuthConfig, AuthService, CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME},
         quantum_crypto::QuantumKeyPair,
-        Storage,
+        ProofType, Storage, Transaction, TransactionPayload, UltraBlockchain,
     };
+    use parking_lot::RwLock;
+
     use actix_web::{
         cookie::Cookie,
         http::{header::AUTHORIZATION, Method, StatusCode},
@@ -4203,5 +4259,160 @@ mod configuration_tests {
 
         drop(storage);
         let _ = fs::remove_dir_all(&path);
+    }
+
+    struct TemporaryApiDb(std::path::PathBuf);
+
+    impl TemporaryApiDb {
+        fn new(label: &str) -> Self {
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0);
+            let mut path = std::env::temp_dir();
+            path.push(format!(
+                "ultranet-api-{label}-{}-{unique}",
+                std::process::id()
+            ));
+            Self(path)
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TemporaryApiDb {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn pending_transfer(
+        sender: &str,
+        recipient: &str,
+        amount: u64,
+        nonce: u64,
+        timestamp: u64,
+    ) -> Transaction {
+        Transaction {
+            sender: sender.to_string(),
+            sender_public_key: vec![0x11; 32],
+            recipient: recipient.to_string(),
+            amount,
+            signature: vec![0x22; 32],
+            zk_proof: vec![],
+            nullifier: [nonce as u8 + 1; 32],
+            timestamp,
+            fee: 1_000,
+            nonce,
+            gas_limit: 21_000,
+            gas_price: 1,
+            proof_type: ProofType::Transaction,
+            payload: TransactionPayload::StandardTransfer,
+            chain_id: UltraBlockchain::L1_CHAIN_ID,
+            version: UltraBlockchain::LEGACY_TRANSACTION_VERSION,
+        }
+    }
+
+    #[actix_web::test]
+    async fn mempool_route_reports_an_empty_mempool() {
+        let db = TemporaryApiDb::new("mempool-empty");
+        let blockchain = Arc::new(RwLock::new(UltraBlockchain::new(
+            db.path().to_str().expect("temporary path must be UTF-8"),
+        )));
+
+        // No AdminAuthConfig is registered: the route must be readable without a bearer token.
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(AppState { blockchain }))
+                .route("/api/mempool", web::get().to(get_mempool)),
+        )
+        .await;
+
+        let response = actix_test::call_service(
+            &app,
+            actix_test::TestRequest::get()
+                .uri("/api/mempool")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body: serde_json::Value = actix_test::read_body_json(response).await;
+        assert_eq!(body["success"].as_bool(), Some(true));
+        assert_eq!(body["count"].as_u64(), Some(0));
+        assert_eq!(
+            body["transactions"].as_array().map(|rows| rows.len()),
+            Some(0)
+        );
+    }
+
+    #[actix_web::test]
+    async fn mempool_route_lists_pending_transactions_newest_first() {
+        let db = TemporaryApiDb::new("mempool-pending");
+        let blockchain = Arc::new(RwLock::new(UltraBlockchain::new(
+            db.path().to_str().expect("temporary path must be UTF-8"),
+        )));
+
+        let older = pending_transfer("sender-older", "recipient", 1_000_000, 1, 1_000);
+        let newer = pending_transfer("sender-newer", "recipient", 2_000_000, 2, 2_000);
+        {
+            let chain = blockchain.read();
+            chain
+                .storage
+                .save_pending_transaction(&older)
+                .expect("persist older pending transaction");
+            chain
+                .storage
+                .save_pending_transaction(&newer)
+                .expect("persist newer pending transaction");
+        }
+
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(AppState {
+                    blockchain: blockchain.clone(),
+                }))
+                .route("/api/mempool", web::get().to(get_mempool)),
+        )
+        .await;
+
+        let response = actix_test::call_service(
+            &app,
+            actix_test::TestRequest::get()
+                .uri("/api/mempool")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body: serde_json::Value = actix_test::read_body_json(response).await;
+        assert_eq!(body["count"].as_u64(), Some(2));
+
+        let rows = body["transactions"]
+            .as_array()
+            .expect("transactions must be an array");
+        let newer_hash = hex::encode(newer.get_hash());
+        let older_hash = hex::encode(older.get_hash());
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["hash"].as_str(), Some(newer_hash.as_str()));
+        assert_eq!(rows[0]["status"].as_str(), Some("pending"));
+        assert_eq!(rows[1]["hash"].as_str(), Some(older_hash.as_str()));
+    }
+
+    #[test]
+    fn mempool_snapshot_is_capped_and_newest_first() {
+        let total = MEMPOOL_PAGE_LIMIT as u64 + 20;
+        let transactions = (0..total)
+            .map(|index| pending_transfer("sender", "recipient", 1, index, 1_000 + index))
+            .collect::<Vec<_>>();
+
+        let snapshot = mempool_snapshot(&transactions);
+
+        assert_eq!(snapshot.len(), MEMPOOL_PAGE_LIMIT);
+        assert_eq!(snapshot[0].timestamp, 999 + total);
+        assert!(snapshot.iter().all(|view| view.status == "pending"));
     }
 }

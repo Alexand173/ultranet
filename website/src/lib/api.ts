@@ -56,6 +56,12 @@ export interface TransactionRecord {
   status: TransactionStatus;
 }
 
+export interface MempoolSnapshot {
+  /** Depth reported by the node. It can exceed `transactions.length` when the response is capped. */
+  count: number;
+  transactions: TransactionRecord[];
+}
+
 interface StatsPayload {
   success?: boolean;
   data?: Record<string, unknown>;
@@ -94,6 +100,15 @@ interface FeePayload {
 
 interface AddressHistoryPayload {
   success?: boolean;
+  transactions?: Array<Record<string, unknown>>;
+  message?: string;
+}
+
+interface MempoolPayload {
+  success?: boolean;
+  count?: unknown;
+  returned?: unknown;
+  limit?: unknown;
   transactions?: Array<Record<string, unknown>>;
   message?: string;
 }
@@ -282,6 +297,26 @@ export async function fetchNetworkStats(signal?: AbortSignal): Promise<LiveNetwo
 export async function fetchLatestTransactions(signal?: AbortSignal): Promise<LatestTransaction[]> {
   const payload = await fetchJson<TransactionsPayload>("/api/transactions/latest", { signal });
   return normalizeTransactions(payload);
+}
+
+export function normalizeMempool(payload: MempoolPayload): MempoolSnapshot {
+  if (payload.success === false) {
+    throw new Error(apiMessage(payload, "The node did not return the mempool."));
+  }
+
+  const rows = Array.isArray(payload.transactions) ? payload.transactions : [];
+  const transactions = rows.flatMap((transaction) => {
+    const normalized = normalizeTransactionRecord(transaction, "pending");
+    return normalized ? [normalized] : [];
+  });
+  const reportedCount = parseNumber(payload.count);
+
+  return { count: reportedCount ?? transactions.length, transactions };
+}
+
+export async function fetchMempool(signal?: AbortSignal): Promise<MempoolSnapshot> {
+  const payload = await fetchJson<MempoolPayload>("/api/mempool", { signal });
+  return normalizeMempool(payload);
 }
 
 export async function fetchAccount(address: string, signal?: AbortSignal): Promise<AccountSnapshot> {

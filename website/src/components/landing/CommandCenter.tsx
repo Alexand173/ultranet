@@ -6,6 +6,7 @@ import StatusTicker from "./command-center/StatusTicker";
 import NodeDiagnosticsTerminal from "./command-center/NodeDiagnosticsTerminal";
 import ShardedStateTerminal from "./command-center/ShardedStateTerminal";
 import LedgerTerminal from "./command-center/LedgerTerminal";
+import PendingMempoolTerminal from "./command-center/PendingMempoolTerminal";
 import AdminConsoleTerminal from "./command-center/AdminConsoleTerminal";
 import { emptyNetworkStats, fetchNetworkStats, type LiveNetworkStats } from "@/lib/api";
 
@@ -63,6 +64,7 @@ export default function CommandCenter() {
         {/* Right column: TR + BR terminals (desktop only) */}
         <div className="hidden 2xl:flex 2xl:flex-col gap-px bg-platinum/10">
           <LedgerTerminal className="flex-1" />
+          <PendingMempoolTerminal className="flex-1" />
           <AdminConsoleTerminal className="flex-1" />
         </div>
       </div>
@@ -71,6 +73,7 @@ export default function CommandCenter() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-platinum/10 2xl:hidden">
         <NodeDiagnosticsTerminal className="h-96" />
         <LedgerTerminal className="h-96" />
+        <PendingMempoolTerminal className="h-96" />
         <ShardedStateTerminal className="h-96" />
         <AdminConsoleTerminal className="h-96" />
       </div>
