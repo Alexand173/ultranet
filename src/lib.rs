@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 pub mod api;
 pub mod approval_signer;
 pub mod auth;
+pub mod auto_miner;
 pub mod governance;
 pub mod zk_circuit;
 pub use zk_circuit::*;
@@ -2604,6 +2605,62 @@ impl UltraBlockchain {
         }
     }
 
+    /// Why a pending transaction can never be mined. `None` means it is still includable.
+    ///
+    /// Only conditions the chain rejects forever count as dead: a recipient the address grammar
+    /// refuses, a self-transfer, an over-limit amount, or a nonce the account has already moved
+    /// past. A nonce queued ahead of the account is legitimate and is never pruned.
+    fn pending_prune_reason(&self, tx: &Transaction) -> Option<&'static str> {
+        if matches!(tx.payload, TransactionPayload::StandardTransfer)
+            && !Self::is_valid_address(&tx.recipient)
+        {
+            return Some("invalid_recipient");
+        }
+        if tx.sender == tx.recipient {
+            return Some("self_transfer");
+        }
+        if tx.amount > Self::MAX_TRANSFER_AMOUNT {
+            return Some("amount_too_large");
+        }
+        // The node refuses anything older than the freshness window, so a record that aged out of
+        // it can never be included however long the node keeps running.
+        if crate::auth::now_seconds().saturating_sub(tx.timestamp) > 3600 {
+            return Some("expired");
+        }
+        if tx.nonce < self.get_account_nonce(&tx.sender) {
+            return Some("stale_nonce");
+        }
+        None
+    }
+
+    /// Drops pending records the chain can never include — from the persisted pending set, the
+    /// in-memory mempool and the reserved-nonce book. Releasing the reservation matters: otherwise
+    /// a dead envelope keeps a nonce reserved that nothing can ever fill.
+    pub fn prune_unmineable_pending(&mut self) -> Result<Vec<(String, String)>, String> {
+        let pending = self.storage.get_all_pending_transactions()?;
+        let mut removed: Vec<(String, String)> = Vec::new();
+        let mut dropped: Vec<Transaction> = Vec::new();
+
+        for tx in pending {
+            let Some(reason) = self.pending_prune_reason(&tx) else {
+                continue;
+            };
+            let hash = tx.get_hash();
+            self.storage
+                .delete_pending_transaction(&hash)
+                .map_err(|error| error.to_string())?;
+            removed.push((hex::encode(hash), reason.to_string()));
+            dropped.push(tx);
+        }
+
+        if !dropped.is_empty() {
+            self.mempool.write().remove_transactions(&dropped);
+            self.clear_pending_nonces(&dropped);
+        }
+
+        Ok(removed)
+    }
+
     /// Builds the canonical signing preimage used by node validation.
     ///
     /// Wallet and integration clients should construct the exact transaction
@@ -4005,6 +4062,14 @@ impl UltraBlockchain {
             self.mempool.read().get_pending_count().to_string(),
         );
         stats.insert(
+            "auto_mined_blocks".to_string(),
+            crate::auto_miner::mined_block_count().to_string(),
+        );
+        stats.insert(
+            "auto_mine_last_at".to_string(),
+            crate::auto_miner::last_mine_unix().to_string(),
+        );
+        stats.insert(
             "epoch".to_string(),
             self.current_epoch.load(Ordering::SeqCst).to_string(),
         );
@@ -4494,6 +4559,22 @@ pub async fn run_node() -> Result<(), String> {
 
     let blockchain_arc = Arc::new(RwLock::new(blockchain));
 
+    // Autonomous block production. Off unless the interval is configured, so the default
+    // behaviour is unchanged and blocks come only from POST /api/mine.
+    let auto_mine = auto_miner::AutoMineConfig::from_env()?;
+    if auto_mine.enabled() {
+        println!(
+            "⛏️  Auto-miner enabled: every {}s, at most {} blocks/minute",
+            auto_mine.interval_seconds, auto_mine.max_blocks_per_minute
+        );
+        let miner_chain = blockchain_arc.clone();
+        tokio::spawn(async move {
+            auto_miner::run_auto_miner(miner_chain, auto_mine).await;
+        });
+    } else {
+        println!("   Auto-miner: disabled (blocks are sealed only by POST /api/mine)");
+    }
+
     // Start the P2P node before entering the blocking API server. This keeps
     // initialization errors in the main result so desktop launches fail clearly.
     let mut p2p_node = P2PNode::new(blockchain_p2p.clone())
@@ -4872,7 +4953,10 @@ mod signature_verification_tests {
 
         // Expected roots, built by hand from the documented rule.
         let mut expected_correction_tree = MerkleTree::new(256);
-        expected_correction_tree.insert(correction.sender.as_bytes(), &correction.amount.to_le_bytes());
+        expected_correction_tree.insert(
+            correction.sender.as_bytes(),
+            &correction.amount.to_le_bytes(),
+        );
         expected_correction_tree.insert(
             format!("{}:move", correction.sender).as_bytes(),
             &correction.get_hash(),

@@ -3276,6 +3276,31 @@ async fn get_mempool(state: web::Data<AppState>) -> impl Responder {
     }))
 }
 
+// Drop pending records the chain can never include. Administrative: it deletes state.
+async fn prune_mempool(state: web::Data<AppState>) -> impl Responder {
+    let mut blockchain = state.blockchain.write();
+
+    match blockchain.prune_unmineable_pending() {
+        Ok(removed) => {
+            let transactions = removed
+                .iter()
+                .map(|(hash, reason)| serde_json::json!({ "hash": hash, "reason": reason }))
+                .collect::<Vec<_>>();
+            HttpResponse::Ok().json(serde_json::json!({
+                "success": true,
+                "message": "Mempool prune complete",
+                "removed": removed.len(),
+                "transactions": transactions,
+            }))
+        }
+        Err(error) => HttpResponse::InternalServerError().json(ApiResponse {
+            success: false,
+            message: format!("Mempool prune failed: {error}"),
+            data: None,
+        }),
+    }
+}
+
 // Get transaction by hash
 async fn get_transaction(state: web::Data<AppState>, hash: web::Path<String>) -> impl Responder {
     let blockchain = state.blockchain.read();
@@ -3478,6 +3503,11 @@ fn configure_admin_routes(cfg: &mut web::ServiceConfig) {
             .route(web::post().to(mine_block)),
     )
     .service(
+        web::resource("/api/mempool/prune")
+            .wrap(from_fn(require_admin_token))
+            .route(web::post().to(prune_mempool)),
+    )
+    .service(
         web::resource("/api/move/resource")
             .wrap(from_fn(require_admin_token))
             .route(web::post().to(create_resource)),
@@ -3549,6 +3579,7 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
     println!("   GET  /api/account/:address - Account balance and nonce");
     println!("   GET  /api/address/:address/transactions - Address history");
     println!("   GET  /api/mempool - List pending transactions");
+    println!("   POST /api/mempool/prune - Drop unmineable pending transactions");
     println!("   POST /api/mine - Mine block");
     println!("   GET  /api/chain - Chain state");
     println!("   GET  /api/balance/:address - Balance");
@@ -3682,10 +3713,10 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
 mod configuration_tests {
     use super::{
         configure_admin_routes, csrf_cookie, get_mempool, mempool_snapshot,
-        missing_admin_token_error, parse_api_bind, parse_cors_origins, require_admin_token,
-        resolve_admin_auth, session_cookie, validate_admin_token, AdminAuthConfig, AppState,
-        AuthChallengeRequest, AuthLoginRequest, ADMIN_TOKEN_ENV, ADMIN_TOKEN_FILE_ENV,
-        MAX_ADMIN_TOKEN_BYTES, MEMPOOL_PAGE_LIMIT,
+        missing_admin_token_error, parse_api_bind, parse_cors_origins, prune_mempool,
+        require_admin_token, resolve_admin_auth, session_cookie, validate_admin_token,
+        AdminAuthConfig, AppState, AuthChallengeRequest, AuthLoginRequest, ADMIN_TOKEN_ENV,
+        ADMIN_TOKEN_FILE_ENV, MAX_ADMIN_TOKEN_BYTES, MEMPOOL_PAGE_LIMIT,
     };
     use crate::{
         auth::{AuthConfig, AuthService, CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME},
@@ -3993,6 +4024,7 @@ mod configuration_tests {
 
         let protected_routes = [
             "/api/mine",
+            "/api/mempool/prune",
             "/api/move/resource",
             "/api/state/prune",
             "/api/appchain/create",
@@ -4414,5 +4446,90 @@ mod configuration_tests {
         assert_eq!(snapshot.len(), MEMPOOL_PAGE_LIMIT);
         assert_eq!(snapshot[0].timestamp, 999 + total);
         assert!(snapshot.iter().all(|view| view.status == "pending"));
+    }
+
+    #[actix_web::test]
+    async fn prune_drops_only_unmineable_pending_transactions() {
+        let db = TemporaryApiDb::new("mempool-prune");
+        let blockchain = Arc::new(RwLock::new(UltraBlockchain::new(
+            db.path().to_str().expect("temporary path must be UTF-8"),
+        )));
+
+        // Still includable: valid recipient, nonce at the account nonce, inside the freshness
+        // window. The two records below are old as well as malformed, which is why they are dead.
+        let includable = pending_transfer(
+            "sender-valid",
+            &"a".repeat(64),
+            1_000,
+            0,
+            crate::auth::now_seconds(),
+        );
+        // The address grammar rejects this recipient, so the chain can never take it.
+        let bad_recipient = pending_transfer("sender-bad", "0x0", 0, 0, 1_000);
+        // The account has moved past nonce 0, so this record is stranded forever.
+        let stale_nonce = pending_transfer("sender-stale", &"b".repeat(64), 1_000, 0, 1_000);
+        {
+            let chain = blockchain.read();
+            chain
+                .storage
+                .save_pending_transaction(&includable)
+                .expect("persist includable pending transaction");
+            chain
+                .storage
+                .save_pending_transaction(&bad_recipient)
+                .expect("persist invalid-recipient pending transaction");
+            chain
+                .storage
+                .save_pending_transaction(&stale_nonce)
+                .expect("persist stale-nonce pending transaction");
+            chain
+                .storage
+                .save_account_nonce("sender-stale", 4)
+                .expect("advance the sender nonce");
+        }
+
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(AppState {
+                    blockchain: blockchain.clone(),
+                }))
+                .route("/api/mempool/prune", web::post().to(prune_mempool)),
+        )
+        .await;
+
+        let response = actix_test::call_service(
+            &app,
+            actix_test::TestRequest::post()
+                .uri("/api/mempool/prune")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body: serde_json::Value = actix_test::read_body_json(response).await;
+        assert_eq!(body["removed"].as_u64(), Some(2));
+
+        let remaining = blockchain
+            .read()
+            .storage
+            .get_all_pending_transactions()
+            .expect("read pending transactions");
+        assert_eq!(remaining.len(), 1, "only the dead records are dropped");
+        assert_eq!(
+            hex::encode(remaining[0].get_hash()),
+            hex::encode(includable.get_hash())
+        );
+
+        // A second prune is a no-op rather than a mass deletion.
+        let again = actix_test::call_service(
+            &app,
+            actix_test::TestRequest::post()
+                .uri("/api/mempool/prune")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(again.status(), StatusCode::OK);
+        let again_body: serde_json::Value = actix_test::read_body_json(again).await;
+        assert_eq!(again_body["removed"].as_u64(), Some(0));
     }
 }
