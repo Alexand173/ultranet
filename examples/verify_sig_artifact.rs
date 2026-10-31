@@ -83,10 +83,13 @@ fn main() {
     let owner0_verifies = QuantumKeyPair::verify(&public_key, &node_digest, &signature);
 
     // The Sovereign account needs 2-of-3: both signatures must verify, and the owners must differ.
-    let second_signature = hex::decode(str_field(&value, "second_signature")).expect("hex second signature");
-    let second_public_key = hex::decode(str_field(&value, "second_public_key")).expect("hex second key");
+    let second_signature =
+        hex::decode(str_field(&value, "second_signature")).expect("hex second signature");
+    let second_public_key =
+        hex::decode(str_field(&value, "second_public_key")).expect("hex second key");
     let owner1_address = QuantumKeyPair::address_from_public_key(&second_public_key);
-    let owner1_verifies = QuantumKeyPair::verify(&second_public_key, &node_digest, &second_signature);
+    let owner1_verifies =
+        QuantumKeyPair::verify(&second_public_key, &node_digest, &second_signature);
     let owners_differ = owner0_address != owner1_address;
 
     println!("owner0 address   : {owner0_address}");
