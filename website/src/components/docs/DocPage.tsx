@@ -84,7 +84,7 @@ export default function DocPage({ title, subtitle, pillar, content, icon }: DocP
 
         {/* Footer Navigation */}
         <div className="mt-32 pt-12 border-t border-platinum/10 flex flex-col md:flex-row gap-8 items-center justify-between font-mono">
-          <div className="text-[10px] text-platinum/30 uppercase tracking-[0.2em]">
+          <div className="text-[10px] text-platinum/50 uppercase tracking-[0.2em]">
             &copy; 2026 Vladan Jotov // UltraNet original code and documentation // ISC_License
           </div>
           <div className="flex gap-8">
