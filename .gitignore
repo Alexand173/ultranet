@@ -67,6 +67,9 @@ website/crypto/ultra-dilithium5/build/
 # Generated offline approval and legacy transaction artifacts - never commit
 /owner-identities.json
 /transfer.json
+/approval.json
+/approval-draft.json
+/owner-*-approval.json
 !website/crypto/ultra-dilithium5/build.sh
 !website/crypto/ultra-dilithium5/NOTICE.txt
 !website/public/crypto/NOTICE-pqclean-dilithium5.txt
