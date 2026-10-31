@@ -172,7 +172,7 @@ export default function NodeDownloadPage() {
               </a>
             </div>
           </div>
-          <pre className="relative z-10 overflow-x-auto border-l-2 border-cyan-glow bg-ink-black/80 p-5 font-mono text-xs leading-7 text-platinum/70"><code>{`# after downloading the archive and SHA256SUMS.txt
+          <pre tabIndex={0} className="relative z-10 overflow-x-auto border-l-2 border-cyan-glow bg-ink-black/80 p-5 font-mono text-xs leading-7 text-platinum/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-glow/60"><code>{`# after downloading the archive and SHA256SUMS.txt
 sha256sum --check SHA256SUMS.txt
 
 # Linux / macOS example
@@ -194,7 +194,7 @@ chmod +x UltraNetNode
             </div>
             <h3 className="mt-6 font-space-grotesk text-2xl font-bold text-platinum">Fastest path for beginners</h3>
             <p className="mt-3 text-sm leading-relaxed text-platinum/50">From the repository root, Docker builds and runs the validator with the included compose configuration.</p>
-            <pre className="mt-6 overflow-x-auto border border-platinum/10 bg-platinum/[0.03] p-4 font-mono text-xs leading-7 text-platinum/75"><code>{`# modern Docker CLI
+            <pre tabIndex={0} className="mt-6 overflow-x-auto border border-platinum/10 bg-platinum/[0.03] p-4 font-mono text-xs leading-7 text-platinum/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-glow/60"><code>{`# modern Docker CLI
 docker compose up -d
 
 # legacy Docker Compose command
@@ -208,7 +208,7 @@ docker-compose up -d`}</code></pre>
             </div>
             <h3 className="mt-6 font-space-grotesk text-2xl font-bold text-platinum">For advanced operators</h3>
             <p className="mt-3 text-sm leading-relaxed text-platinum/50">Install Rust, clone the repository, and build the locked production binary locally.</p>
-            <pre className="mt-6 overflow-x-auto border border-platinum/10 bg-platinum/[0.03] p-4 font-mono text-xs leading-7 text-platinum/75"><code>{`# install Rust: https://rustup.rs/
+            <pre tabIndex={0} className="mt-6 overflow-x-auto border border-platinum/10 bg-platinum/[0.03] p-4 font-mono text-xs leading-7 text-platinum/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-glow/60"><code>{`# install Rust: https://rustup.rs/
 curl --proto '=https' --tlsv1.2 -sSf \\
   https://sh.rustup.rs | sh
 git clone ${RELEASE_REPOSITORY_URL}.git

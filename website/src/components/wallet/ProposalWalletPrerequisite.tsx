@@ -28,7 +28,7 @@ export default function ProposalWalletPrerequisite({ variant = "dark", className
   const actionText = localReady ? "Wallet ready" : localLocked ? "Unlock wallet" : "Create or unlock wallet";
 
   return (
-    <aside
+    <section
       aria-labelledby="proposal-wallet-prerequisite-title"
       className={`border p-4 sm:p-5 ${dark ? "border-cyan-glow/25 bg-cyan-glow/[0.04]" : "border-learn-violet/20 bg-learn-soft/70"} ${className}`}
     >
@@ -54,6 +54,6 @@ export default function ProposalWalletPrerequisite({ variant = "dark", className
           {localReady && <p className={`mt-4 font-mono text-[10px] uppercase tracking-[0.12em] ${dark ? "text-cyan-glow/80" : "text-learn-violet"}`}>Ready for local signing</p>}
         </div>
       </div>
-    </aside>
+    </section>
   );
 }

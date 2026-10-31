@@ -29,7 +29,11 @@ export default function DocsHub() {
       <div className="fixed inset-0 dot-grid opacity-20 pointer-events-none" />
       <div className="fixed inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(15,255,255,0.03)_0%,transparent_70%)] pointer-events-none" />
 
-      {/* Hero Header */}
+      {/* One page-level landmark: the hero, search, whitepaper card, callout and
+          status bar used to sit outside any landmark, so screen-reader users had
+          no way to skip to the content or past it. */}
+      <main>
+        {/* Hero Header */}
       <section className="relative pt-24 pb-16 px-6 border-b border-platinum/10 bg-[#010B13]/40 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto">
           <div className="flex items-center gap-4 mb-6">
@@ -125,7 +129,7 @@ export default function DocsHub() {
       </section>
 
       {/* Chapter Grid */}
-      <main className="max-w-7xl mx-auto px-6 py-16">
+      <section aria-label="Protocol chapters" className="max-w-7xl mx-auto px-6 py-16">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-platinum/10 border border-platinum/10 shadow-2xl overflow-hidden">
           <AnimatePresence mode="popLayout">
             {filteredChapters.map((chapter) => (
@@ -162,7 +166,7 @@ export default function DocsHub() {
             <p className="text-platinum-muted text-sm">No chapters found matching &quot;{search}&quot; in {activeCategory}.</p>
           </div>
         )}
-      </main>
+      </section>
 
       {/* Stats Bar */}
       <div className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between overflow-hidden border-t border-platinum/10 bg-[#010B13] px-4 py-3 sm:px-8">
@@ -180,6 +184,7 @@ export default function DocsHub() {
           Sovereign_Genesis_Authority // Encrypted_Ref_0x442A
         </div>
       </div>
+      </main>
     </div>
   );
 }

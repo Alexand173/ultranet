@@ -54,7 +54,10 @@ export default function GlobalCoin() {
   ) return null;
 
   return (
-    <div className="fixed bottom-8 right-8 z-[100] pointer-events-none hidden lg:block">
+    // Decoration only: the image alt says "Decorative UltraNet coin illustration"
+    // and the label reads Protocol_Illustration, so it must not be announced or
+    // count as unlandmarked content.
+    <div aria-hidden="true" className="fixed bottom-8 right-8 z-[100] pointer-events-none hidden lg:block">
       <motion.div
         style={{ rotateX, rotateY }}
         className="relative w-48 h-48 pointer-events-auto group cursor-help"

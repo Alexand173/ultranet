@@ -168,11 +168,11 @@ export default function ValidatorOnboardingPage() {
                 <div className="mt-5 grid gap-4 sm:grid-cols-2">
                   <div>
                     <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-amber-200/80">Linux // macOS // Git Bash</p>
-                    <pre className="mt-2 overflow-x-auto border border-amber-200/20 bg-ink-black/50 p-3 font-mono text-[11px] leading-6 text-platinum/80"><code>{`openssl rand -hex 32`}</code></pre>
+                    <pre tabIndex={0} className="mt-2 overflow-x-auto border border-amber-200/20 bg-ink-black/50 p-3 font-mono text-[11px] leading-6 text-platinum/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/60"><code>{`openssl rand -hex 32`}</code></pre>
                   </div>
                   <div>
                     <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-amber-200/80">Windows PowerShell</p>
-                    <pre className="mt-2 overflow-x-auto border border-amber-200/20 bg-ink-black/50 p-3 font-mono text-[11px] leading-6 text-platinum/80"><code>{`$bytes = New-Object byte[] 32
+                    <pre tabIndex={0} className="mt-2 overflow-x-auto border border-amber-200/20 bg-ink-black/50 p-3 font-mono text-[11px] leading-6 text-platinum/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/60"><code>{`$bytes = New-Object byte[] 32
 $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
 $rng.GetBytes($bytes)
 $token = [BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant()
@@ -192,7 +192,7 @@ $token`}</code></pre>
           <div className="bg-ink-black p-6 sm:p-8">
             <div className="flex items-center gap-3 text-cyan-glow"><Package className="h-5 w-5" aria-hidden="true" /><p className="font-mono text-xs uppercase tracking-[0.18em]">RUNBOOK // POWERSHELL</p></div>
             <h3 className="mt-6 font-space-grotesk text-xl font-bold uppercase tracking-tight text-platinum">Verify, configure, start</h3>
-            <pre className="mt-5 overflow-x-auto border border-platinum/10 bg-platinum/[0.03] p-4 font-mono text-xs leading-7 text-platinum/75"><code>{`# verify the v${RELEASE_TAG.replace("v", "")} Windows archive
+            <pre tabIndex={0} className="mt-5 overflow-x-auto border border-platinum/10 bg-platinum/[0.03] p-4 font-mono text-xs leading-7 text-platinum/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-glow/60"><code>{`# verify the v${RELEASE_TAG.replace("v", "")} Windows archive
 $expected = (Get-Content .\\SHA256SUMS.txt | Where-Object { $_ -match 'UltraNetNode-windows-x64\\.zip$' }).Split()[0]
 $actual = (Get-FileHash .\\UltraNetNode-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($actual -ne $expected) { throw "Checksum mismatch" }
