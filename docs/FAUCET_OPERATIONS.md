@@ -53,9 +53,13 @@ The deployed faucet address held `0` base units on 2026-10-26, so it cannot pay 
 The float is a normal version-1 L1 transfer from the Sovereign account, which requires 2-of-3 owner
 signatures. `send_ultra.py` performs it. It is a dry run unless `--send` is passed.
 
-A 100 $ULTRA transfer does **not** clear the `200.000000` reserve above, so claims stay blocked after
-it. Fund at least `201.000000` to make the first claim payable, and keep the reserve in mind when
-choosing the amount.
+A float does not clear the reserve by landing above `200.000000`: the check is
+`balance >= claim_amount + fee + reserve` (`src/faucet/service.rs:394`), so the first claim needs
+
+    1.000000 (claim) + 0.010000 (fee) + 200.000000 (reserve) = 201.010000
+
+`201.000000` is therefore **0.010000 short** and `BudgetExhausted` is still returned. Fund at least
+`201.010000`; `202.000000` leaves a clean margin (it debits `204.020000` with its own `2.020000` fee).
 
 The fee is **not flat**: the node charges `max(1, amount / 100)` — one percent on the amount
 (`UltraBlockchain::minimum_transfer_fee`, `src/lib.rs:1443`). Moving `201.000000` therefore costs
