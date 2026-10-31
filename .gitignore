@@ -26,6 +26,9 @@ __pycache__/
 *.bak
 *.db
 
+# JVM heap dumps - hundreds of megabytes, never source
+*.hprof
+
 # Databases
 ultranet_db/
 ultranet_p2p_db/
