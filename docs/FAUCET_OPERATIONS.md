@@ -45,6 +45,7 @@ The initial beta policy is fixed and server-selected:
 | Daily debit cap | `100,000,000` | `100.000000 $ULTRA` |
 | Minimum source reserve | `200,000,000` | `200.000000 $ULTRA` |
 | Address cooldown | `86,400` seconds | 24 rolling hours |
+| Promotional claim cap | 1,000 confirmed claims | `FAUCET_MAX_CLAIMS=1000` |
 
 The deployed faucet address held `0` base units on 2026-10-26, so it cannot pay a claim until a float is transferred to it: it needs more than `FAUCET_MIN_BALANCE_RESERVE_BASE_UNITS` (`200.000000` $ULTRA) plus the claim amount and its fee. At the historical `1,000,000,000` base units (`1,000.000000` $ULTRA) snapshot the balance-only ceiling was 990 claims, but the service must stop at the configured reserve and daily cap. Budget reservations include both amount and fee.
 
@@ -383,6 +384,159 @@ It also requires an opaque `Idempotency-Key` header. The response is `202 Accept
 
 The browser never sends or sees the signer key, node admin token, nonce, fee, nullifier, signature, ZK proof, or internal queue state. A claim is complete only when `GET /api/faucet/claims/<claim-id>` reports `confirmed`.
 
+## Pending transactions, pruning and automatic block production
+
+### Why a queued claim can sit unpaid
+
+A claim is durable in SQLite before the faucet signs it, and the payout is real only once a block
+includes the transfer. The node used to seal a block only when an operator called `POST /api/mine`, so
+a funded faucet accepted claims that never confirmed and the mempool grew without bound. Three such
+records were still queued 61 days after they were submitted.
+
+### Automatic block production
+
+The node runs the same `mine_block()` that `POST /api/mine` calls, on an interval, when
+`ULTRANET_AUTO_MINE_INTERVAL_SECONDS` is set in `/etc/ultranet/ultranet.env`:
+
+| Setting | Default | Deployed | Meaning |
+| --- | ---: | ---: | --- |
+| `ULTRANET_AUTO_MINE_INTERVAL_SECONDS` | `0` | `10` | tick period; `0` disables the loop |
+| `ULTRANET_AUTO_MINE_MAX_BLOCKS_PER_MINUTE` | `6` | `6` | rolling ceiling on autonomous blocks |
+
+The bounds, which exist so a misconfiguration cannot outrun validation:
+
+- an interval below `2` seconds is refused at startup, so block assembly always has settling time;
+- the rolling ceiling applies whatever the interval says;
+- an empty mempool is a quiet no-op — no block and no log line;
+- a mempool of only unmineable records makes `mine_block` refuse, so the loop logs
+  `⚠️ Auto-mine skipped: …`, backs off to at least 30 seconds, and keeps serving. That message is the
+  signal to prune, not to restart.
+
+Confirm the loop after any restart:
+
+```bash
+sudo journalctl -u ultranet.service --since '10 minutes ago' --no-pager | grep -Ei 'Auto-mine'
+curl -sS https://api.ultranetwork.cc/api/stats | python3 -m json.tool \
+  | grep -E 'auto_mined_blocks|auto_mine_last_at|mempool_size'
+```
+
+`⛏️ Auto-miner enabled: every 10s, at most 6 blocks/minute` appears once at boot. `auto_mined_blocks`
+and `auto_mine_last_at` (Unix seconds) are **process-local** counters: both return to `0` when the node
+restarts, so read them against uptime rather than against chain history. Block count and height come
+from `total_blocks` / `chain_length`.
+
+Observed end to end on 2026-10-31 (block 8): claim `c1e793a2…` was submitted at `1793461039` and
+confirmed at `1793461041` — **2 seconds** — with no operator action. The failure mode to watch for is
+the opposite: a restart that omits the variable stops confirmations silently while the faucet keeps
+accepting claims.
+
+### The one-hour freshness window
+
+`check_transaction_freshness` refuses anything older than `3,600` seconds, so a queued record that ages
+out can never be mined however long the node runs. With a 10-second loop a claim is sealed far inside
+that window, but the window is the reason a record left over a maintenance break is dead rather than
+delayed: no amount of uptime recovers it.
+
+### Pruning unmineable pending records
+
+```bash
+TOKEN=$(sudo grep -m1 '^ULTRANET_ADMIN_TOKEN=' /etc/ultranet/ultranet.env | cut -d= -f2- | tr -d '"')
+curl -sS -X POST http://127.0.0.1:8081/api/mempool/prune -H "Authorization: Bearer $TOKEN"
+```
+
+The route is admin-only (`Authorization: Bearer`), idempotent, and safe to repeat. It drops a pending
+record only when the chain would refuse it permanently, evaluated in this order:
+
+| `reason` | Condition |
+| --- | --- |
+| `invalid_recipient` | standard transfer to something that is not a 64-character hex address |
+| `self_transfer` | sender equals recipient |
+| `amount_too_large` | amount above `MAX_TRANSFER_AMOUNT` |
+| `expired` | timestamp older than the `3,600`-second freshness window |
+| `stale_nonce` | nonce below the sender's current account nonce |
+
+It never removes a record that could still mine: an underfunded sender, a signature the node has not
+accepted yet, a duplicate, and anything inside the freshness window all stay queued. Each removal is
+reported:
+
+```json
+{"success": true, "message": "Mempool prune complete", "removed": 1,
+ "transactions": [{"hash": "887bd678…", "reason": "expired"}]}
+```
+
+Pruning also releases the nonce the record had reserved. Nothing else did, so a dead record blocked
+its signer's later nonces indefinitely — for the faucet, that means its next payout.
+
+On 2026-10-31 production held three such records, all past the freshness window and individually either
+nonce-stale or carrying an invalid `0x0` recipient: `6aeced6a…` (nonce 2, `100.000000` to `4781a663…`),
+`da05f975…` (nonce 1, zero amount, recipient `0x0`), and `887bd678…` (nonce 0, zero amount, recipient
+`0x0`). Two prune calls (`removed: 2`, then `removed: 1`) took the mempool to `0`. No balance moved at
+any point: they were queue entries, never transfers.
+
+### Watching pending state
+
+```bash
+curl -sS https://api.ultranetwork.cc/api/mempool | python3 -m json.tool
+```
+
+The route is public, capped at the `100` newest records, and carries no payload — the same projection as
+address history (`hash`, `sender`, `recipient`, `amount`, `fee`, `timestamp`, `status`). The dashboard's
+`MEMPOOL // PENDING_TRANSACTIONS` terminal polls it every 5 seconds and renders `N queued`, the held
+value, each record's age, and `Mempool is empty — every transaction is in a block.` when nothing is
+waiting.
+
+A pending age over a minute means the auto-miner is off, backing off, or has spent its per-minute
+ceiling. It does not mean the transaction is invalid.
+
+### The promotional claim cap
+
+`FAUCET_MAX_CLAIMS` (default and deployed `1000`; `0` disables) counts **confirmed** claims, so a failed
+or timed-out attempt never consumes a promotional slot. On reaching the cap the worker settles that
+final payout and then writes the same kill switch an operator would, with reason
+`promotional claim cap reached`. Consequences:
+
+- `GET /api/faucet/status` reports `enabled: false`, `availability: "exhausted"` — deliberately distinct
+  from `disabled`, which is an operator action;
+- new claims return `503` with **no** `Retry-After`, because no wait clears it;
+- the cap is enforced at admission, not merely by the flag: every new claim re-checks the confirmed
+  count before the CAPTCHA step and re-closes intake, so a restart, `FAUCET_ENABLED=true`, or
+  `POST /internal/enable` cannot reopen it. Lifting it is a policy decision: raise `FAUCET_MAX_CLAIMS`
+  **and** clear the kill switch deliberately.
+
+The public status does not expose the counter. Read it read-only — the `sqlite3` CLI is not installed on
+the host and the database is owned by the service account:
+
+```bash
+sudo python3 - <<'PY'
+import sqlite3
+con = sqlite3.connect("file:/var/lib/ultranet-faucet/faucet.db?mode=ro", uri=True)
+print(dict(con.execute("select status, count(*) from claims group by status")))
+columns = [c[1] for c in con.execute("pragma table_info(service_state)")]
+print(dict(zip(columns, next(iter(con.execute("select * from service_state"))))))
+PY
+```
+
+The `confirmed` count in `claims` is the cap basis. `service_state` carries `enabled`,
+`kill_switch_reason`, `last_observed_nonce`, and `schema_version`.
+
+### Canary claims need a human browser
+
+The claim page needs a Turnstile token bound to `faucet.ultranetwork.cc` with action `faucet_claim`. An
+automation or headless browser profile cannot complete the widget — it fires the widget's
+`error-callback` and the form never arms — so a scripted canary reports a widget failure, not a faucet
+fault. Run canaries in a normal browser session and read the outcome from the claim record and the
+chain, not from the page alone.
+
+### Routine operator checks
+
+1. Both units active, and `⛏️ Auto-miner enabled` in the journal since the last restart.
+2. `GET /api/mempool` count `0`, or every pending record younger than a minute.
+3. `auto_mined_blocks` climbing while claims are pending.
+4. Faucet balance above the `200.000000` reserve plus the in-flight debit.
+5. Every `claims` row `confirmed`; no `failed` row without a recorded `failure_code`.
+6. Confirmed claim count against `FAUCET_MAX_CLAIMS`.
+7. `GET /api/stats` `mempool_size` agrees with the panel and with `/api/mempool`.
+
 ## Monitoring
 
 Inspect the service and redacted worker events with:
@@ -404,6 +558,10 @@ Alert on:
 - signer/address-probe or credential-load failures;
 - node validation failure, repeated timeout, or rejection;
 - queue growth/age, retry spikes, or unresolved pending records;
+- a pending record older than the auto-mine tick, or `auto_mined_blocks` not advancing while a
+  payout is queued (the loop is off, backing off, or has spent its per-minute ceiling);
+- `mempool_size` disagreeing with `GET /api/mempool`;
+- confirmed claims within one of `FAUCET_MAX_CLAIMS`, and `availability` flipping to `exhausted`;
 - budget reservations approaching the daily cap;
 - Turnstile/rate-limit collision spikes;
 - unexpected service restarts.
