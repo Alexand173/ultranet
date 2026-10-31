@@ -70,11 +70,32 @@ One earlier finding on `/docs/trusted-execution` (`.p-6 > .leading-relaxed`) did
 second scan with a longer settle. It was a mid-animation frame from the page's framer-motion fade-in,
 not a static failure — recorded here because it was observed, not because it persists.
 
-## Known follow-ups
+## Follow-up: measured verification above the floor (2026-10-31 19:05 UTC)
 
-- Text still at `text-platinum/50` inside a `bg-platinum/5` or `bg-black/40` container measures 4.49:1.
-  It is above the floor on plain ink and only marginally below on raised rows; axe reports these as
-  `incomplete` rather than violation. Worth a targeted pass if any such label lands on a raised surface.
+This record originally warned that `/50` on a raised container measures 4.49:1 and was "worth a targeted
+pass". That number was arithmetic on an assumed background, and measurement disproved it. It is corrected
+here rather than left standing.
+
+**Method.** Every text node on 16 routes was measured in the browser against its real composited
+background: the ancestor background layers were stacked with alpha compositing, inherited container
+`opacity` was multiplied in, pages were scrolled with `prefers-reduced-motion: reduce` so no element sat
+mid-animation, and `aria-hidden` subtrees were excluded. Both the AA threshold (4.5:1) and the large-text
+threshold (3:1) were applied per node.
+
+The measurement was itself validated before its verdict was trusted, by injecting two controls onto a
+`#0C1620` surface:
+
+| injected control | measured | classified |
+|---|---:|---|
+| `rgba(242,243,244,0.30)` | 2.54:1 | correctly flagged |
+| `#82878C` (the token) | 5.03:1 | correctly passed |
+
+**Result:** 0 sub-AA text nodes across `/`, `/docs`, the four pillar pages, `/login`, `/operator`,
+`/appchains`, `/validator`, `/download`, `/ultraverse`, `/learn`, `/transact`, `/send-ultra` and
+`/legislation`. The `/50` labels sit on near-ink surfaces rather than raised rows, so they already clear
+AA. `text-platinum/50` is therefore unchanged, and the guard test continues to forbid anything below it.
+
+## Known follow-ups
 - Disabled controls are exempt from the AA contrast requirement. The two disabled buttons in
   `appchains/AnchorNowControl` were raised to the token anyway because they carry readable status text.
 - `/favicon.ico` is served as SVG through a rewrite. Clients that require a real ICO container (some
