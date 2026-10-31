@@ -408,7 +408,7 @@ install -o root -g root -m 0440 deploy/ultranet-deploy-sudoers.example /etc/sudo
 visudo -cf /etc/sudoers.d/ultranet-deploy-dashboard
 ```
 
-Install the GitHub Actions public key in `/home/ultranet-deploy/.ssh/authorized_keys` with these options before the `ssh-ed25519` key: `no-agent-forwarding,no-port-forwarding,no-X11-forwarding,no-pty`. The account owns only the upload staging directory and can run only `/usr/local/sbin/ultranet-dashboard-deploy` through the installed sudo rule. The helper rejects unsafe archive members, runs the server-side `npm ci --include=dev`, lint, type-check, and build, verifies the generated whitepaper, keeps one rollback release, and restarts only `ultranet-dashboard.service`.
+Install the GitHub Actions public key in `/home/ultranet-deploy/.ssh/authorized_keys` with these options before the `ssh-ed25519` key: `no-agent-forwarding,no-port-forwarding,no-X11-forwarding,no-pty`. The account owns only the upload staging directory and can run only `/usr/local/sbin/ultranet-dashboard-deploy` through the installed sudo rule. The helper rejects unsafe archive members, runs the server-side `npm ci --include=dev`, lint, type-check, and build, verifies the generated whitepaper, keeps one rollback release, prunes older release directories (see below), and restarts only `ultranet-dashboard.service`.
 
 The deployment archive contains only the website source and `ULTRA_NET_TECHNICAL_GUIDE.md`; it excludes `.git`, `node_modules`, `.next`, environment files, keys, databases, and Rust build outputs. The canonical Markdown source is installed at `/opt/ultranet/ULTRA_NET_TECHNICAL_GUIDE.md` so future server builds can regenerate the HTML reader.
 
@@ -416,4 +416,35 @@ The deployment archive contains only the website source and `ULTRA_NET_TECHNICAL
 
 To redeploy a specific commit after the production secrets are configured, use the workflow's **Run workflow** action and enter its full commit SHA. The server helper builds and verifies the candidate before swapping `/opt/ultranet/website`. If the dashboard restart, local whitepaper routes, PDF route, validator state, or generated asset checks fail, it restores the previous website and restarts the prior dashboard release. `ultranet.service` is never restarted by this workflow.
 
-Keep the previous release directory until the public HTTPS verification passes. Remove old `/opt/ultranet/releases/previous-*` and `/opt/ultranet/releases/failed-*` directories only during an explicit maintenance cleanup after reviewing their contents.
+Keep the previous release directory until the public HTTPS verification passes — the helper does this automatically and only prunes after a candidate is live and verified.
+
+### Release retention
+
+Every deploy writes a complete `website/` tree with its `.next` output under `/opt/ultranet/releases`, about 918 MB. Nothing used to remove them: 66 directories reached 31 GB and took `/` to 95% on 2026-10-31. The helper now prunes at the end of a successful deploy, so a failed deploy still leaves its evidence in place for review.
+
+| path | kept | purpose |
+|---|---:|---|
+| `previous-<timestamp>` | 2 | rollback targets; the newest is what a manual rollback swaps back in |
+| `previous` (no suffix) | always | the live rollback slot, never pruned |
+| `failed-<sha>-<timestamp>` | 3 | evidence from rejected candidates |
+| `<40-hex sha>` | 3 | completed release trees |
+| `.staging-*` work roots | 1 day | leftovers from interrupted runs |
+| `<sha>.tar.gz` under the staging root | 7 days | uploads whose deploy never completed |
+
+Each deletion is re-validated against those name shapes and skipped when it equals the live site or the rollback slot, so a widened glob cannot delete something the deploy did not create.
+
+To reclaim space between deploys, without a deploy or a restart:
+
+```bash
+sudo /usr/local/sbin/ultranet-dashboard-deploy --prune-dry-run   # list what would be removed
+sudo /usr/local/sbin/ultranet-dashboard-deploy --prune-only      # remove it
+```
+
+The counts are compiled in as `ULTRANET_DEPLOY_KEEP_PREVIOUS`, `ULTRANET_DEPLOY_KEEP_FAILED`, `ULTRANET_DEPLOY_KEEP_COMMIT_RELEASES` and `ULTRANET_DEPLOY_STAGE_ARCHIVE_DAYS`. The installed sudo rule does not pass the environment through, so treat the defaults as policy and change them in this repository, then reinstall the helper. Hosts that deploy rarely should run `--prune-only` from a weekly timer instead of relying on deploys.
+
+Reinstall the helper after changing it, and confirm the installed copy matches:
+
+```bash
+install -o root -g root -m 0755 deploy/ultranet-dashboard-deploy.sh /usr/local/sbin/ultranet-dashboard-deploy
+sha256sum deploy/ultranet-dashboard-deploy.sh /usr/local/sbin/ultranet-dashboard-deploy
+```

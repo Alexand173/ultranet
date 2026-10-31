@@ -6,9 +6,22 @@ readonly SERVICE_USER="ultranet"
 readonly STAGING_ROOT="/var/lib/ultranet-deploy/staging"
 readonly RELEASES_ROOT="/opt/ultranet/releases"
 readonly ACTIVE_WEBSITE="/opt/ultranet/website"
+# Defined with the other paths so the prune-only modes can protect it before
+# a commit SHA exists.
+readonly PREVIOUS_WEBSITE="$RELEASES_ROOT/previous"
 readonly SHARED_SOURCE="/opt/ultranet/ULTRA_NET_TECHNICAL_GUIDE.md"
 readonly DASHBOARD_SERVICE="ultranet-dashboard.service"
 readonly VALIDATOR_SERVICE="ultranet.service"
+
+# Retention. Every deploy writes a ~918 MB directory under $RELEASES_ROOT and
+# nothing used to delete them: 66 of them reached 31 GB and took the host to 95%
+# disk on 2026-10-31. Defaults keep a usable rollback and a failure trail.
+readonly KEEP_PREVIOUS="${ULTRANET_DEPLOY_KEEP_PREVIOUS:-2}"
+readonly KEEP_FAILED="${ULTRANET_DEPLOY_KEEP_FAILED:-3}"
+readonly KEEP_COMMIT_RELEASES="${ULTRANET_DEPLOY_KEEP_COMMIT_RELEASES:-3}"
+readonly STAGE_ARCHIVE_DAYS="${ULTRANET_DEPLOY_STAGE_ARCHIVE_DAYS:-7}"
+readonly PRUNE_REPORT="report"
+readonly PRUNE_DELETE="delete"
 
 log() {
   printf '[ultranet-dashboard-deploy] %s\n' "$*"
@@ -23,19 +36,104 @@ print_dashboard_logs() {
   journalctl -u "$DASHBOARD_SERVICE" -n 80 --no-pager >&2 || true
 }
 
+# Newest-first list of directories under $RELEASES_ROOT matching the predicates.
+list_prune_candidates() {
+  find "$RELEASES_ROOT" -mindepth 1 -maxdepth 1 -type d "$@" -printf '%T@ %p\n' 2>/dev/null \
+    | sort -rn \
+    | cut -d' ' -f2-
+}
+
+# Keeps the newest $1 candidates matching the remaining find predicates, then
+# reports or removes the rest. Every victim is re-validated against the three
+# name shapes this script creates, so a changed glob can never widen into a
+# delete of something the deploy did not put there.
+prune_selected() {
+  local keep="$1" mode="$2"
+  shift 2
+  local -a victims=()
+  mapfile -t victims < <(list_prune_candidates "$@" | awk -v keep="$keep" 'NR > keep')
+
+  local victim
+  for victim in "${victims[@]:-}"; do
+    [[ -n "$victim" ]] || continue
+    case "$victim" in
+      "$RELEASES_ROOT"/previous-[0-9]*|"$RELEASES_ROOT"/failed-*|"$RELEASES_ROOT"/[0-9a-f][0-9a-f]*) ;;
+      *) log "refusing to prune an unexpected path: $victim"; continue ;;
+    esac
+    [[ "$victim" != "$PREVIOUS_WEBSITE" ]] || continue
+    [[ "$victim" != "$ACTIVE_WEBSITE" ]] || continue
+    if [[ "$mode" == "$PRUNE_REPORT" ]]; then
+      log "would prune: ${victim#"$RELEASES_ROOT"/}"
+    else
+      log "pruning: ${victim#"$RELEASES_ROOT"/}"
+      rm -rf --one-file-system -- "$victim"
+    fi
+  done
+}
+
+# Crashed runs leave .staging-* work roots behind, and a failed deploy never
+# reaches the success path that removes its staged archive.
+prune_staging_leftovers() {
+  local mode="$1"
+  local -a leftovers=()
+  mapfile -t leftovers < <(
+    {
+      find "$RELEASES_ROOT" -mindepth 1 -maxdepth 1 -type d -name '.staging-*' -mtime +0 -print 2>/dev/null
+      find "$STAGING_ROOT" -mindepth 1 -maxdepth 1 -type f -name '*.tar.gz' -mtime +"$STAGE_ARCHIVE_DAYS" -print 2>/dev/null
+    }
+  )
+
+  local item
+  for item in "${leftovers[@]:-}"; do
+    [[ -n "$item" ]] || continue
+    if [[ "$mode" == "$PRUNE_REPORT" ]]; then
+      log "would prune: $item"
+    else
+      log "pruning: $item"
+      rm -rf --one-file-system -- "$item"
+    fi
+  done
+}
+
+prune_releases() {
+  local mode="$1"
+  [[ -d "$RELEASES_ROOT" ]] || return 0
+  prune_selected "$KEEP_PREVIOUS" "$mode" -name 'previous-*'
+  prune_selected "$KEEP_FAILED" "$mode" -name 'failed-*'
+  prune_selected "$KEEP_COMMIT_RELEASES" "$mode" \
+    -regextype posix-extended -regex '.*/[0-9a-f]{40}'
+  prune_staging_leftovers "$mode"
+}
+
 if [[ "${EUID}" -ne 0 ]]; then
   fail "this helper must run as root"
 fi
 
-if [[ "$#" -ne 1 || ! "$1" =~ ^[0-9a-f]{40}$ ]]; then
-  fail "usage: $0 <40-character commit SHA>"
+if [[ "$#" -ne 1 ]]; then
+  fail "usage: $0 <40-character commit SHA> | --prune-only | --prune-dry-run"
+fi
+
+# Retention modes run without a candidate, so a host can reclaim space between
+# deploys and an operator can review the exact deletions first.
+case "$1" in
+  --prune-only)
+    prune_releases "$PRUNE_DELETE"
+    exit 0
+    ;;
+  --prune-dry-run)
+    prune_releases "$PRUNE_REPORT"
+    exit 0
+    ;;
+esac
+
+if [[ ! "$1" =~ ^[0-9a-f]{40}$ ]]; then
+  fail "usage: $0 <40-character commit SHA> | --prune-only | --prune-dry-run"
 fi
 
 readonly COMMIT_SHA="$1"
 readonly ARCHIVE_PATH="$STAGING_ROOT/${COMMIT_SHA}.tar.gz"
 readonly WORK_ROOT="$RELEASES_ROOT/.staging-${COMMIT_SHA}-$$"
 readonly RELEASE_ROOT="$RELEASES_ROOT/${COMMIT_SHA}"
-readonly PREVIOUS_WEBSITE="$RELEASES_ROOT/previous"
 readonly TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 readonly ARCHIVE_LOG="$WORK_ROOT/archive-members.txt"
 
@@ -179,6 +277,11 @@ fi
 mv "$WORK_ROOT" "$RELEASE_ROOT"
 rm -f "$ARCHIVE_PATH"
 trap - EXIT
+
+# Only after the candidate is live and verified: a failed deploy leaves its
+# evidence in place. A prune problem must never fail a good deploy.
+log "applying release retention (previous=${KEEP_PREVIOUS} failed=${KEEP_FAILED} releases=${KEEP_COMMIT_RELEASES})"
+prune_releases "$PRUNE_DELETE" || log "warning: retention prune failed; release directories were left in place"
 
 log "deployment succeeded: $COMMIT_SHA"
 log "dashboard state: $(systemctl is-active "$DASHBOARD_SERVICE")"
