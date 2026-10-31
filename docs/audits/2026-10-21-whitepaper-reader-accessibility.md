@@ -25,7 +25,11 @@ The initial standalone HTML inspection (before adding explicit icon metadata) em
 
 ## Known follow-ups
 
-- The site has no `app/icon.*` or `public/favicon.*` route, so pages other than the reader still
-  request `/favicon.ico` and receive a 404.
-- The shared docs footer carried a serious `color-contrast` failure (`text-platinum/30`, 2.45:1) on
-  every `DocPage` route. It was raised to `/50` (4.91:1) on 2026-10-31.
+- **Resolved 2026-10-31.** The site had no `app/icon.*` or `public/favicon.*` route, so pages other
+  than the reader requested `/favicon.ico` and received a 404. The brand mark now ships as
+  `app/icon.svg` with a `/favicon.ico` rewrite; see
+  [2026-10-31-contrast-floor-and-icons.md](./2026-10-31-contrast-floor-and-icons.md).
+- **Resolved 2026-10-31.** The shared docs footer carried a serious `color-contrast` failure
+  (`text-platinum/30`, 2.45:1) on every `DocPage` route. It was raised to `/50` (4.91:1) first, then
+  the whole sub-AA ladder was replaced by the opaque `platinum-muted` token; see
+  [2026-10-31-contrast-floor-and-icons.md](./2026-10-31-contrast-floor-and-icons.md).

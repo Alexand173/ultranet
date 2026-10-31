@@ -7,6 +7,7 @@ substitutes a manual screen-reader, keyboard-only, zoom, or mobile assessment.
 | Date (UTC) | Surface | Route | Verdict | Record |
 | --- | --- | --- | --- | --- |
 | 2026-10-21 14:41 | Whitepaper reader | `/docs/whitepaper` | 0 violations | [2026-10-21-whitepaper-reader-accessibility.md](./2026-10-21-whitepaper-reader-accessibility.md) |
+| 2026-10-31 18:20 | Muted text contrast floor, icons, heading order | 17 routes incl. `/`, `/docs`, `/login` | 0 violations (local and live) | [2026-10-31-contrast-floor-and-icons.md](./2026-10-31-contrast-floor-and-icons.md) |
 
 ## How a record is produced
 
