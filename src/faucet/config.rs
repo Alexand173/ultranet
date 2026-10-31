@@ -19,6 +19,9 @@ pub const DEFAULT_ADDRESS_COOLDOWN_SECONDS: u64 = 86_400;
 pub const DEFAULT_MAX_QUEUE_LENGTH: usize = 100;
 pub const DEFAULT_MAX_SUBMISSION_ATTEMPTS: u32 = 5;
 pub const DEFAULT_CONFIRMATION_TIMEOUT_SECONDS: u64 = 900;
+/// Promotional cap: the faucet closes intake once this many claims have confirmed on chain.
+/// `0` disables the cap.
+pub const DEFAULT_MAX_CLAIMS: u64 = 1_000;
 pub const POLICY_VERSION: &str = "mainnet-beta-v1";
 
 #[derive(Debug, Clone)]
@@ -33,6 +36,8 @@ pub struct FaucetConfig {
     pub max_queue_length: usize,
     pub max_submission_attempts: u32,
     pub confirmation_timeout_seconds: u64,
+    /// Successfully confirmed claims after which intake closes. `0` means unlimited.
+    pub max_claims: u64,
     pub enabled: bool,
     pub captcha_provider: String,
     pub turnstile_hostname: String,
@@ -90,6 +95,7 @@ impl FaucetConfig {
                 "FAUCET_CONFIRMATION_TIMEOUT_SECONDS",
                 DEFAULT_CONFIRMATION_TIMEOUT_SECONDS,
             )?,
+            max_claims: parse_u64("FAUCET_MAX_CLAIMS", DEFAULT_MAX_CLAIMS)?,
             enabled: parse_bool("FAUCET_ENABLED", false)?,
             captcha_provider: env_string("FAUCET_CAPTCHA_PROVIDER", "turnstile".into())?,
             turnstile_hostname: hostname(
@@ -193,6 +199,7 @@ impl FaucetConfig {
             max_queue_length: DEFAULT_MAX_QUEUE_LENGTH,
             max_submission_attempts: DEFAULT_MAX_SUBMISSION_ATTEMPTS,
             confirmation_timeout_seconds: DEFAULT_CONFIRMATION_TIMEOUT_SECONDS,
+            max_claims: DEFAULT_MAX_CLAIMS,
             enabled: true,
             captcha_provider: "turnstile".into(),
             turnstile_hostname: TURNSTILE_HOSTNAME.into(),

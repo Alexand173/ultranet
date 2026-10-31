@@ -546,6 +546,19 @@ impl FaucetStore {
         })
     }
 
+    /// Claims that actually settled on chain. The promotional cap counts these, not admissions,
+    /// so a claim that fails or times out never consumes a slot.
+    pub fn confirmed_claim_count(&self) -> Result<u64, StoreError> {
+        self.with_connection(|connection| {
+            let count: i64 = connection.query_row(
+                "SELECT COUNT(*) FROM claims WHERE status = 'confirmed'",
+                [],
+                |row| row.get(0),
+            )?;
+            from_i64(count)
+        })
+    }
+
     pub fn mark_confirmed(
         &self,
         claim_id: &str,

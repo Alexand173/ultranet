@@ -21,6 +21,10 @@ use thiserror::Error;
 use tokio::sync::{watch, Mutex};
 use zeroize::Zeroizing;
 
+/// Persisted kill-switch reason for the promotional cap. It is deliberately distinct from an
+/// operator switch so status can report `exhausted` rather than `disabled`.
+pub const CLAIM_CAP_REASON: &str = "promotional claim cap reached";
+
 #[derive(Debug, Error)]
 pub enum FaucetError {
     #[error("invalid faucet request")]
@@ -37,6 +41,8 @@ pub enum FaucetError {
     QueueFull,
     #[error("faucet budget is exhausted")]
     BudgetExhausted,
+    #[error("faucet promotional claim cap reached")]
+    ClaimCapReached,
     #[error("destination address is cooling down")]
     AddressCooldown(u64),
     #[error("idempotency key conflict")]
@@ -103,21 +109,33 @@ impl FaucetService {
         {
             return Err(FaucetError::InvalidRequest);
         }
-        let should_enable = if !config.enabled {
+        // A cap that has already been met outranks configuration: restarting the service must not
+        // reopen a promotional faucet that has paid out its last claim.
+        let cap_reached = if config.max_claims == 0 {
             false
-        } else if existing_state.faucet_address.is_none()
-            || existing_state.kill_switch_reason.as_deref() == Some("disabled by configuration")
-        {
-            true
         } else {
-            existing_state.enabled
+            store.confirmed_claim_count()? >= config.max_claims
         };
-        let kill_switch_reason = if should_enable {
-            None
-        } else if existing_state.kill_switch_reason.is_some() {
-            existing_state.kill_switch_reason.as_deref()
+        let (should_enable, kill_switch_reason) = if cap_reached {
+            (false, Some(CLAIM_CAP_REASON))
         } else {
-            Some("disabled by configuration")
+            let should_enable = if !config.enabled {
+                false
+            } else if existing_state.faucet_address.is_none()
+                || existing_state.kill_switch_reason.as_deref() == Some("disabled by configuration")
+            {
+                true
+            } else {
+                existing_state.enabled
+            };
+            let kill_switch_reason = if should_enable {
+                None
+            } else if existing_state.kill_switch_reason.is_some() {
+                existing_state.kill_switch_reason.as_deref()
+            } else {
+                Some("disabled by configuration")
+            };
+            (should_enable, kill_switch_reason)
         };
         store.set_service_state(
             should_enable,
@@ -174,6 +192,8 @@ impl FaucetService {
                 Err(()) => Err(FaucetError::IdempotencyConflict),
             };
         }
+        // A replayed idempotent claim is answered above; everything new is refused once capped.
+        self.close_intake_if_capped()?;
         if captcha_token.trim().is_empty() || captcha_token.len() > 4096 {
             return Err(FaucetError::CaptchaRejected);
         }
@@ -233,12 +253,52 @@ impl FaucetService {
         }
     }
 
+    /// Records a settled payout and closes intake when that claim was the promotional last one.
+    /// Every confirmation path funnels through here so the cap cannot be bypassed by taking a
+    /// different route (fresh submission, reconcile, or retry of a persisted envelope).
+    fn settle_confirmed(
+        &self,
+        claim_id: &str,
+        hash: &[u8; 32],
+        now: u64,
+    ) -> Result<(), FaucetError> {
+        self.store.mark_confirmed(claim_id, hash, now)?;
+        let _ = self.close_intake_if_capped();
+        Ok(())
+    }
+
+    /// Claims that actually settled on chain. This is the only number the promotional cap consumes.
+    fn confirmed_claims(&self) -> Result<u64, FaucetError> {
+        Ok(self.store.confirmed_claim_count()?)
+    }
+
+    fn claim_cap_reached(&self) -> Result<bool, FaucetError> {
+        if self.config.max_claims == 0 {
+            return Ok(false);
+        }
+        Ok(self.confirmed_claims()? >= self.config.max_claims)
+    }
+
+    /// Closes intake once the cap is met and reports `ClaimCapReached`, so a request is answered as
+    /// `exhausted` rather than as a generic outage.
+    fn close_intake_if_capped(&self) -> Result<(), FaucetError> {
+        if !self.claim_cap_reached()? {
+            return Ok(());
+        }
+        if self.store.service_state()?.enabled {
+            self.disable(CLAIM_CAP_REASON)?;
+        }
+        Err(FaucetError::ClaimCapReached)
+    }
+
     pub fn public_status(&self) -> Result<PublicStatusData, FaucetError> {
         let state = self.store.service_state()?;
-        let availability = if !state.enabled {
-            "disabled"
-        } else {
+        let availability = if state.enabled {
             "available"
+        } else if state.kill_switch_reason.as_deref() == Some(CLAIM_CAP_REASON) {
+            "exhausted"
+        } else {
+            "disabled"
         };
         Ok(PublicStatusData {
             enabled: state.enabled,
@@ -443,8 +503,7 @@ impl FaucetService {
                 return Err(FaucetError::NodeRejected);
             }
             Ok(status) if status.status == "confirmed" => {
-                self.store
-                    .mark_confirmed(&bundle.claim.claim_id, &hash, now)?;
+                self.settle_confirmed(&bundle.claim.claim_id, &hash, now)?;
                 return Ok(());
             }
             Ok(_) => {
@@ -501,7 +560,7 @@ impl FaucetService {
                 }
                 self.store.mark_pending(claim_id, hash, now)?;
                 if result.status == "confirmed" {
-                    self.store.mark_confirmed(claim_id, hash, now)?;
+                    self.settle_confirmed(claim_id, hash, now)?;
                 }
                 Ok(())
             }
@@ -519,7 +578,7 @@ impl FaucetService {
                         Err(FaucetError::NodeRejected)
                     }
                     Ok(status) if status.status == "confirmed" => {
-                        self.store.mark_confirmed(claim_id, hash, now)?;
+                        self.settle_confirmed(claim_id, hash, now)?;
                         Ok(())
                     }
                     Ok(_) => {

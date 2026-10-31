@@ -223,6 +223,8 @@ pub async fn run(bind: SocketAddr) -> Result<(), String> {
         max_queue_length: 100,
         max_submission_attempts: 5,
         confirmation_timeout_seconds: 900,
+        // The preview server is a local harness, not the promotion, so it stays uncapped.
+        max_claims: 0,
         enabled: true,
         captcha_provider: "turnstile".into(),
         turnstile_hostname: "faucet.ultranetwork.cc".into(),

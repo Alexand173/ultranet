@@ -298,6 +298,12 @@ fn error_response(error: FaucetError) -> HttpResponse {
             Some(60),
             "Faucet is temporarily unavailable",
         ),
+        // Permanent for this promotion: no Retry-After, because waiting will not help.
+        FaucetError::ClaimCapReached => (
+            actix_web::http::StatusCode::SERVICE_UNAVAILABLE,
+            None,
+            "Faucet promotional claim cap reached",
+        ),
         FaucetError::AddressCooldown(seconds) => (
             actix_web::http::StatusCode::CONFLICT,
             Some(seconds.min(86_400)),

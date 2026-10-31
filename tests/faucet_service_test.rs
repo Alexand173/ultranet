@@ -104,6 +104,10 @@ impl NodeApi for MockNode {
 }
 
 fn service(mock: Arc<MockNode>) -> FaucetService {
+    service_with_cap(mock, UltraNet::faucet::config::DEFAULT_MAX_CLAIMS)
+}
+
+fn service_with_cap(mock: Arc<MockNode>, max_claims: u64) -> FaucetService {
     let keypair = QuantumKeyPair::generate();
     let address = keypair.address();
     let signer = Arc::new(FaucetSigner::from_keypair_for_tests(keypair).unwrap());
@@ -118,6 +122,7 @@ fn service(mock: Arc<MockNode>) -> FaucetService {
         max_queue_length: 100,
         max_submission_attempts: 5,
         confirmation_timeout_seconds: 900,
+        max_claims,
         enabled: true,
         captcha_provider: "turnstile".into(),
         turnstile_hostname: "faucet.ultranetwork.cc".into(),
@@ -235,4 +240,71 @@ async fn transport_failure_reuses_the_persisted_envelope() {
     assert_eq!(submitted[0].nullifier, persisted.nullifier);
     assert_eq!(submitted[0].nonce, persisted.nonce);
     assert_eq!(submitted[0].signature, persisted.signature);
+}
+
+#[tokio::test]
+async fn promotional_cap_closes_intake_after_the_final_confirmed_claim() {
+    use UltraNet::faucet::service::{FaucetError, CLAIM_CAP_REASON};
+
+    let mock = Arc::new(MockNode {
+        faucet_address: Mutex::new(String::new()),
+        balance: 1_000_000_000,
+        submitted: Mutex::new(Vec::new()),
+        confirm: true,
+        fail_first_submit: Mutex::new(false),
+    });
+    // One successful claim is the whole promotion.
+    let service = service_with_cap(mock.clone(), 1);
+    mock.faucet_address
+        .lock()
+        .unwrap()
+        .clone_from(&service.signer.address().to_string());
+
+    let (_, bundle) = service
+        .admit_claim(
+            &"d".repeat(64),
+            "test-token",
+            &"k".repeat(16),
+            None,
+            UltraNet::auth::now_seconds(),
+        )
+        .await
+        .unwrap();
+
+    // The mock reports the payout as confirmed, so this cycle both settles it and closes intake.
+    service.process_next().await.unwrap();
+    let stored = service
+        .store
+        .claim(&bundle.claim.claim_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.claim.status.as_str(), "confirmed");
+
+    let status = service.public_status().unwrap();
+    assert!(
+        !status.enabled,
+        "the capped faucet must stop reporting itself as enabled"
+    );
+    assert_eq!(status.availability, "exhausted");
+    assert_eq!(
+        service
+            .store
+            .service_state()
+            .unwrap()
+            .kill_switch_reason
+            .as_deref(),
+        Some(CLAIM_CAP_REASON)
+    );
+
+    // A new claim is refused, and for the cap rather than for an outage.
+    let refused = service
+        .admit_claim(
+            &"e".repeat(64),
+            "test-token",
+            &"l".repeat(16),
+            None,
+            UltraNet::auth::now_seconds(),
+        )
+        .await;
+    assert!(matches!(refused, Err(FaucetError::ClaimCapReached)));
 }
