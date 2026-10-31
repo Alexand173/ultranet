@@ -34,7 +34,7 @@ export default function AdminConsoleTerminal({ className }: { className?: string
           <span className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
           <span className="w-2.5 h-2.5 rounded-full bg-amber-400/60" />
           <span className="w-2.5 h-2.5 rounded-full bg-cyan-glow/60" />
-          <span className="ml-2 text-xs font-mono text-platinum/20 uppercase tracking-widest">
+          <span className="ml-2 text-xs font-mono text-platinum-muted uppercase tracking-widest">
             demo://not-connected
           </span>
         </div>
@@ -43,7 +43,7 @@ export default function AdminConsoleTerminal({ className }: { className?: string
         <div className="flex-1 px-6 py-4 font-mono text-base text-cyan-glow/70 space-y-3 overflow-hidden">
           {LOG_LINES.slice(0, visibleLines).map((line, i) => (
             <div key={i} className="flex items-center gap-1">
-              <span className={i === visibleLines - 1 ? "" : "text-platinum/40"}>{line}</span>
+              <span className={i === visibleLines - 1 ? "" : "text-platinum-muted"}>{line}</span>
               {i === visibleLines - 1 && <span className="blink-cursor text-cyan-glow">_</span>}
             </div>
           ))}
@@ -58,7 +58,7 @@ export default function AdminConsoleTerminal({ className }: { className?: string
             JOIN_SWARM
             <ChevronRight className="w-4 h-4" />
           </Link>
-          <span className="text-platinum/10">|</span>
+          <span className="text-platinum-muted">|</span>
           <Link
             href="/docs"
             className="text-sm font-bold uppercase tracking-widest text-platinum/60 hover:text-cyan-glow transition-colors"

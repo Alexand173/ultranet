@@ -87,8 +87,8 @@ function ProposalRow({
     <li className="grid min-w-0 gap-5 border-t border-platinum/10 px-4 py-5 first:border-t-0 sm:px-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1.45fr)_minmax(130px,0.45fr)_auto] lg:items-center lg:gap-6">
       <div className="min-w-0">
         <p className="truncate font-space-grotesk text-lg font-bold uppercase tracking-tight text-platinum" title={proposal.metadata}>{proposal.metadata || "Unnamed validator"}</p>
-        <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.12em] text-platinum/35">Submitted {formatSubmittedAt(proposal.submittedAt)}</p>
-        <p className="mt-2 break-all font-mono text-[10px] text-platinum/45" title={proposal.proposer}>PROPOSER // {formatHashFingerprint(proposal.proposer)}</p>
+        <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.12em] text-platinum-muted">Submitted {formatSubmittedAt(proposal.submittedAt)}</p>
+        <p className="mt-2 break-all font-mono text-[10px] text-platinum-muted" title={proposal.proposer}>PROPOSER // {formatHashFingerprint(proposal.proposer)}</p>
       </div>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -98,12 +98,12 @@ function ProposalRow({
           </button>
         </div>
         <code className="mt-2 block break-all font-mono text-xs leading-5 text-platinum/75" title={proposal.proposalHash}>{proposal.proposalHash}</code>
-        <p className="mt-2 break-all font-mono text-[10px] text-platinum/35" title={proposal.publicKey}>VALIDATOR_KEY // {formatPublicKeyFingerprint(proposal.publicKey)}</p>
+        <p className="mt-2 break-all font-mono text-[10px] text-platinum-muted" title={proposal.publicKey}>VALIDATOR_KEY // {formatPublicKeyFingerprint(proposal.publicKey)}</p>
       </div>
       <div className="min-w-0">
-        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-platinum/35">SIGNED_OWNERS</p>
+        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted">SIGNED_OWNERS</p>
         <p className="mt-2 font-space-grotesk text-2xl font-bold text-cyan-glow">{formatApprovalProgress(proposal.signedOwnerCount, proposal.threshold)}</p>
-        <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-platinum/40">of {proposal.totalOwners} configured</p>
+        <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-platinum-muted">of {proposal.totalOwners} configured</p>
       </div>
       <div className="flex min-w-0 flex-col items-start gap-3 lg:items-end">
         {isCurrentOwnerSigned ? (
@@ -119,7 +119,7 @@ function ProposalRow({
             Review &amp; approve
           </button>
         ) : (
-          <span className="inline-flex min-h-10 items-center border border-platinum/10 px-3 font-mono text-[10px] uppercase tracking-[0.1em] text-platinum/35">
+          <span className="inline-flex min-h-10 items-center border border-platinum/10 px-3 font-mono text-[10px] uppercase tracking-[0.1em] text-platinum-muted">
             Owner authorization required
           </span>
         )}
@@ -209,7 +209,7 @@ export default function PendingApprovalsPanel() {
         </div>
         <div className="flex flex-wrap items-center gap-4 font-mono text-[10px] uppercase tracking-[0.14em]">
           <span className={canApprove ? "text-cyan-glow" : "text-amber-200/75"}>{canApprove ? "OWNER_AUTHORITY // READY" : "REVIEW_ONLY_SESSION"}</span>
-          <span className="text-platinum/35">THRESHOLD // 2 OF 3</span>
+          <span className="text-platinum-muted">THRESHOLD // 2 OF 3</span>
           <button type="button" onClick={() => void loadReview()} disabled={isRefreshing} title="Refresh pending approvals" className="inline-flex min-h-10 items-center gap-2 border border-platinum/15 px-3 text-platinum/50 transition-colors hover:border-cyan-glow/60 hover:text-cyan-glow focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-cyan-glow disabled:cursor-wait disabled:opacity-40">
             <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} aria-hidden="true" /> Refresh
           </button>
@@ -220,7 +220,7 @@ export default function PendingApprovalsPanel() {
       {error && <div role="alert" aria-live="assertive" className="flex items-start gap-3 border-b border-red-300/30 bg-red-300/[0.06] px-5 py-3 font-mono text-xs leading-5 text-red-200 sm:px-7"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />{error}</div>}
 
       {review.proposals.length === 0 ? (
-        <div className="px-5 py-12 text-center sm:px-7"><Check className="mx-auto h-6 w-6 text-cyan-glow/60" aria-hidden="true" /><p className="mt-4 font-space-grotesk text-xl font-bold uppercase tracking-tight text-platinum">No pending proposals</p><p className="mx-auto mt-2 max-w-md text-sm leading-6 text-platinum/45">The validator queue is clear. New signed applications will appear here after they enter governance.</p></div>
+        <div className="px-5 py-12 text-center sm:px-7"><Check className="mx-auto h-6 w-6 text-cyan-glow/60" aria-hidden="true" /><p className="mt-4 font-space-grotesk text-xl font-bold uppercase tracking-tight text-platinum">No pending proposals</p><p className="mx-auto mt-2 max-w-md text-sm leading-6 text-platinum-muted">The validator queue is clear. New signed applications will appear here after they enter governance.</p></div>
       ) : (
         <ul aria-label="Pending validator proposals">
           {review.proposals.map((proposal) => (
@@ -235,7 +235,7 @@ export default function PendingApprovalsPanel() {
         </ul>
       )}
 
-      <div className="flex flex-col gap-2 border-t border-platinum/10 px-5 py-4 font-mono text-[10px] uppercase tracking-[0.12em] text-platinum/30 sm:flex-row sm:items-center sm:justify-between sm:px-7">
+      <div className="flex flex-col gap-2 border-t border-platinum/10 px-5 py-4 font-mono text-[10px] uppercase tracking-[0.12em] text-platinum-muted sm:flex-row sm:items-center sm:justify-between sm:px-7">
         <span>Private keys never enter this dashboard.</span>
         <span>Final authority // UltraNet node verifier</span>
       </div>

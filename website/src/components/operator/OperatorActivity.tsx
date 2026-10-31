@@ -18,7 +18,7 @@ export default function OperatorActivity({ transactions, status }: OperatorActiv
             Recent_Network_Activity
           </h2>
         </div>
-        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/30">
+        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum-muted">
           {status === "loading" ? "CONNECTING" : status === "live" ? "NODE_RETURN" : "UNAVAILABLE"}
         </span>
       </div>
@@ -29,10 +29,10 @@ export default function OperatorActivity({ transactions, status }: OperatorActiv
             <div key={transaction.id} className="grid gap-2 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center sm:gap-6 sm:px-6">
               <div className="min-w-0">
                 <p className="truncate font-mono text-xs text-cyan-glow/75" title={transaction.hash}>{transaction.hash}</p>
-                <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum/30">TX_{transaction.id}</p>
+                <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted">TX_{transaction.id}</p>
               </div>
               <span className="font-mono text-xs text-platinum/70">{transaction.amount} $ULTRA</span>
-              <span className="flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum/30">
+              <span className="flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted">
                 <Clock3 className="h-3 w-3" aria-hidden="true" />
                 {transaction.shard === null ? "SH_—" : `SH_${transaction.shard}`}
               </span>
@@ -40,7 +40,7 @@ export default function OperatorActivity({ transactions, status }: OperatorActiv
           ))}
         </div>
       ) : (
-        <div className="px-6 py-12 text-center font-mono text-[10px] uppercase tracking-[0.18em] text-platinum/35" aria-live="polite">
+        <div className="px-6 py-12 text-center font-mono text-[10px] uppercase tracking-[0.18em] text-platinum-muted" aria-live="polite">
           {status === "loading" ? "CONNECTING_TO_LIVE_LEDGER" : status === "live" ? "NO_RECENT_TRANSACTIONS_RETURNED_BY_NODE" : "NETWORK_ACTIVITY_UNAVAILABLE"}
         </div>
       )}

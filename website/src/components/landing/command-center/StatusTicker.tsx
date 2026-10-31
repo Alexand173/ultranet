@@ -31,7 +31,7 @@ export default function StatusTicker({ position, blockHeight, provingTime }: Sta
       </div>
 
       <div className="relative min-w-0 flex-1 overflow-hidden h-full flex items-center">
-        <div className="ticker-track gap-12 whitespace-nowrap text-platinum/40">
+        <div className="ticker-track gap-12 whitespace-nowrap text-platinum-muted">
           {items.map((item, i) => (
             <span key={i} className="flex items-center gap-2">
               <span className="text-cyan-glow/30">{"//"}</span>
@@ -41,7 +41,7 @@ export default function StatusTicker({ position, blockHeight, provingTime }: Sta
         </div>
       </div>
 
-      <div className="shrink-0 flex items-center gap-4 px-4 border-l border-platinum/10 h-full text-platinum/40">
+      <div className="shrink-0 flex items-center gap-4 px-4 border-l border-platinum/10 h-full text-platinum-muted">
         <span>HEIGHT: <span className="text-platinum/70">{blockHeight}</span></span>
         <span className="hidden sm:inline">PROVE: <span className="text-platinum/70">{provingTime}</span></span>
       </div>

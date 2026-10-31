@@ -43,7 +43,7 @@ function StatusStrip({
   if (status === "unavailable") {
     return (
       <div className="flex items-center gap-3 px-6 py-3 border-b border-platinum/10">
-        <span className="font-mono text-xs uppercase tracking-widest text-platinum/40">
+        <span className="font-mono text-xs uppercase tracking-widest text-platinum-muted">
           Feed unavailable
         </span>
       </div>
@@ -59,7 +59,7 @@ function StatusStrip({
         {status === "loading" ? "Reading mempool" : `${count} queued`}
       </span>
       {transactions.length > 0 && (
-        <span className="font-mono text-xs uppercase tracking-widest text-platinum/35">
+        <span className="font-mono text-xs uppercase tracking-widest text-platinum-muted">
           Held {heldValue(transactions)}
         </span>
       )}
@@ -76,7 +76,7 @@ function EmptyState({ status }: { status: FeedStatus }) {
         : "Mempool is empty — every transaction is in a block.";
 
   return (
-    <div className="flex h-full min-h-32 items-center justify-center px-8 text-center font-mono text-sm uppercase tracking-widest text-platinum/35">
+    <div className="flex h-full min-h-32 items-center justify-center px-8 text-center font-mono text-sm uppercase tracking-widest text-platinum-muted">
       {message}
     </div>
   );
@@ -148,7 +148,7 @@ export default function PendingMempoolTerminal({ className }: PendingMempoolTerm
                       {formatAddress(transaction.hash, 10, 6)}
                     </span>
                     <span
-                      className="block truncate text-[11px] text-platinum/35"
+                      className="block truncate text-[11px] text-platinum-muted"
                       title={`${transaction.sender} → ${transaction.recipient}`}
                     >
                       {formatAddress(transaction.sender, 6, 4)} →{" "}
@@ -158,7 +158,7 @@ export default function PendingMempoolTerminal({ className }: PendingMempoolTerm
                   <span className="text-right tabular-nums text-platinum/80">
                     {formatUltraAmount(transaction.amount)}
                   </span>
-                  <span className="text-right tabular-nums text-platinum/35">
+                  <span className="text-right tabular-nums text-platinum-muted">
                     {ageLabel(transaction.timestamp, nowMs)}
                   </span>
                 </li>

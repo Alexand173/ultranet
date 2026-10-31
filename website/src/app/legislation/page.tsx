@@ -51,7 +51,7 @@ export default function LegislationPage() {
       <div className="space-y-6 text-center">
         <Scale className="w-16 h-12 text-cyan-glow mx-auto" aria-hidden="true" />
         <h1 className="text-4xl md:text-6xl font-bold tracking-tighter uppercase">Protocol Legislation</h1>
-        <p className="text-platinum/40 font-mono text-sm max-w-2xl mx-auto uppercase">
+        <p className="text-platinum-muted font-mono text-sm max-w-2xl mx-auto uppercase">
           Repository source notes for current protocol claims. The chain-validation button checks the connected node&apos;s chain only; it does not verify these notes as signed law or audit.
         </p>
       </div>
@@ -78,7 +78,7 @@ export default function LegislationPage() {
 
       <div className="p-12 neon-inset text-center space-y-6">
         <h3 className="text-2xl font-bold uppercase">Connected Node Chain Check</h3>
-        <p className="text-sm text-platinum/40 font-mono">
+        <p className="text-sm text-platinum-muted font-mono">
           GET /api/validate reports whether the connected node considers its current chain valid. It does not sign or certify the website&apos;s static source notes.
         </p>
 

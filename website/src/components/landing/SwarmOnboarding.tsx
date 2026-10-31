@@ -251,12 +251,12 @@ export default function SwarmOnboarding() {
 
           <div className="grid grid-cols-2 gap-8 py-8 border-y border-platinum/10 font-mono">
             <div>
-              <p className="text-xs text-platinum/40 uppercase">Validators</p>
+              <p className="text-xs text-platinum-muted uppercase">Validators</p>
               <p className="text-2xl text-cyan-glow">{swarmStats.nodes}</p>
-              <p className="mt-1 text-[10px] leading-relaxed text-platinum/30 normal-case">{VALIDATOR_COUNT_DETAIL}</p>
+              <p className="mt-1 text-[10px] leading-relaxed text-platinum-muted normal-case">{VALIDATOR_COUNT_DETAIL}</p>
             </div>
             <div>
-              <p className="text-xs text-platinum/40 uppercase">Reported Validator Weight</p>
+              <p className="text-xs text-platinum-muted uppercase">Reported Validator Weight</p>
               <p className="text-2xl text-cyan-glow">{swarmStats.staked}</p>
             </div>
           </div>
@@ -297,7 +297,7 @@ export default function SwarmOnboarding() {
 
         <form className="space-y-8 max-w-md" onSubmit={handleSubmit} noValidate aria-busy={proposalStatus === "signing"}>
           <div className="space-y-2 group">
-            <label htmlFor="node-alias" className="text-xs font-mono text-platinum/40 flex items-center gap-2 group-focus-within:text-cyan-glow transition-colors">
+            <label htmlFor="node-alias" className="text-xs font-mono text-platinum-muted flex items-center gap-2 group-focus-within:text-cyan-glow transition-colors">
               <Terminal className="w-3 h-3" aria-hidden="true" /> NODE_ALIAS.exe
             </label>
             <input
@@ -310,7 +310,7 @@ export default function SwarmOnboarding() {
               required
               aria-invalid={Boolean(formErrors.alias)}
               aria-describedby={formErrors.alias ? "node-alias-error" : undefined}
-              className="w-full bg-transparent border-b-2 border-platinum/10 py-4 focus:border-cyan-glow outline-none transition-colors font-mono text-platinum placeholder:text-platinum/20 aria-[invalid=true]:border-red-300"
+              className="w-full bg-transparent border-b-2 border-platinum/10 py-4 focus:border-cyan-glow outline-none transition-colors font-mono text-platinum placeholder:text-platinum-muted aria-[invalid=true]:border-red-300"
               value={formState.alias}
               onChange={(event) => {
                 setFormState({ ...formState, alias: event.target.value });
@@ -321,7 +321,7 @@ export default function SwarmOnboarding() {
           </div>
 
           <div className="space-y-2 group">
-            <label htmlFor="dilithium-public-key" className="text-xs font-mono text-platinum/40 flex items-center gap-2 group-focus-within:text-cyan-glow transition-colors">
+            <label htmlFor="dilithium-public-key" className="text-xs font-mono text-platinum-muted flex items-center gap-2 group-focus-within:text-cyan-glow transition-colors">
               <Key className="w-3 h-3" aria-hidden="true" /> DILITHIUM_PUB_KEY.hex
             </label>
             <textarea
@@ -332,7 +332,7 @@ export default function SwarmOnboarding() {
               required
               aria-invalid={Boolean(formErrors.pubKey)}
               aria-describedby={formErrors.pubKey ? "dilithium-public-key-error" : undefined}
-              className="w-full bg-transparent border-b-2 border-platinum/10 py-4 focus:border-cyan-glow outline-none transition-colors font-mono text-platinum placeholder:text-platinum/20 resize-none aria-[invalid=true]:border-red-300"
+              className="w-full bg-transparent border-b-2 border-platinum/10 py-4 focus:border-cyan-glow outline-none transition-colors font-mono text-platinum placeholder:text-platinum-muted resize-none aria-[invalid=true]:border-red-300"
               value={formState.pubKey}
               onChange={(event) => {
                 setFormState({ ...formState, pubKey: event.target.value });
@@ -351,7 +351,7 @@ export default function SwarmOnboarding() {
             <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" aria-hidden="true" />
           </button>
 
-          <p className="text-[10px] text-platinum/30 leading-relaxed font-mono italic">
+          <p className="text-[10px] text-platinum-muted leading-relaxed font-mono italic">
             * Wallet signatures are created locally. All proposals require 2-of-3 Sovereign Multi-Sig approval.
             Once accepted, your node identity will be broadcast to the gossip layer.
           </p>

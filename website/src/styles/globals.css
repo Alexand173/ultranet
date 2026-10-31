@@ -7,6 +7,11 @@
 @theme inline {
   --color-ink-black: #010B13;
   --color-platinum: #F2F3F4;
+  /* AA-safe muted text. Opaque on purpose: an alpha step such as
+     text-platinum-muted re-composites with whatever row it lands in and
+     measures 2.45:1 on ink-black — this colour holds 5.48:1 on ink,
+     5.00:1 on a bg-platinum/5 row and 5.15:1 over the cyan hover wash. */
+  --color-platinum-muted: #82878C;
   --color-cyan-glow: #0FFFFF;
   --color-learn-canvas: #F8F8F7;
   --color-learn-ink: #101114;

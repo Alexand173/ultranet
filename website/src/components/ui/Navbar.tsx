@@ -34,7 +34,7 @@ export default function Navbar() {
           </div>
           <div className="flex flex-col">
             <span className="font-bold text-lg tracking-tighter leading-none">ULTRANET</span>
-            <span className="text-[10px] text-platinum/40 font-mono tracking-widest leading-none mt-1 uppercase">Sovereign_OS</span>
+            <span className="text-[10px] text-platinum-muted font-mono tracking-widest leading-none mt-1 uppercase">Sovereign_OS</span>
           </div>
         </Link>
 

@@ -21,10 +21,10 @@ export default function Home() {
 
       {/* Simple Footer */}
       <footer className="py-12 border-t border-platinum/10 text-center space-y-4">
-        <p className="text-sm text-platinum/40 font-mono tracking-widest uppercase">
+        <p className="text-sm text-platinum-muted font-mono tracking-widest uppercase">
           UltraNet Network // Protocol and Operations Information
         </p>
-        <p className="text-[10px] text-platinum/30 font-mono tracking-[0.18em] uppercase">
+        <p className="text-[10px] text-platinum-muted font-mono tracking-[0.18em] uppercase">
           Original code and protocol documentation © 2026 Vladan Jotov // ISC License
         </p>
         <a

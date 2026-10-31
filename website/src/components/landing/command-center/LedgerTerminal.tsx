@@ -56,12 +56,12 @@ export default function LedgerTerminal({ className }: { className?: string }) {
               <div key={`${tx.id}-${i}`} className={cn("grid grid-cols-[1fr_110px_90px] gap-4 px-6 py-5 text-lg font-mono border-b border-platinum/[0.03]", i % 2 === 0 ? "bg-platinum/[0.01]" : "")}>
                 <span className="text-cyan-glow/70 truncate" title={tx.hash}>{tx.hash.slice(0, 12)}…</span>
                 <span className="text-platinum/70 text-right">{tx.amount}</span>
-                <span className="text-platinum/20 text-right">{tx.shard === null ? "SH_—" : `SH_${tx.shard}`}</span>
+                <span className="text-platinum-muted text-right">{tx.shard === null ? "SH_—" : `SH_${tx.shard}`}</span>
               </div>
             ))}
           </div>
         ) : (
-          <div className="flex h-full min-h-44 items-center justify-center px-8 text-center font-mono text-sm uppercase tracking-widest text-platinum/35">
+          <div className="flex h-full min-h-44 items-center justify-center px-8 text-center font-mono text-sm uppercase tracking-widest text-platinum-muted">
             {status === "loading" ? "Connecting to the live ledger…" : "No recent transactions returned by the node"}
           </div>
         )}

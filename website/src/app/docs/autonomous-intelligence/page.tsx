@@ -114,23 +114,23 @@ export default function AutonomousIntelligenceDoc() {
                   Values come from the connected node&apos;s <code>/api/ai/history</code> response and refresh every 30 seconds. A score with zero history entries is the module&apos;s initialized default, not a measured network-health score.
                 </p>
               </div>
-              <span className="font-mono text-[10px] uppercase tracking-widest text-platinum/45" aria-live="polite">
+              <span className="font-mono text-[10px] uppercase tracking-widest text-platinum-muted" aria-live="polite">
                 {scoreStatus}
               </span>
             </div>
 
             <div className="mt-8 grid gap-4 sm:grid-cols-2">
               <div className="border border-platinum/10 p-5">
-                <p className="font-mono text-[10px] uppercase tracking-widest text-platinum/40">Sustainability score</p>
+                <p className="font-mono text-[10px] uppercase tracking-widest text-platinum-muted">Sustainability score</p>
                 <p className="mt-3 font-space-grotesk text-2xl font-bold text-cyan-glow">{formatSnapshot(snapshot)}</p>
-                <p className="mt-2 text-xs text-platinum/45">Not a reward multiplier or an audited stability guarantee.</p>
+                <p className="mt-2 text-xs text-platinum-muted">Not a reward multiplier or an audited stability guarantee.</p>
               </div>
               <div className="border border-platinum/10 p-5">
-                <p className="font-mono text-[10px] uppercase tracking-widest text-platinum/40">Recorded samples</p>
+                <p className="font-mono text-[10px] uppercase tracking-widest text-platinum-muted">Recorded samples</p>
                 <p className="mt-3 font-space-grotesk text-2xl font-bold text-platinum">
                   {snapshot.sampleCount === null ? "Unavailable" : new Intl.NumberFormat("en-US").format(snapshot.sampleCount)}
                 </p>
-                <p className="mt-2 text-xs text-platinum/45">
+                <p className="mt-2 text-xs text-platinum-muted">
                   {snapshot.updatedAt ? `Read ${new Intl.DateTimeFormat("en-US", { timeStyle: "medium" }).format(new Date(snapshot.updatedAt))}` : "No API observation available"}
                 </p>
               </div>

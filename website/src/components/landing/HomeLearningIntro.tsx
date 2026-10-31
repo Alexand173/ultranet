@@ -47,7 +47,7 @@ export default function HomeLearningIntro({ className }: { className?: string })
                 <Icon className="h-5 w-5" aria-hidden="true" />
                 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" aria-hidden="true" />
               </div>
-              <span className="mt-7 font-mono text-[9px] uppercase tracking-[0.16em] text-platinum/35">{label}</span>
+              <span className="mt-7 font-mono text-[9px] uppercase tracking-[0.16em] text-platinum-muted">{label}</span>
               <h2 className="mt-2 font-space-grotesk text-lg font-bold text-platinum">{title}</h2>
               <p className="mt-2 text-xs leading-relaxed text-platinum/50">{description}</p>
             </Link>

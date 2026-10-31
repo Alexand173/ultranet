@@ -55,7 +55,7 @@ export default function NodeDiagnosticsTerminal({ className }: { className?: str
       contentClassName="hex-grid"
     >
       <div className="flex h-full flex-col">
-        <div className="grid grid-cols-[1fr_130px] px-6 py-4 border-b border-platinum/5 text-sm font-mono uppercase tracking-widest text-platinum/30">
+        <div className="grid grid-cols-[1fr_130px] px-6 py-4 border-b border-platinum/5 text-sm font-mono uppercase tracking-widest text-platinum-muted">
           <span>Node_Metric</span>
           <span className="text-right">Value</span>
         </div>
@@ -67,11 +67,11 @@ export default function NodeDiagnosticsTerminal({ className }: { className?: str
             </span>
             <span className="text-right text-cyan-glow">{formatCount(validatorCount)}</span>
           </div>
-          <div className="px-6 py-5 text-sm leading-relaxed text-platinum/40">
+          <div className="px-6 py-5 text-sm leading-relaxed text-platinum-muted">
             This is the node-reported validator-record count, not a verified count of online or independent operators. Per-validator ping, stake, and identity details are not exposed by this endpoint.
           </div>
         </div>
-        <div className="px-6 py-3 border-t border-platinum/5 text-xs font-mono text-platinum/20 uppercase tracking-widest">
+        <div className="px-6 py-3 border-t border-platinum/5 text-xs font-mono text-platinum-muted uppercase tracking-widest">
           {status === "live" ? "API_STATS: RESPONSE_RECEIVED" : status === "loading" ? "API_STATS: CONNECTING" : "API_STATS: UNAVAILABLE"}
         </div>
       </div>

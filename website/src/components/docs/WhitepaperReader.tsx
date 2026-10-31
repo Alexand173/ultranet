@@ -84,7 +84,7 @@ export default function WhitepaperReader() {
             Back to_Documentation_Hub
           </Link>
 
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 font-mono text-[9px] uppercase tracking-[0.18em] text-platinum/35">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 font-mono text-[9px] uppercase tracking-[0.18em] text-platinum-muted">
             <span className="text-cyan-glow/80">REPOSITORY_GUIDE</span>
             <span>v7.1_SOVEREIGN</span>
             <span>AUTHOR // VLADAN_JOTOV</span>
@@ -137,7 +137,7 @@ export default function WhitepaperReader() {
               </div>
             </div>
 
-            <div className="mt-4 grid gap-2 border-t border-platinum/10 pt-3 font-mono text-[9px] uppercase tracking-[0.16em] text-platinum/35 sm:grid-cols-[1fr_auto] sm:items-center">
+            <div className="mt-4 grid gap-2 border-t border-platinum/10 pt-3 font-mono text-[9px] uppercase tracking-[0.16em] text-platinum-muted sm:grid-cols-[1fr_auto] sm:items-center">
               <div className="flex min-w-0 items-center gap-2">
                 <FileText className="h-3.5 w-3.5 shrink-0 text-cyan-glow/70" aria-hidden="true" />
                 <span className="truncate">Source // ULTRA_NET_TECHNICAL_GUIDE.md // generated HTML // public educational copy</span>

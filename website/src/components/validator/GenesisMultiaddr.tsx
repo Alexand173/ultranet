@@ -31,7 +31,7 @@ export default function GenesisMultiaddr() {
         </p>
 
         <div className="mt-6 border border-platinum/15 bg-ink-black/70 p-4 sm:p-5">
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-platinum/40">GENESIS_MULTIADDR</p>
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-platinum-muted">GENESIS_MULTIADDR</p>
           <code className="mt-3 block break-all font-mono text-xs leading-6 text-cyan-glow sm:text-sm">{GENESIS_MULTIADDR}</code>
           <div className="mt-5">
             <CopyMultiaddrButton value={GENESIS_MULTIADDR} />
@@ -40,15 +40,15 @@ export default function GenesisMultiaddr() {
 
         <dl className="mt-6 grid gap-px border border-platinum/10 bg-platinum/10 sm:grid-cols-3">
           <div className="bg-ink-black/80 p-4">
-            <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/40">P2P port</dt>
+            <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum-muted">P2P port</dt>
             <dd className="mt-2 font-mono text-sm text-platinum/80">{GENESIS_TRANSPORTS.join(" + ")} {GENESIS_P2P_PORT}</dd>
           </div>
           <div className="bg-ink-black/80 p-4">
-            <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/40">API port</dt>
+            <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum-muted">API port</dt>
             <dd className="mt-2 font-mono text-sm text-platinum/80">TCP {GENESIS_API_PORT} private</dd>
           </div>
           <div className="bg-ink-black/80 p-4">
-            <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/40">Handshake</dt>
+            <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum-muted">Handshake</dt>
             <dd className="mt-2 flex items-center gap-2 font-mono text-sm text-emerald-300"><ShieldCheck className="h-4 w-4" aria-hidden="true" /> libp2p</dd>
           </div>
         </dl>

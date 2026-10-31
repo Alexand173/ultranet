@@ -169,9 +169,9 @@ export default function WalletLocked({ wallet, onUnlocked, onCreated, initialAct
             }}
             aria-invalid={Boolean(error)}
             aria-describedby={error ? "wallet-unlock-error" : "wallet-unlock-help"}
-            className="h-14 w-full border border-platinum/15 bg-platinum/[0.03] px-4 font-mono text-sm text-platinum outline-hidden transition-colors placeholder:text-platinum/20 focus:border-cyan-glow focus:ring-1 focus:ring-cyan-glow/40 aria-[invalid=true]:border-red-300"
+            className="h-14 w-full border border-platinum/15 bg-platinum/[0.03] px-4 font-mono text-sm text-platinum outline-hidden transition-colors placeholder:text-platinum-muted focus:border-cyan-glow focus:ring-1 focus:ring-cyan-glow/40 aria-[invalid=true]:border-red-300"
           />
-          {error ? <p id="wallet-unlock-error" role="alert" className="font-mono text-xs leading-5 text-red-300">{error}</p> : <p id="wallet-unlock-help" className="font-mono text-[10px] leading-5 text-platinum/40">This password protects the wallet on this device.</p>}
+          {error ? <p id="wallet-unlock-error" role="alert" className="font-mono text-xs leading-5 text-red-300">{error}</p> : <p id="wallet-unlock-help" className="font-mono text-[10px] leading-5 text-platinum-muted">This password protects the wallet on this device.</p>}
         </div>
         <button type="submit" disabled={status === "unlocking" || password.length === 0} className="inline-flex min-h-11 w-full items-center justify-center bg-cyan-glow px-6 py-4 font-mono text-xs font-black uppercase tracking-[0.16em] text-ink-black transition-colors hover:bg-platinum focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black disabled:cursor-wait disabled:opacity-50">
           {status === "unlocking" ? "Unlocking wallet…" : "Unlock wallet"}

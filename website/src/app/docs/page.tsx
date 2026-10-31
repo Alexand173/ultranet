@@ -39,7 +39,7 @@ export default function DocsHub() {
             <div className="h-px flex-1 bg-platinum/10" />
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 bg-cyan-glow animate-pulse" />
-              <span className="font-mono text-[10px] text-platinum/40 uppercase tracking-widest">
+              <span className="font-mono text-[10px] text-platinum-muted uppercase tracking-widest">
                 DOCS_STATUS // AVAILABLE
               </span>
             </div>
@@ -48,14 +48,14 @@ export default function DocsHub() {
           <h1 className="text-5xl md:text-7xl font-bold tracking-tighter uppercase glitch-text mb-8" data-text="Documentation Hub">
             Documentation Hub
           </h1>
-          <p className="mb-8 font-mono text-[10px] uppercase tracking-[0.22em] text-platinum/40">
+          <p className="mb-8 font-mono text-[10px] uppercase tracking-[0.22em] text-platinum-muted">
             Created and maintained by Vladan Jotov // Original UltraNet protocol documentation // ISC_License
           </p>
 
           <div className="flex flex-col lg:flex-row gap-6 items-start lg:items-center justify-between">
             {/* Search Interface */}
             <div className="relative w-full lg:w-[480px] group">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-platinum/40 group-focus-within:text-cyan-glow transition-colors" />
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-platinum-muted group-focus-within:text-cyan-glow transition-colors" />
               <input 
                 type="text"
                 placeholder="Search protocol chapters, subsystems, or constants..."
@@ -63,7 +63,7 @@ export default function DocsHub() {
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full bg-[#010B13]/80 border border-platinum/10 px-12 py-4 font-mono text-sm uppercase tracking-widest focus:outline-none focus:border-cyan-glow/50 transition-colors"
               />
-              <div className="absolute right-4 top-1/2 -translate-y-1/2 font-mono text-[9px] text-platinum/20">
+              <div className="absolute right-4 top-1/2 -translate-y-1/2 font-mono text-[9px] text-platinum-muted">
                 [ ESC to clear ]
               </div>
             </div>
@@ -77,7 +77,7 @@ export default function DocsHub() {
                   className={`px-4 py-2 font-mono text-[10px] uppercase tracking-widest border transition-all ${
                     activeCategory === cat 
                       ? "bg-cyan-glow/10 border-cyan-glow text-cyan-glow shadow-[0_0_15px_rgba(15,255,255,0.1)]" 
-                      : "bg-platinum/5 border-platinum/10 text-platinum/40 hover:border-platinum/30 hover:text-platinum"
+                      : "bg-platinum/5 border-platinum/10 text-platinum-muted hover:border-platinum/30 hover:text-platinum"
                   }`}
                 >
                   {cat}
@@ -107,7 +107,7 @@ export default function DocsHub() {
                 <h2 className="text-2xl font-bold uppercase tracking-tight text-platinum transition-colors group-hover:text-white sm:text-3xl">
                   Read the UltraNet Technical Whitepaper
                 </h2>
-                <p className="mt-3 max-w-3xl font-mono text-xs leading-relaxed text-platinum/45">
+                <p className="mt-3 max-w-3xl font-mono text-xs leading-relaxed text-platinum-muted">
                   The guide index lists 34 topics. Some entries are placeholders; this documentation is not an independent protocol or security audit.
                 </p>
               </div>
@@ -153,10 +153,10 @@ export default function DocsHub() {
 
         {filteredChapters.length === 0 && (
           <div className="py-32 text-center">
-            <div className="font-mono text-xs text-platinum/20 uppercase tracking-[0.4em] mb-4">
+            <div className="font-mono text-xs text-platinum-muted uppercase tracking-[0.4em] mb-4">
               [ 0_MATCHES_FOUND ]
             </div>
-            <p className="text-platinum/40 text-sm">No chapters found matching &quot;{search}&quot; in {activeCategory}.</p>
+            <p className="text-platinum-muted text-sm">No chapters found matching &quot;{search}&quot; in {activeCategory}.</p>
           </div>
         )}
       </main>
@@ -165,15 +165,15 @@ export default function DocsHub() {
       <div className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between overflow-hidden border-t border-platinum/10 bg-[#010B13] px-4 py-3 sm:px-8">
         <div className="flex min-w-0 gap-4 sm:gap-8">
           <div className="flex items-center gap-2">
-            <span className="text-[9px] text-platinum/30 uppercase font-mono tracking-widest">Listed topics:</span>
+            <span className="text-[9px] text-platinum-muted uppercase font-mono tracking-widest">Listed topics:</span>
             <span className="text-[10px] text-cyan-glow font-mono">{CHAPTERS.length}</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[9px] text-platinum/30 uppercase font-mono tracking-widest">Protocol:</span>
+            <span className="text-[9px] text-platinum-muted uppercase font-mono tracking-widest">Protocol:</span>
             <span className="text-[10px] text-cyan-glow font-mono">v7.1_Sovereign</span>
           </div>
         </div>
-        <div className="hidden min-w-0 max-w-[45%] truncate font-mono text-[9px] text-platinum/20 uppercase tracking-widest sm:block">
+        <div className="hidden min-w-0 max-w-[45%] truncate font-mono text-[9px] text-platinum-muted uppercase tracking-widest sm:block">
           Sovereign_Genesis_Authority // Encrypted_Ref_0x442A
         </div>
       </div>
@@ -188,7 +188,7 @@ function ChapterContent({ chapter, isComingSoon }: { chapter: Chapter; isComingS
         <div className="p-2.5 bg-platinum/5 border border-platinum/10 rounded-sm text-platinum/50 group-hover:text-cyan-glow group-hover:border-cyan-glow/30 transition-colors">
           {getIcon(chapter.iconName)}
         </div>
-        <span className="font-mono text-[10px] text-platinum/20">
+        <span className="font-mono text-[10px] text-platinum-muted">
           CH_{chapter.id.toString().padStart(2, '0')}
         </span>
       </div>
@@ -198,14 +198,14 @@ function ChapterContent({ chapter, isComingSoon }: { chapter: Chapter; isComingS
       </h3>
       
       <div className="flex items-center justify-between mt-auto">
-        <span className="font-mono text-[9px] text-platinum/30 uppercase tracking-widest px-2 py-0.5 border border-platinum/10">
+        <span className="font-mono text-[9px] text-platinum-muted uppercase tracking-widest px-2 py-0.5 border border-platinum/10">
           {chapter.category}
         </span>
         {!isComingSoon && (
           <ChevronRight className="w-4 h-4 text-cyan-glow opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
         )}
         {isComingSoon && (
-          <span className="font-mono text-[8px] text-platinum/20 uppercase tracking-[0.2em] italic">
+          <span className="font-mono text-[8px] text-platinum-muted uppercase tracking-[0.2em] italic">
             [ Encrypted ]
           </span>
         )}

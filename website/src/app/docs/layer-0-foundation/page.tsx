@@ -27,18 +27,18 @@ export default function Layer0FoundationDoc() {
             <div className="grid grid-cols-1 gap-4 text-center sm:grid-cols-3">
               <div className="p-4 border border-platinum/10">
                 <div className="text-xl font-bold text-cyan-glow tracking-tighter">27.79µs</div>
-                <div className="text-[9px] text-platinum/40 uppercase mt-1">Manifest field; unverified benchmark</div>
+                <div className="text-[9px] text-platinum-muted uppercase mt-1">Manifest field; unverified benchmark</div>
               </div>
               <div className="p-4 border border-platinum/10">
                 <div className="text-xl font-bold text-cyan-glow tracking-tighter">Unavailable</div>
-                <div className="text-[9px] text-platinum/40 uppercase mt-1">Measured TPS</div>
+                <div className="text-[9px] text-platinum-muted uppercase mt-1">Measured TPS</div>
               </div>
               <div className="p-4 border border-platinum/10">
                 <div className="text-xl font-bold text-cyan-glow tracking-tighter">16</div>
-                <div className="text-[9px] text-platinum/40 uppercase mt-1">Configured state shards</div>
+                <div className="text-[9px] text-platinum-muted uppercase mt-1">Configured state shards</div>
               </div>
             </div>
-            <p className="mt-4 text-xs leading-relaxed text-platinum/45">
+            <p className="mt-4 text-xs leading-relaxed text-platinum-muted">
               The public manifest returns a configured latency string without method, workload, or timestamp. It is not a live measurement or independent consensus/security attestation.
             </p>
           </section>

@@ -93,7 +93,7 @@ export default function ValidatorOnboardingPage() {
               <p className="mt-3">Node package: <span className="text-platinum/80">{RELEASE_TAG}</span></p>
               <p>Network: <span className="text-platinum/80">ultranet-sovereign-mainnet</span></p>
               <p>API access: <span className="text-amber-200">private / operator-controlled</span></p>
-              <p className="mt-4 border-t border-platinum/10 pt-4 text-platinum/40">A public onboarding page never asks for your private key, wallet backup, or admin token.</p>
+              <p className="mt-4 border-t border-platinum/10 pt-4 text-platinum-muted">A public onboarding page never asks for your private key, wallet backup, or admin token.</p>
             </div>
             <TwoKeyProposalExplainer />
           </div>
@@ -142,7 +142,7 @@ export default function ValidatorOnboardingPage() {
                     </Link>
                   )}
                 </div>
-                <span className="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-platinum/25 md:block">{step.number === "01" ? "GET_FILES" : step.number === "02" ? "START_NODE" : "GOVERNANCE"}</span>
+                <span className="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted md:block">{step.number === "01" ? "GET_FILES" : step.number === "02" ? "START_NODE" : "GOVERNANCE"}</span>
               </li>
             );
           })}

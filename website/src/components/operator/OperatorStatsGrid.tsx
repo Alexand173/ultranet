@@ -54,7 +54,7 @@ export default function OperatorStatsGrid({ stats, isRefreshing, onRefresh }: Op
             <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
             {statusLabel}
           </span>
-          <span className="text-platinum/30">FETCHED {formatUpdatedAt(stats.updatedAt)}</span>
+          <span className="text-platinum-muted">FETCHED {formatUpdatedAt(stats.updatedAt)}</span>
           <button
             type="button"
             onClick={onRefresh}
@@ -73,17 +73,17 @@ export default function OperatorStatsGrid({ stats, isRefreshing, onRefresh }: Op
         {cards.map(({ label, value, detail, icon: Icon }) => (
           <div key={label} className="min-w-0 bg-ink-black/80 p-5 transition-colors hover:bg-cyan-glow/[0.03]">
             <div className="flex items-start justify-between gap-3">
-              <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/40">{label}</span>
+              <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum-muted">{label}</span>
               <Icon className="h-4 w-4 shrink-0 text-cyan-glow/60" aria-hidden="true" />
             </div>
-            <p className={`mt-5 break-words font-space-grotesk text-2xl font-bold tracking-tight ${value === "Unavailable" ? "text-platinum/40" : "text-platinum"}`}>
+            <p className={`mt-5 break-words font-space-grotesk text-2xl font-bold tracking-tight ${value === "Unavailable" ? "text-platinum-muted" : "text-platinum"}`}>
               {value}
             </p>
-            <p className="mt-1 font-mono text-[10px] leading-relaxed text-platinum/30">{detail}</p>
+            <p className="mt-1 font-mono text-[10px] leading-relaxed text-platinum-muted">{detail}</p>
           </div>
         ))}
       </div>
-      <p className="font-mono text-[10px] leading-relaxed text-platinum/35" aria-live="polite">
+      <p className="font-mono text-[10px] leading-relaxed text-platinum-muted" aria-live="polite">
         Unavailable means the connected node does not expose that measurement; no value is fabricated by this
         console. The validator figure is operator-verified, and the node&apos;s record count — which includes
         bootstrap entries — is shown beside it rather than being passed off as the validator count.

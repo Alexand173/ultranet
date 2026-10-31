@@ -38,14 +38,14 @@ export default function RealTimeFinalityDoc() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="p-6 border border-platinum/10 font-mono">
-              <div className="text-[10px] text-platinum/30 uppercase mb-3">State_Pruning</div>
+              <div className="text-[10px] text-platinum-muted uppercase mb-3">State_Pruning</div>
               <p className="text-xs text-platinum/70">
                 Automatic mark-and-sweep garbage collection ensures that nodes remain lean. Old state roots are pruned 
                 periodically while maintaining the integrity of the latest recursive SNARK.
               </p>
             </div>
             <div className="p-6 border border-platinum/10 font-mono">
-              <div className="text-[10px] text-platinum/30 uppercase mb-3">Hot_Account_Triage</div>
+              <div className="text-[10px] text-platinum-muted uppercase mb-3">Hot_Account_Triage</div>
               <p className="text-xs text-platinum/70">
                 The Block-STM engine identifies accounts with high contention and automatically prioritizes them in 
                 the next block pass to minimize retry latency.

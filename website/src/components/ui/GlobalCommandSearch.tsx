@@ -115,9 +115,9 @@ export default function GlobalCommandSearch() {
                 aria-controls="command-search-results"
                 aria-expanded="true"
                 aria-activedescendant={filteredChapters[selectedIndex] ? `command-search-option-${filteredChapters[selectedIndex].id}` : undefined}
-                className="flex-1 bg-transparent border-none outline-none font-mono text-lg text-platinum uppercase tracking-widest placeholder:text-platinum/20"
+                className="flex-1 bg-transparent border-none outline-none font-mono text-lg text-platinum uppercase tracking-widest placeholder:text-platinum-muted"
               />
-              <div className="flex items-center gap-2 px-2 py-1 bg-platinum/5 border border-platinum/10 rounded font-mono text-[10px] text-platinum/30 uppercase tracking-widest">
+              <div className="flex items-center gap-2 px-2 py-1 bg-platinum/5 border border-platinum/10 rounded font-mono text-[10px] text-platinum-muted uppercase tracking-widest">
                 <Command className="w-3 h-3" />
                 <span>K</span>
               </div>
@@ -148,14 +148,14 @@ export default function GlobalCommandSearch() {
                       <div className="flex items-center gap-4">
                         <div className={clsx(
                           "p-2 border rounded-sm transition-colors",
-                          selectedIndex === index ? "border-cyan-glow/50 text-cyan-glow" : "border-platinum/10 text-platinum/30"
+                          selectedIndex === index ? "border-cyan-glow/50 text-cyan-glow" : "border-platinum/10 text-platinum-muted"
                         )}>
                           {getIcon(chapter.iconName)}
                         </div>
                         <div>
                           <div className={clsx(
                             "font-mono text-[10px] uppercase tracking-widest mb-0.5",
-                            selectedIndex === index ? "text-cyan-glow/70" : "text-platinum/30"
+                            selectedIndex === index ? "text-cyan-glow/70" : "text-platinum-muted"
                           )}>
                             {chapter.category} {"//"} CH_{chapter.id.toString().padStart(2, '0')}
                           </div>
@@ -170,7 +170,7 @@ export default function GlobalCommandSearch() {
 
                       <div className="flex items-center gap-3">
                         {!chapter.slug && (
-                          <span className="font-mono text-[9px] text-platinum/20 uppercase tracking-widest border border-platinum/10 px-1.5 py-0.5">
+                          <span className="font-mono text-[9px] text-platinum-muted uppercase tracking-widest border border-platinum/10 px-1.5 py-0.5">
                             Encrypted
                           </span>
                         )}
@@ -186,10 +186,10 @@ export default function GlobalCommandSearch() {
                 </div>
               ) : (
                 <div className="py-20 text-center font-mono">
-                  <div className="text-xs text-platinum/20 uppercase tracking-[0.4em] mb-2">
+                  <div className="text-xs text-platinum-muted uppercase tracking-[0.4em] mb-2">
                     [ 0_MATCHES_FOUND ]
                   </div>
-                  <div className="text-[10px] text-platinum/40 uppercase">
+                  <div className="text-[10px] text-platinum-muted uppercase">
                     Ref_Error: Search_string_not_indexed
                   </div>
                 </div>
@@ -197,7 +197,7 @@ export default function GlobalCommandSearch() {
             </div>
 
             {/* Footer / Shortcuts */}
-            <div className="flex items-center justify-between px-6 py-3 bg-platinum/5 border-t border-platinum/10 font-mono text-[9px] text-platinum/30 uppercase tracking-[0.2em]">
+            <div className="flex items-center justify-between px-6 py-3 bg-platinum/5 border-t border-platinum/10 font-mono text-[9px] text-platinum-muted uppercase tracking-[0.2em]">
               <div className="flex gap-6">
                 <div className="flex items-center gap-1.5">
                   <span className="p-1 border border-platinum/10 rounded leading-none">↑↓</span>

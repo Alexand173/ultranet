@@ -31,14 +31,14 @@ export default function AppChainTable({ chains, actions, onArm, onCancel, onConf
           <Layers3 className="h-4 w-4 text-cyan-glow" aria-hidden="true" />
           <h2 id="appchain-registry-list-heading" className="font-mono text-xs font-bold uppercase tracking-[0.18em] text-platinum/70">Registered_AppChains</h2>
         </div>
-        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/30">{chains.length} RECORDS</span>
+        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum-muted">{chains.length} RECORDS</span>
       </div>
 
       <div className="hidden overflow-x-auto lg:block">
         <table className="w-full min-w-[1040px] border-collapse text-left">
           <caption className="sr-only">Registered UltraNet AppChains and their anchor accounting</caption>
           <thead className="border-b border-platinum/10 bg-platinum/[0.02]">
-            <tr className="font-mono text-[10px] uppercase tracking-[0.14em] text-platinum/35">
+            <tr className="font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted">
               <th scope="col" className="px-5 py-4 font-normal">AppChain</th>
               <th scope="col" className="px-4 py-4 font-normal">Owner</th>
               <th scope="col" className="px-4 py-4 font-normal">L1 Treasury</th>
@@ -59,7 +59,7 @@ export default function AppChainTable({ chains, actions, onArm, onCancel, onConf
                       <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center border border-cyan-glow/20 bg-cyan-glow/[0.04] text-cyan-glow/75"><Box className="h-4 w-4" aria-hidden="true" /></div>
                       <div className="min-w-0">
                         <p className="truncate font-space-grotesk text-sm font-bold uppercase tracking-tight text-platinum" title={chain.name}>{chain.name}</p>
-                        <p className="mt-1 truncate font-mono text-[10px] text-platinum/30" title={chain.latestStateRoot ?? undefined}>{chain.latestAnchorAt === null ? "NEVER_ANCHORED" : `LAST ${formatTimestamp(chain.latestAnchorAt)}`}</p>
+                        <p className="mt-1 truncate font-mono text-[10px] text-platinum-muted" title={chain.latestStateRoot ?? undefined}>{chain.latestAnchorAt === null ? "NEVER_ANCHORED" : `LAST ${formatTimestamp(chain.latestAnchorAt)}`}</p>
                       </div>
                     </div>
                   </th>

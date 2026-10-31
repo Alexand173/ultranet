@@ -40,7 +40,7 @@ export default function ProposalWalletPrerequisite({ variant = "dark", className
             Your personal wallet must sign this proposal
           </h2>
           <p className={`mt-3 text-sm leading-6 ${dark ? "text-platinum/65" : "text-learn-muted"}`}>{statusText}</p>
-          <p className={`mt-2 text-xs leading-5 ${dark ? "text-platinum/45" : "text-learn-muted"}`}>
+          <p className={`mt-2 text-xs leading-5 ${dark ? "text-platinum-muted" : "text-learn-muted"}`}>
             The node public key identifies the computer. Your wallet signature proves that you authorized it. The website never stores your wallet password or sends it to the node.
           </p>
           {!localReady && (

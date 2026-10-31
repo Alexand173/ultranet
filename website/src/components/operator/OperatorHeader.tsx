@@ -30,7 +30,7 @@ export default function OperatorHeader({ session, isLoggingOut, onLogout }: Oper
           <div className="flex flex-wrap items-center gap-4">
             <Link
               href="/"
-              className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-platinum/40 transition-colors hover:text-cyan-glow focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-cyan-glow"
+              className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-platinum-muted transition-colors hover:text-cyan-glow focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-cyan-glow"
             >
               <span aria-hidden="true">←</span> Public_Nexus
             </Link>
@@ -58,7 +58,7 @@ export default function OperatorHeader({ session, isLoggingOut, onLogout }: Oper
 
         <div className="flex flex-col items-start gap-3 font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/50 lg:items-end">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-platinum/30">NODE</span>
+            <span className="text-platinum-muted">NODE</span>
             <span className="text-cyan-glow" title={session.nodeIdentifier}>
               {truncateNodeIdentifier(session.nodeIdentifier)}
             </span>
@@ -69,7 +69,7 @@ export default function OperatorHeader({ session, isLoggingOut, onLogout }: Oper
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex items-center gap-1.5">
-              <Clock3 className="h-3.5 w-3.5 text-platinum/40" aria-hidden="true" />
+              <Clock3 className="h-3.5 w-3.5 text-platinum-muted" aria-hidden="true" />
               Expires {formatExpiry(session.expiresAt)}
             </span>
             <button

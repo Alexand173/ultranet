@@ -240,17 +240,17 @@ export default function CoinNexus({ className }: { className?: string }) {
 
               <div className="grid grid-cols-2 gap-4 pt-4 border-t border-platinum/10">
                 <div>
-                  <div className="text-[9px] text-platinum/30 uppercase mb-1">Status</div>
+                  <div className="text-[9px] text-platinum-muted uppercase mb-1">Status</div>
                   <div className="text-[10px] text-platinum/60 font-mono uppercase tracking-widest">Docs_Link</div>
                 </div>
                 <div>
-                  <div className="text-[9px] text-platinum/30 uppercase mb-1">Integrity</div>
+                  <div className="text-[9px] text-platinum-muted uppercase mb-1">Integrity</div>
                   <div className="text-[10px] text-platinum/80 font-mono">Not measured</div>
                 </div>
               </div>
 
               <div className="mt-8 flex items-center justify-between">
-                <div className="text-[8px] text-platinum/20 font-mono tracking-widest uppercase">
+                <div className="text-[8px] text-platinum-muted font-mono tracking-widest uppercase">
                   Ref_ID: {hoveredLetter}2026-X
                 </div>
                 <Link 
@@ -268,11 +268,11 @@ export default function CoinNexus({ className }: { className?: string }) {
       {/* Genesis stats */}
       <div className="flex gap-14 font-mono z-10">
         <div className="text-center">
-          <div className="text-xs lg:text-sm uppercase text-platinum/40 mb-1">Genesis Supply</div>
+          <div className="text-xs lg:text-sm uppercase text-platinum-muted mb-1">Genesis Supply</div>
           <div className="text-xl md:text-2xl lg:text-3xl font-medium text-cyan-glow">{formatUltraAmount(GENESIS_ALLOCATION_BASE_UNITS)} $ULTRA</div>
         </div>
         <div className="text-center">
-          <div className="text-xs lg:text-sm uppercase text-platinum/40 mb-1">Validator Weight</div>
+          <div className="text-xs lg:text-sm uppercase text-platinum-muted mb-1">Validator Weight</div>
           <div className="text-xl md:text-2xl lg:text-3xl font-medium text-cyan-glow">See live node data</div>
         </div>
       </div>

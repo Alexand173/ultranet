@@ -38,7 +38,7 @@ export default function LegislationTable() {
       <div className="text-center space-y-4">
         <ShieldCheck className="w-12 h-12 text-cyan-glow mx-auto" />
         <h2 className="text-4xl md:text-5xl font-bold uppercase tracking-widest">Protocol Source Notes</h2>
-        <p className="text-platinum/40 font-mono">REPOSITORY SUMMARY // NOT AN AUDIT OR SIGNED LAW</p>
+        <p className="text-platinum-muted font-mono">REPOSITORY SUMMARY // NOT AN AUDIT OR SIGNED LAW</p>
       </div>
 
       <div className="space-y-12">
@@ -59,7 +59,7 @@ export default function LegislationTable() {
                   transition={{ delay: (sIndex * 0.2) + (lIndex * 0.1) }}
                   className="bg-ink-black p-6 grid grid-cols-1 md:grid-cols-[120px_1fr_40px] items-center gap-6 group hover:bg-platinum/[0.02] transition-colors"
                 >
-                  <span className="font-mono text-xs text-platinum/40 group-hover:text-cyan-glow transition-colors">{law.id}</span>
+                  <span className="font-mono text-xs text-platinum-muted group-hover:text-cyan-glow transition-colors">{law.id}</span>
                   <div className="space-y-1">
                     <p className="font-bold text-lg">{law.title}</p>
                     <p className="text-sm text-platinum/50 leading-relaxed italic">&quot;{law.text}&quot;</p>
@@ -73,7 +73,7 @@ export default function LegislationTable() {
       </div>
 
       <div className="p-8 border border-dashed border-platinum/20 text-center rounded-lg">
-        <p className="text-xs text-platinum/30 font-mono">
+        <p className="text-xs text-platinum-muted font-mono">
           STATIC_REPOSITORY_SUMMARY // NO_DIGITAL_SEAL_VERIFICATION_PERFORMED
         </p>
       </div>

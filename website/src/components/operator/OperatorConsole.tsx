@@ -210,7 +210,7 @@ export default function OperatorConsole() {
 
         <OperatorActivity transactions={transactions} status={stats.status} />
 
-        <footer className="flex flex-col gap-2 border-t border-platinum/10 pt-5 font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/25 sm:flex-row sm:items-center sm:justify-between">
+        <footer className="flex flex-col gap-2 border-t border-platinum/10 pt-5 font-mono text-[10px] uppercase tracking-[0.16em] text-platinum-muted sm:flex-row sm:items-center sm:justify-between">
           <span>Operator_Surface // Read_Live_State // Write_With_Confirmation</span>
           <span>Private keys never enter this console</span>
         </footer>

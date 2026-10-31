@@ -18,7 +18,7 @@ export default function LongevityTimeline() {
           <p className="text-cyan-glow font-mono text-sm tracking-[0.3em] uppercase">Chronology // Longevity</p>
           <h2 className="text-4xl md:text-6xl font-bold tracking-tighter uppercase">The 100-Year Vision</h2>
         </div>
-        <p className="max-w-md text-platinum/40 text-sm leading-relaxed uppercase tracking-wider font-mono">
+        <p className="max-w-md text-platinum-muted text-sm leading-relaxed uppercase tracking-wider font-mono">
           A ledger engineered to survive geopolitical shifts, hardware evolution, and the quantum transition.
         </p>
       </div>
@@ -34,19 +34,19 @@ export default function LongevityTimeline() {
           >
             <div className="space-y-6 relative z-10">
               <div className="flex justify-between items-start">
-                <span className="text-4xl font-black text-platinum/10 group-hover:text-cyan-glow/20 transition-colors leading-none">
+                <span className="text-4xl font-black text-platinum-muted group-hover:text-cyan-glow/20 transition-colors leading-none">
                   {m.year}
                 </span>
                 <span className={cn(
                   "text-[8px] font-bold px-2 py-1 border rounded-sm tracking-widest",
-                  m.status === "ROADMAP" ? "border-cyan-glow/50 text-cyan-glow/70" : "border-platinum/20 text-platinum/20"
+                  m.status === "ROADMAP" ? "border-cyan-glow/50 text-cyan-glow/70" : "border-platinum/20 text-platinum-muted"
                 )}>
                   {m.status}
                 </span>
               </div>
               <div className="space-y-2">
                 <h4 className="text-lg font-bold tracking-widest">{m.era}</h4>
-                <p className="text-xs text-platinum/40 leading-relaxed uppercase">{m.goal}</p>
+                <p className="text-xs text-platinum-muted leading-relaxed uppercase">{m.goal}</p>
               </div>
             </div>
             

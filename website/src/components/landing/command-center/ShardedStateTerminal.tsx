@@ -29,12 +29,12 @@ function RadialGauge({ label, value, suffix }: { label: string; value: number | 
     <div className="flex flex-col items-center justify-center gap-3 py-4">
       <div className="relative flex h-28 w-28 items-center justify-center rounded-full" style={{ background: `conic-gradient(#0FFFFF ${pct}%, rgba(242,243,244,0.06) ${pct}%)` }}>
         <div className="absolute inset-[6px] flex items-center justify-center rounded-full bg-ink-black">
-          <span className={`text-center text-sm font-mono font-bold ${value === null ? "text-platinum/35" : "text-platinum"}`}>
+          <span className={`text-center text-sm font-mono font-bold ${value === null ? "text-platinum-muted" : "text-platinum"}`}>
             {formatValue(value, suffix)}
           </span>
         </div>
       </div>
-      <span className="text-xs font-mono uppercase tracking-widest text-platinum/40">{label}</span>
+      <span className="text-xs font-mono uppercase tracking-widest text-platinum-muted">{label}</span>
     </div>
   );
 }
@@ -88,7 +88,7 @@ export default function ShardedStateTerminal({ className }: { className?: string
         <div className="grid flex-1 grid-cols-2 gap-x-1">
           {GAUGES.map((gauge) => <RadialGauge key={gauge.key} label={gauge.label} value={stats[gauge.key]} suffix={gauge.suffix} />)}
         </div>
-        <p className="border-t border-platinum/5 px-6 py-3 text-xs font-mono uppercase tracking-widest text-platinum/25">
+        <p className="border-t border-platinum/5 px-6 py-3 text-xs font-mono uppercase tracking-widest text-platinum-muted">
           Unavailable means the current public API does not expose that measurement.
         </p>
       </div>

@@ -173,8 +173,8 @@ function ResultFrame({
 function ResultDetails({ result }: { result: TransactionRecord }) {
   return (
     <dl className="mt-6 border-y border-platinum/10 py-4 font-mono text-xs leading-6">
-      <div className="flex flex-col gap-1 py-2 sm:flex-row sm:justify-between sm:gap-6"><dt className="text-platinum/45">Transaction ID</dt><dd className="break-all text-platinum/80">{result.hash}</dd></div>
-      <div className="flex flex-col gap-1 py-2 sm:flex-row sm:justify-between sm:gap-6"><dt className="text-platinum/45">Status</dt><dd className="text-platinum/80">{result.status}</dd></div>
+      <div className="flex flex-col gap-1 py-2 sm:flex-row sm:justify-between sm:gap-6"><dt className="text-platinum-muted">Transaction ID</dt><dd className="break-all text-platinum/80">{result.hash}</dd></div>
+      <div className="flex flex-col gap-1 py-2 sm:flex-row sm:justify-between sm:gap-6"><dt className="text-platinum-muted">Status</dt><dd className="text-platinum/80">{result.status}</dd></div>
       <div className="mt-2 flex flex-wrap items-center gap-3"><CopyAddressButton value={result.hash} label="Copy transaction ID" /></div>
     </dl>
   );

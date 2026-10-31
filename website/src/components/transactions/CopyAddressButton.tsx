@@ -35,7 +35,7 @@ export default function CopyAddressButton({ value, label = "Copy address" }: Cop
         <Icon className="h-4 w-4" aria-hidden="true" />
         {buttonLabel}
       </button>
-      <span role="status" aria-live="polite" className="font-mono text-[10px] text-platinum/40">
+      <span role="status" aria-live="polite" className="font-mono text-[10px] text-platinum-muted">
         {status === "copied" ? `${label} copied.` : status === "error" ? "Select the value manually." : ""}
       </span>
     </div>

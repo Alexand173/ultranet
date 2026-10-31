@@ -59,7 +59,7 @@ export default function BentoDocs() {
         >
           The Sovereign Guide
         </h2>
-        <p className="text-platinum/40 max-w-2xl font-mono text-sm">
+        <p className="text-platinum-muted max-w-2xl font-mono text-sm">
           Explore the foundational pillars of UltraNet&apos;s next-generation blockchain architecture.
         </p>
       </div>
@@ -193,7 +193,7 @@ export default function BentoDocs() {
               <span className="px-3 py-1 text-[10px] font-mono uppercase tracking-widest border border-cyan-glow/20 text-cyan-glow rounded">
                 v7.1
               </span>
-              <span className="px-3 py-1 text-[10px] font-mono uppercase tracking-widest bg-cyan-glow/5 text-platinum/40 rounded">
+              <span className="px-3 py-1 text-[10px] font-mono uppercase tracking-widest bg-cyan-glow/5 text-platinum-muted rounded">
                 Architecture
               </span>
             </div>

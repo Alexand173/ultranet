@@ -42,7 +42,7 @@ export default function CopyMultiaddrButton({ value }: CopyMultiaddrButtonProps)
         <Icon className="h-4 w-4" aria-hidden="true" />
         {label}
       </button>
-      <span className="font-mono text-[10px] text-platinum/45" role="status" aria-live="polite">
+      <span className="font-mono text-[10px] text-platinum-muted" role="status" aria-live="polite">
         {statusMessage(status)}
       </span>
     </div>

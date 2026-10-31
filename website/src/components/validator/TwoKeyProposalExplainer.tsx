@@ -77,7 +77,7 @@ export default function TwoKeyProposalExplainer({ className = "" }: { className?
             </div>
             <h2 id="two-key-proposal-title" className="mt-3 font-space-grotesk text-2xl font-bold tracking-tight text-platinum sm:text-3xl">Two keys. One signed proposal.</h2>
           </div>
-          <p className="max-w-xs font-mono text-[10px] uppercase leading-5 tracking-[0.12em] text-platinum/35">The node says which computer. The wallet says who approved it.</p>
+          <p className="max-w-xs font-mono text-[10px] uppercase leading-5 tracking-[0.12em] text-platinum-muted">The node says which computer. The wallet says who approved it.</p>
         </div>
 
         <div className="mt-7 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-stretch">

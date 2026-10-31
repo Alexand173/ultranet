@@ -65,11 +65,11 @@ export default function WalletBalancePill() {
       aria-label={`Wallet ${balanceLabel}. Open Portfolio.`}
       className="fixed bottom-5 left-4 z-[95] flex min-h-11 items-center gap-3 rounded-sm border border-platinum/20 bg-ink-black/90 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum backdrop-blur-md transition-colors hover:border-cyan-glow/60 hover:text-white focus:outline-hidden focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black"
     >
-      <span className="text-platinum/45">Wallet</span>
+      <span className="text-platinum-muted">Wallet</span>
       <span className={balanceBaseUnits === null ? "text-platinum/55" : "font-bold text-cyan-glow"}>
         {balanceLabel}
       </span>
-      <span className="text-platinum/45">Portfolio</span>
+      <span className="text-platinum-muted">Portfolio</span>
     </Link>
   );
 }

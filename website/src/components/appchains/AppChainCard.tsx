@@ -35,27 +35,27 @@ export default function AppChainCard({ chain, action, onArm, onCancel, onConfirm
 
       <dl className="grid gap-x-5 gap-y-4 py-5 sm:grid-cols-2">
         <div className="min-w-0">
-          <dt className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum/35"><Box className="h-3.5 w-3.5 text-cyan-glow/60" aria-hidden="true" /> Owner</dt>
+          <dt className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted"><Box className="h-3.5 w-3.5 text-cyan-glow/60" aria-hidden="true" /> Owner</dt>
           <dd className="mt-2 truncate font-mono text-xs text-platinum/75" title={chain.owner}>{ownerDisplay}</dd>
         </div>
         <div className="min-w-0">
-          <dt className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum/35"><Hash className="h-3.5 w-3.5 text-cyan-glow/60" aria-hidden="true" /> L1 Treasury</dt>
+          <dt className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted"><Hash className="h-3.5 w-3.5 text-cyan-glow/60" aria-hidden="true" /> L1 Treasury</dt>
           <dd className="mt-2"><TreasuryAddress address={chain.accountAddress} compact /></dd>
         </div>
         <div>
-          <dt className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum/35"><Layers3 className="h-3.5 w-3.5 text-cyan-glow/60" aria-hidden="true" /> Anchors</dt>
+          <dt className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted"><Layers3 className="h-3.5 w-3.5 text-cyan-glow/60" aria-hidden="true" /> Anchors</dt>
           <dd className="mt-2 font-space-grotesk text-lg font-bold text-platinum">{valueOrUnavailable(chain.anchorCount)}</dd>
         </div>
         <div>
-          <dt className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum/35"><CircleDollarSign className="h-3.5 w-3.5 text-cyan-glow/60" aria-hidden="true" /> Balance</dt>
+          <dt className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted"><CircleDollarSign className="h-3.5 w-3.5 text-cyan-glow/60" aria-hidden="true" /> Balance</dt>
           <dd className="mt-2 font-space-grotesk text-lg font-bold text-platinum">{formatUltraAmount(chain.balanceBaseUnits)} <span className="font-mono text-[10px] text-cyan-glow">$ULTRA</span></dd>
         </div>
         <div>
-          <dt className="font-mono text-[10px] uppercase tracking-[0.14em] text-platinum/35">Anchor spend</dt>
+          <dt className="font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted">Anchor spend</dt>
           <dd className="mt-2 font-mono text-xs text-platinum/75">{formatUltraAmount(chain.anchorSpendBaseUnits)} $ULTRA</dd>
         </div>
         <div>
-          <dt className="font-mono text-[10px] uppercase tracking-[0.14em] text-platinum/35">Latest anchor</dt>
+          <dt className="font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted">Latest anchor</dt>
           <dd className="mt-2 font-mono text-xs text-platinum/75">{chain.latestAnchorAt === null ? "Never anchored" : formatTimestamp(chain.latestAnchorAt)}</dd>
         </div>
       </dl>

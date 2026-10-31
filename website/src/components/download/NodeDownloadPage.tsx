@@ -52,21 +52,21 @@ export default function NodeDownloadPage() {
 
           <dl className="mt-10 grid max-w-4xl grid-cols-1 border border-platinum/10 sm:grid-cols-3">
             <div className="border-b border-platinum/10 p-4 sm:border-b-0 sm:border-r">
-              <dt className="font-mono text-[10px] uppercase tracking-[0.18em] text-platinum/40">Release tag</dt>
+              <dt className="font-mono text-[10px] uppercase tracking-[0.18em] text-platinum-muted">Release tag</dt>
               <dd className="mt-2 font-mono text-sm text-cyan-glow">{RELEASE_TAG}</dd>
             </div>
             <div className="border-b border-platinum/10 p-4 sm:border-b-0 sm:border-r">
-              <dt className="font-mono text-[10px] uppercase tracking-[0.18em] text-platinum/40">Targets</dt>
+              <dt className="font-mono text-[10px] uppercase tracking-[0.18em] text-platinum-muted">Targets</dt>
               <dd className="mt-2 font-mono text-sm text-platinum/80">WINDOWS / LINUX / MACOS</dd>
             </div>
             <div className="p-4">
-              <dt className="font-mono text-[10px] uppercase tracking-[0.18em] text-platinum/40">Channel</dt>
+              <dt className="font-mono text-[10px] uppercase tracking-[0.18em] text-platinum-muted">Channel</dt>
               <dd className="mt-2 font-mono text-sm text-cyan-glow">STABLE // PUBLIC</dd>
             </div>
           </dl>
           <div className="mt-3 flex flex-col gap-1 border border-platinum/10 bg-platinum/[0.02] px-4 py-3 font-mono sm:flex-row sm:items-center sm:justify-between sm:gap-6">
             <div>
-              <p className="text-[10px] uppercase tracking-[0.18em] text-platinum/40">Release pipeline</p>
+              <p className="text-[10px] uppercase tracking-[0.18em] text-platinum-muted">Release pipeline</p>
               <p className="mt-1 text-sm text-platinum/75">{RELEASE_PIPELINE_STATUS}</p>
             </div>
             <p className="text-xs leading-relaxed text-platinum/50">{RELEASE_PIPELINE_STATUS_DESCRIPTION}</p>
@@ -120,11 +120,11 @@ export default function NodeDownloadPage() {
 
                 <dl className="mt-6 space-y-2 border-t border-platinum/10 pt-4 font-mono text-[10px] uppercase tracking-[0.12em]">
                   <div className="flex justify-between gap-4">
-                    <dt className="text-platinum/35">Contains</dt>
+                    <dt className="text-platinum-muted">Contains</dt>
                     <dd className="text-right text-platinum/70">{asset.containedBinary}</dd>
                   </div>
                   <div className="flex justify-between gap-4">
-                    <dt className="text-platinum/35">Format</dt>
+                    <dt className="text-platinum-muted">Format</dt>
                     <dd className="text-right text-platinum/70">{asset.architecture}</dd>
                   </div>
                 </dl>

@@ -201,7 +201,7 @@ export default function LoginPage() {
           <h1 className="font-space-grotesk text-[30px] font-bold leading-none tracking-[-0.06em] text-platinum">
             Vault Access
           </h1>
-          <p className="font-mono text-[11px] tracking-[0.08em] text-platinum/30">
+          <p className="font-mono text-[11px] tracking-[0.08em] text-platinum-muted">
             SECURE_AUTHENTICATION_GATEWAY_V7.1
           </p>
         </div>
@@ -225,7 +225,7 @@ export default function LoginPage() {
                 disabled={isBusy || status === "success"}
                 onClick={() => switchMode(option)}
                 className={`min-h-11 px-2 py-3 transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-cyan-glow disabled:cursor-not-allowed disabled:opacity-50 ${
-                  isActive ? "bg-cyan-glow text-ink-black" : "text-platinum/45 hover:text-cyan-glow"
+                  isActive ? "bg-cyan-glow text-ink-black" : "text-platinum-muted hover:text-cyan-glow"
                 }`}
               >
                 {label}
@@ -259,7 +259,7 @@ export default function LoginPage() {
               <div className="space-y-2">
                 <div className="group relative">
                   <User
-                    className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-platinum/20 transition-colors group-focus-within:text-cyan-glow"
+                    className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-platinum-muted transition-colors group-focus-within:text-cyan-glow"
                     aria-hidden="true"
                   />
                   <label htmlFor="node-identifier" className="sr-only">
@@ -280,7 +280,7 @@ export default function LoginPage() {
                       setNodeIdentifier(event.target.value);
                       resetFieldError();
                     }}
-                    className="h-[54px] w-full rounded-md border border-platinum/10 bg-[#151522] py-4 pl-12 pr-4 font-mono text-sm text-platinum outline-hidden transition-colors placeholder:text-platinum/35 focus:border-cyan-glow/70 focus:ring-1 focus:ring-cyan-glow/30 aria-[invalid=true]:border-red-300"
+                    className="h-[54px] w-full rounded-md border border-platinum/10 bg-[#151522] py-4 pl-12 pr-4 font-mono text-sm text-platinum outline-hidden transition-colors placeholder:text-platinum-muted focus:border-cyan-glow/70 focus:ring-1 focus:ring-cyan-glow/30 aria-[invalid=true]:border-red-300"
                   />
                 </div>
                 {errors.nodeIdentifier ? (
@@ -288,7 +288,7 @@ export default function LoginPage() {
                     {errors.nodeIdentifier}
                   </p>
                 ) : (
-                  <p id="node-identifier-help" className="pl-12 font-mono text-[10px] text-platinum/30">
+                  <p id="node-identifier-help" className="pl-12 font-mono text-[10px] text-platinum-muted">
                     Use the 64-character identifier derived from your approved UltraWallet public key.
                   </p>
                 )}
@@ -331,14 +331,14 @@ export default function LoginPage() {
                   wrap="soft"
                   aria-invalid={Boolean(cliError)}
                   aria-describedby={cliError ? "cli-payload-error" : "cli-payload-help"}
-                  className="min-h-[220px] w-full resize-y rounded-md border border-platinum/10 bg-[#151522] p-4 font-mono text-xs leading-6 text-platinum outline-hidden transition-colors placeholder:text-platinum/25 focus:border-cyan-glow/70 focus:ring-1 focus:ring-cyan-glow/30 aria-[invalid=true]:border-red-300"
+                  className="min-h-[220px] w-full resize-y rounded-md border border-platinum/10 bg-[#151522] p-4 font-mono text-xs leading-6 text-platinum outline-hidden transition-colors placeholder:text-platinum-muted focus:border-cyan-glow/70 focus:ring-1 focus:ring-cyan-glow/30 aria-[invalid=true]:border-red-300"
                 />
                 {cliError ? (
                   <p id="cli-payload-error" role="alert" className="font-mono text-xs text-red-300">
                     {cliError}
                   </p>
                 ) : (
-                  <p id="cli-payload-help" className="font-mono text-[10px] leading-5 text-platinum/40">
+                  <p id="cli-payload-help" className="font-mono text-[10px] leading-5 text-platinum-muted">
                     Paste the public JSON emitted by ultranet-auth. Private keys and sovereign key files are rejected;
                     the payload stays in memory only.
                   </p>
@@ -368,7 +368,7 @@ export default function LoginPage() {
           )}
         </form>
 
-        <div className="mt-auto flex items-center justify-between border-t border-platinum/10 pt-8 font-mono text-[10px] uppercase text-platinum/30">
+        <div className="mt-auto flex items-center justify-between border-t border-platinum/10 pt-8 font-mono text-[10px] uppercase text-platinum-muted">
           <button
             type="button"
             onClick={() => setNotice("Key recovery is an offline operator flow. No private keys are stored here.")}
@@ -388,7 +388,7 @@ export default function LoginPage() {
       <div className="pointer-events-none absolute right-[11%] top-[22%] hidden font-mono text-[8px] uppercase tracking-[0.35em] text-cyan-glow/20 lg:block">
         SYSTEM_STATUS: SECURE
       </div>
-      <div className="pointer-events-none fixed bottom-6 left-4 right-4 hidden justify-between font-mono text-[9px] uppercase tracking-[0.2em] text-platinum/10 sm:flex md:left-8 md:right-8">
+      <div className="pointer-events-none fixed bottom-6 left-4 right-4 hidden justify-between font-mono text-[9px] uppercase tracking-[0.2em] text-platinum-muted sm:flex md:left-8 md:right-8">
         <span>sys_auth: {mode === "cli" ? "cli_payload" : "wallet"}</span>
         <span>quantum_resistance_enabled: true</span>
         <span>session_timeout: server</span>

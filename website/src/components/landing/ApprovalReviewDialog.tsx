@@ -173,19 +173,19 @@ export default function ApprovalReviewDialog({ proposal, onClose, onStatusChange
 
           <dl className="mt-6 grid gap-4 border-y border-platinum/10 py-5 sm:grid-cols-2">
             <div className="min-w-0">
-              <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/35">NODE_ALIAS</dt>
+              <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum-muted">NODE_ALIAS</dt>
               <dd className="mt-2 break-words text-sm font-semibold text-platinum">{proposal.metadata || "Unnamed validator"}</dd>
             </div>
             <div className="min-w-0">
-              <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/35">SUBMITTED</dt>
+              <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum-muted">SUBMITTED</dt>
               <dd className="mt-2 text-sm text-platinum/75">{formatSubmittedAt(proposal.submittedAt)}</dd>
             </div>
             <div className="min-w-0">
-              <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/35">PROPOSER</dt>
+              <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum-muted">PROPOSER</dt>
               <dd className="mt-2 break-all font-mono text-xs text-platinum/70">{proposal.proposer}</dd>
             </div>
             <div className="min-w-0">
-              <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/35">VALIDATOR_KEY_FINGERPRINT</dt>
+              <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum-muted">VALIDATOR_KEY_FINGERPRINT</dt>
               <dd className="mt-2 break-all font-mono text-xs text-platinum/70">{formatPublicKeyFingerprint(proposal.publicKey)}</dd>
             </div>
           </dl>
@@ -205,7 +205,7 @@ export default function ApprovalReviewDialog({ proposal, onClose, onStatusChange
             <code className="mt-4 block break-all font-mono text-xs leading-6 text-platinum/85" title={proposal.proposalHash}>{proposal.proposalHash}</code>
           </div>
 
-          <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum/45">
+          <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted">
             <span>ENVELOPE // VERSION 3</span>
             <span className="text-cyan-glow">SOVEREIGN // 2 OF 3</span>
             <span>RECORDED // {recordedOwnerCount}/{status?.threshold ?? proposal.threshold}</span>
@@ -243,7 +243,7 @@ export default function ApprovalReviewDialog({ proposal, onClose, onStatusChange
               </button>
             )}
           </div>
-          <p className="mt-5 border-t border-platinum/10 pt-4 font-mono text-[10px] leading-5 text-platinum/35">
+          <p className="mt-5 border-t border-platinum/10 pt-4 font-mono text-[10px] leading-5 text-platinum-muted">
             Private keys never enter this website. The request is signed by the isolated Sovereign signer and independently verified by the UltraNet node.
           </p>
         </div>

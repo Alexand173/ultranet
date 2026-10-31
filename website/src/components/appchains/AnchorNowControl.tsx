@@ -44,7 +44,7 @@ export default function AnchorNowControl({
   if (!isAvailable) {
     return (
       <div className="min-w-44" title={`Server anchoring for AppChain #${chainId} is disabled by the connected node.`}>
-        <span className="inline-flex min-h-10 w-full items-center justify-center gap-2 border border-platinum/10 px-3 text-center font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-platinum/30">
+        <span className="inline-flex min-h-10 w-full items-center justify-center gap-2 border border-platinum/10 px-3 text-center font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-platinum-muted">
           <Anchor className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           ANCHORING_DISABLED
         </span>
@@ -138,7 +138,7 @@ export default function AnchorNowControl({
               disabled
               aria-disabled="true"
               title="Treasury accounting is unavailable from the connected node."
-              className="mt-2 inline-flex min-h-10 w-full items-center justify-center gap-2 border border-platinum/10 px-3 text-center font-mono text-[10px] font-black uppercase tracking-[0.12em] text-platinum/30 disabled:cursor-not-allowed"
+              className="mt-2 inline-flex min-h-10 w-full items-center justify-center gap-2 border border-platinum/10 px-3 text-center font-mono text-[10px] font-black uppercase tracking-[0.12em] text-platinum-muted disabled:cursor-not-allowed"
             >
               <ShieldAlert className="h-3.5 w-3.5" aria-hidden="true" />
               ANCHORING_UNAVAILABLE
