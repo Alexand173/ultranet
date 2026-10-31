@@ -4,25 +4,30 @@
 The Sovereign account requires 2-of-3 signatures, so this script loads `sovereign_keys.json`, signs
 the canonical version-1 transaction digest with the first two owners, and submits the envelope.
 
-Two values are deliberately not constants:
+Three values are deliberately not constants:
 
   * `nonce` is read from the node before signing. A stale nonce is rejected outright, and the
     Sovereign account moves it on every transfer.
   * `timestamp` is taken at signing time. The node rejects a transaction older than one hour with
     "Transaction is too old!", which is what a hardcoded timestamp eventually guarantees.
+  * `fee` is quoted by `/api/transaction/estimate` for this exact recipient and amount. It is not
+    flat: the node charges `max(1, amount / 100)`, one percent, so the quote is checked against
+    that rule rather than a constant, and a change in policy stops the run instead of being signed.
 
-The fee, gas limit and gas price come from the node's own `/api/transaction/estimate`, and the
-script aborts if that quote disagrees with what it is about to sign.
+Pass `--amount` in ULTRA (default 100). The fee is charged on top of it, so moving 201 needs
+203.010000 of balance.
 """
 import argparse
 import hashlib
 import json
+import os
 import secrets
 import subprocess
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from decimal import Decimal, InvalidOperation
 
 from pqc.sign import dilithium5
 
@@ -40,6 +45,12 @@ parser.add_argument(
     help="write the digest, signature and public key to this path so an independent verifier "
          "(the Rust node) can confirm the binding is byte-compatible.",
 )
+parser.add_argument(
+    "--amount",
+    default="100",
+    help="float to transfer, in ULTRA with up to six decimals (default 100). The node charges a "
+         "1%% minimum fee on top, so 201 needs 203.010000 of balance.",
+)
 args = parser.parse_args()
 
 # CONFIG
@@ -47,11 +58,30 @@ NODE_URL = "https://api.ultranetwork.cc"
 SOVEREIGN_ADDR = "3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c"
 FAUCET_ADDR = "fe0b9a9227ebb2bb40b408c5b10b0155a2591fdf97ce43580a1ab873271af1f8"
 
-AMOUNT = 100_000_000        # 100.000000 ULTRA of float for the faucet
-EXPECTED_FEE = 1_000_000    # 1.000000 ULTRA — the quote the node returns for this transfer
+BASE_UNITS = 1_000_000      # six decimals, as the node counts
 CHAIN_ID = 0
 VERSION = 1
 API_URL = NODE_URL + "/api/transaction"
+
+
+def parse_ultra(text: str) -> int:
+    """ULTRA on the command line → base units, refusing precision the chain cannot carry."""
+    try:
+        amount = Decimal(text)
+    except InvalidOperation:
+        raise SystemExit(f"--amount {text!r} is not a number of ULTRA.")
+    units = amount * BASE_UNITS
+    if units != units.to_integral_value():
+        raise SystemExit(f"--amount {text} has more than six decimals; the node counts base units.")
+    if units <= 0:
+        raise SystemExit("--amount must be greater than zero.")
+    return int(units)
+
+
+AMOUNT = parse_ultra(args.amount)
+# `max(1, amount / 100)` is the node's minimum transfer fee (src/lib.rs:1443), so the quote is
+# checked against that rule instead of a hardcoded number.
+EXPECTED_FEE = max(1, AMOUNT // 100)
 
 # The edge in front of the API answers 403 to clients that send no usable User-Agent.
 USER_AGENT = "UltraNet-send-ultra/2.0"
@@ -104,8 +134,9 @@ if estimate["recipient"] != FAUCET_ADDR or estimate["amount"] != AMOUNT:
     raise SystemExit("The node quoted a different transfer than the one configured here.")
 if estimate["fee"] != EXPECTED_FEE:
     raise SystemExit(
-        f"The node now quotes a fee of {estimate['fee']} base units, not the expected {EXPECTED_FEE}. "
-        "Review the policy before signing: the fee is part of the signed digest."
+        f"The node quotes a fee of {estimate['fee']} base units, not the {EXPECTED_FEE} that "
+        "max(1, amount / 100) predicts. Review the fee policy before signing: the fee is part of "
+        "the signed digest."
     )
 
 FEE = estimate["fee"]
@@ -116,9 +147,9 @@ total = AMOUNT + FEE
 
 print(f"Sovereign : {SOVEREIGN_ADDR}")
 print(f"Faucet    : {FAUCET_ADDR}")
-print(f"Amount    : {AMOUNT / 1_000_000:.6f} ULTRA")
-print(f"Network fee: {FEE / 1_000_000:.6f} ULTRA  (gas_limit {GAS_LIMIT}, gas_price {GAS_PRICE})")
-print(f"Total debit: {total / 1_000_000:.6f} ULTRA of {balance / 1_000_000:.6f} ULTRA")
+print(f"Amount    : {AMOUNT / BASE_UNITS:.6f} ULTRA")
+print(f"Network fee: {FEE / BASE_UNITS:.6f} ULTRA  (gas_limit {GAS_LIMIT}, gas_price {GAS_PRICE})")
+print(f"Total debit: {total / BASE_UNITS:.6f} ULTRA of {balance / BASE_UNITS:.6f} ULTRA")
 print(f"Nonce     : {NONCE}")
 print(f"Timestamp : {timestamp}")
 
@@ -176,13 +207,34 @@ tx = {
 }
 
 if args.check_file:
+    os.makedirs(os.path.dirname(os.path.abspath(args.check_file)), exist_ok=True)
     with open(args.check_file, "w") as handle:
         json.dump(
             {
                 "digest": digest.hex(),
                 "signature": sig0.hex(),
                 "public_key": sender_pubkey_hex,
+                # The node checks both signatures and requires two distinct owners, so both are
+                # recorded here rather than only the one whose key signs the account.
+                "second_signature": sig1.hex(),
+                "second_public_key": owner1["public_key"],
                 "combined_signature_bytes": len(combined_sig),
+                # The signed fields let the verifier rebuild the preimage with the node's own
+                # `create_transaction_message_for`, so a layout mismatch fails here rather than
+                # as "invalid signature" after submission.
+                "signed_fields": {
+                    "sender": SOVEREIGN_ADDR,
+                    "recipient": FAUCET_ADDR,
+                    "amount": AMOUNT,
+                    "fee": FEE,
+                    "nonce": NONCE,
+                    "timestamp": timestamp,
+                    "nullifier": nullifier_bytes.hex(),
+                    "gas_limit": GAS_LIMIT,
+                    "gas_price": GAS_PRICE,
+                    "chain_id": CHAIN_ID,
+                    "version": VERSION,
+                },
             },
             handle,
         )

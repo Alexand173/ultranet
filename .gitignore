@@ -59,6 +59,7 @@ website/crypto/ultra-dilithium5/build/
 !deploy/faucet-staging-origin-lockdown.sh
 !scripts/migrate_appchain_registry.sh
 !scripts/check_approval_staging.sh
+!tools/pqclean_dilithium5/build.sh
 
 # Generated offline approval and legacy transaction artifacts - never commit
 /owner-identities.json
@@ -82,9 +83,6 @@ ultranet*.log
 debug.log_Gemini*
 node_modules/
 _Gemini*
-Cargo.toml:24:1
-src/main.rs:3134-3351
 
 # Native build output for the pqc Python binding (see tools/pqclean_dilithium5/README.md)
 tools/pqclean_dilithium5/build/
-__pycache__/

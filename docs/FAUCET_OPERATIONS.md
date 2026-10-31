@@ -57,6 +57,11 @@ A 100 $ULTRA transfer does **not** clear the `200.000000` reserve above, so clai
 it. Fund at least `201.000000` to make the first claim payable, and keep the reserve in mind when
 choosing the amount.
 
+The fee is **not flat**: the node charges `max(1, amount / 100)` — one percent on the amount
+(`UltraBlockchain::minimum_transfer_fee`, `src/lib.rs:1443`). Moving `201.000000` therefore costs
+`2.010000` and debits `203.010000`, not `202.000000`. The script derives that expectation from the
+rule and aborts if the node's quote disagrees, so a policy change can never be silently signed.
+
 ### Prerequisites, once per machine
 
 ```bash
@@ -74,29 +79,38 @@ and its signatures do not verify on this chain.
 ### Step 1 — dry run and read every line
 
 ```bash
-./venv/bin/python send_ultra.py --check-file /tmp/sig-artifact.json
+./venv/bin/python send_ultra.py --amount 201 --check-file /tmp/sig-artifact.json
 ```
 
-The script fetches the live nonce and the node's fee quote, signs with two owners, and refuses to
-continue if either signature fails to verify. Nothing is submitted and `transfer.json` is not written.
-Confirm before going further:
+`--amount` is in ULTRA with up to six decimals and defaults to `100`. The script fetches the live nonce
+and the node's fee quote, signs with two owners, and refuses to continue if either signature fails to
+verify. Nothing is submitted and `transfer.json` is not written. Confirm before going further:
 
-- `Nonce` equals `nonce` from `GET /api/account/<sovereign>`; a stale nonce is rejected outright.
-- `Network fee` equals `fee` from `GET /api/transaction/estimate` for this recipient and amount; the
-  script aborts if the quote disagrees with its expectation.
+- `Nonce` equals `nonce` from `GET /api/account/<sovereign>`; a stale nonce is rejected outright, and
+  every confirmed transfer moves it by one.
+- `Network fee` equals what `max(1, amount / 100)` predicts, and matches
+  `GET /api/transaction/estimate` for this recipient and amount.
 - `Total debit` is `amount + fee` and sits below the Sovereign balance.
 - `Timestamp` is within the hour; the node rejects older envelopes as *"Transaction is too old!"*.
 - `signature : 9254 bytes (2 x 4627)`.
 
-### Step 2 — verify the signature outside the binding
+### Step 2 — verify the envelope outside the binding
 
 ```bash
 cargo run --locked --example verify_sig_artifact -- /tmp/sig-artifact.json
 ```
 
-Expected: `node verifies : true`, and `derived address` equal to one of the Sovereign owner addresses
-in `ULTRANET_AUTHORIZED_NODE_IDENTIFIERS`. This uses the same dilithium5 verifier the node runs, so a
-`false` here means do not proceed — no transaction can succeed.
+This rebuilds the preimage with the node's own `create_transaction_message_for` and checks all of:
+
+- `digest matches : true` — the script signed exactly the bytes the node will verify. Without this
+  check a layout mismatch would only surface as *"invalid signature"* after signing.
+- `node verifies : true` for **both** owners, and `owners differ : true`. The node requires two
+  distinct owners of the three in `sovereign_owners` (`src/lib.rs:1966`), so one good signature is not
+  enough.
+- `combined size : 9254 bytes`.
+- `owner0 address` / `owner1 address` are two of those three owner addresses.
+
+A `false` on any line means do not submit: no transaction with these bytes can be accepted.
 
 ### Step 3 — sign and submit
 
