@@ -168,8 +168,15 @@ The first real float, executed 2026-10-31 from the signing host:
 | Sovereign after | `999,795.980000`, nonce 5 |
 | faucet after | `202.000000`, against the `201.010000` the first claim requires |
 
-The address holds the float; claims remain gated by `FAUCET_ENABLED` and the intake prerequisites
-above, which funding does not satisfy.
+**Intake was enabled on 2026-10-31**, after the float landed: `FAUCET_ENABLED=true` in
+`/etc/ultranet-faucet/faucet.env`, service restarted, and `GET https://faucet.ultranetwork.cc/api/faucet/status`
+now reports `enabled: true`, `availability: available`. A claim carrying an invalid Turnstile token is
+refused with HTTP 400, so the CAPTCHA gate is enforced rather than bypassed by the flag.
+
+Two gates in the list above are still open and should be closed: `ultranet-memory-monitor.service` is
+inactive, and the faucet binary is still the 2026-08-30 build while the node now runs `61cec4b` — see
+[`runbooks/node-binary-rollforward-2026-10-31.md`](./runbooks/node-binary-rollforward-2026-10-31.md).
+That record also documents a `1000`-base-unit balance delta the restart exposed.
 
 ### If the response is ambiguous
 
