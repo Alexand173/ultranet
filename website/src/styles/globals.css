@@ -23,8 +23,13 @@
 }
 
 @layer base {
-  html {
-    scroll-behavior: smooth;
+  /* Smooth scrolling is opt-in. A reduced-motion preference keeps instant
+     jumps, and Next is told about the smooth setting via
+     data-scroll-behavior on <html> so it can suspend it across route changes. */
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
   }
 
   * {

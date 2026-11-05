@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { NOISE_FIELD } from "@/lib/deterministic-noise";
@@ -15,9 +15,14 @@ import { NOISE_FIELD } from "@/lib/deterministic-noise";
  *
  * The mount gate stays: the decoration renders after hydration, so it never
  * reaches the server HTML and never delays first paint.
+ *
+ * The animation stops for anyone who asked for reduced motion — 52 elements
+ * drifting and pulsing forever is motion nobody opted into (WCAG 2.2.2). The
+ * decoration stays, it just holds still.
  */
 export default function VisualNoise() {
   const pathname = usePathname();
+  const reduceMotion = useReducedMotion();
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
@@ -37,15 +42,23 @@ export default function VisualNoise() {
             y: `${label.yVh}vh`,
             opacity: 0.05,
           }}
-          animate={{
-            y: [null, `${label.driftPx}px`],
-            opacity: [0.05, 0.1, 0.05],
-          }}
-          transition={{
-            duration: label.duration,
-            repeat: Infinity,
-            ease: "linear",
-          }}
+          animate={
+            reduceMotion
+              ? undefined
+              : {
+                  y: [null, `${label.driftPx}px`],
+                  opacity: [0.05, 0.1, 0.05],
+                }
+          }
+          transition={
+            reduceMotion
+              ? undefined
+              : {
+                  duration: label.duration,
+                  repeat: Infinity,
+                  ease: "linear",
+                }
+          }
           className="absolute font-mono text-[6px] text-cyan-glow uppercase tracking-[0.4em] whitespace-nowrap"
         >
           Visual_Decoration: {label.suffix} {"//"} NOT_LIVE
@@ -62,8 +75,10 @@ export default function VisualNoise() {
             r="0.5"
             fill="#0FFFFF"
             initial={{ opacity: 0.1 }}
-            animate={{ opacity: [0.1, 0.5, 0.1] }}
-            transition={{ duration: particle.duration, repeat: Infinity }}
+            animate={reduceMotion ? undefined : { opacity: [0.1, 0.5, 0.1] }}
+            transition={
+              reduceMotion ? undefined : { duration: particle.duration, repeat: Infinity }
+            }
           />
         ))}
       </svg>
