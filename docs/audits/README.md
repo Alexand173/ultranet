@@ -11,6 +11,7 @@ substitutes a manual screen-reader, keyboard-only, zoom, or mobile assessment.
 | 2026-10-31 19:15 | Landmarks and keyboard reachability (all axe rules) | 17 routes incl. `/docs`, `/validator`, `/download` | 0 violations (local and live) | [2026-10-31-landmarks-and-keyboard-reachability.md](./2026-10-31-landmarks-and-keyboard-reachability.md) |
 | 2026-11-05 15:55 | Responsive fit, repeatable scan, label-in-name fixes | 18 routes incl. the reader's embedded frame | 0 violations; no clipping 360–1920 px | [2026-11-05-responsive-fit-and-repeatable-scan.md](./2026-11-05-responsive-fit-and-repeatable-scan.md) |
 | 2026-11-05 16:55 | Skip link, accessibility deploy gate, Windows suite root cause | 18 routes + 6 skip-link routes | 0 violations; skip link verified by keyboard | [2026-11-05-skip-link-and-deploy-gate.md](./2026-11-05-skip-link-and-deploy-gate.md) |
+| 2026-11-05 19:20 | Hydration determinism, smooth scroll, new hydration check | 18 routes, dev build | 0 hydration messages; detector proven to fail; 0 violations | [2026-11-05-hydration-determinism.md](./2026-11-05-hydration-determinism.md) |
 
 **Planned, not yet performed:** the manual screen-reader pass. See
 [MANUAL_SCREEN_READER_AUDIT_PLAN.md](./MANUAL_SCREEN_READER_AUDIT_PLAN.md). No manual NVDA or VoiceOver
@@ -29,6 +30,19 @@ npm run a11y -- --json a11y-report.json             # machine-readable
 It runs axe-core's full default rule set over every route **and into embedded frames**, so
 `/docs/whitepaper` is audited as two documents. It exits non-zero on any violation, which makes it
 usable as a gate. Set `A11Y_CHROME_PATH` if no system Chrome is found.
+
+## Running the hydration check
+
+Axe cannot see a hydration mismatch: React reports it only in development, only once, and only to the
+browser console. That is what `npm run hydration` is for, and it must be pointed at a dev server:
+
+```bash
+npm run dev              # one terminal — production builds report nothing
+npm run hydration        # 18 routes, exits 1 on a mismatch
+```
+
+It shares its route list and browser resolver with the accessibility scan, so the two cannot cover
+different surfaces. See [2026-11-05-hydration-determinism.md](./2026-11-05-hydration-determinism.md).
 
 ## How a record is produced
 
