@@ -23,8 +23,10 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // data-scroll-behavior lets Next suspend CSS smooth scrolling while it swaps
+  // routes; without it the smooth scroll fights the route transition.
   return (
-    <html lang="en">
+    <html lang="en" data-scroll-behavior="smooth">
       <body className="antialiased relative bg-ink-black noise-bg">
         {/* Must stay the first focusable element in the document. */}
         <SkipToContent />
