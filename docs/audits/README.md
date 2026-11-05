@@ -12,6 +12,7 @@ substitutes a manual screen-reader, keyboard-only, zoom, or mobile assessment.
 | 2026-11-05 15:55 | Responsive fit, repeatable scan, label-in-name fixes | 18 routes incl. the reader's embedded frame | 0 violations; no clipping 360–1920 px | [2026-11-05-responsive-fit-and-repeatable-scan.md](./2026-11-05-responsive-fit-and-repeatable-scan.md) |
 | 2026-11-05 16:55 | Skip link, accessibility deploy gate, Windows suite root cause | 18 routes + 6 skip-link routes | 0 violations; skip link verified by keyboard | [2026-11-05-skip-link-and-deploy-gate.md](./2026-11-05-skip-link-and-deploy-gate.md) |
 | 2026-11-05 19:20 | Hydration determinism, smooth scroll, new hydration check | 18 routes, dev build | 0 hydration messages; detector proven to fail; 0 violations | [2026-11-05-hydration-determinism.md](./2026-11-05-hydration-determinism.md) |
+| 2026-11-05 20:25 | Home command-centre lane fit; per-route titles; heading order | 8 viewports + 18 routes | hero fits at every size; 0 duplicate titles; no heading skips; 0 violations | [2026-11-05-command-center-lane-fit.md](./2026-11-05-command-center-lane-fit.md) |
 
 **Planned, not yet performed:** the manual screen-reader pass. See
 [MANUAL_SCREEN_READER_AUDIT_PLAN.md](./MANUAL_SCREEN_READER_AUDIT_PLAN.md). No manual NVDA or VoiceOver

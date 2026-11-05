@@ -32,24 +32,24 @@ are the first stops after a fresh load, in order.
 
 | Route | Title announced | `h1` | Outline | Landmarks (`D`) | Live regions | First tab stops |
 |---|---|---|---|---|---|---|
-| `/` | UltraNet \| Blockchain Network | A network you can actually understand. | h1 h2×4 h3 h4×4 h2 h3×4 h2 h3 h2×3 h3 | nav → main → footer | polite: "UltraWallet not detected" | Skip → logo → LEARN → DOCS |
-| `/docs` | UltraNet \| Blockchain Network | Documentation Hub | h1 h2 h2 h3×34 | nav → main | none | Skip → logo → LEARN → DOCS |
+| `/` | UltraNet \| Sovereign Blockchain Network | A network you can actually understand. | h1 h2×4 h3 h4×4 h2 h3×4 h2 h3 h2×3 h3 | nav → main → footer | polite: "UltraWallet not detected" | Skip → logo → LEARN → DOCS |
+| `/docs` | Documentation Hub \| UltraNet | Documentation Hub | h1 h2 h2 h3×34 | nav → main | none | Skip → logo → LEARN → DOCS |
 | `/docs/whitepaper` | UltraNet Whitepaper \| The Sovereign Technical Guide | UltraNet Technical Whitepaper | h1 h2 | nav → main (named "Whitepaper reader") | polite: `0%_READ` | skip → logo → LEARN → DOCS; iframe titled "UltraNet v7.1 Sovereign Technical Whitepaper" |
-| `/docs/layer-0-foundation` | UltraNet \| Blockchain Network | Layer 0 Foundation | h1 h2×3 h3 h2 | nav → header → main | none | skip, logo, LEARN, DOCS |
-| `/docs/unified-scalability` | UltraNet \| Blockchain Network | Unified Scalability | h1 h2×3 h3×2 h2 | nav → header → main | none | skip, logo, LEARN, DOCS |
-| `/docs/trusted-execution` | UltraNet \| Blockchain Network | FHE Implementation Notes | h1 h2×3 h3 h2 | nav → header → main | none | skip, logo, LEARN, DOCS |
-| `/docs/real-time-finality` | UltraNet \| Blockchain Network | Execution and Performance Evidence | h1 h2×4 | nav → header → main | none | skip, logo, LEARN, DOCS |
-| `/docs/autonomous-intelligence` | UltraNet \| Blockchain Network | AI Governor Implementation | h1 h2×4 | nav → header → main | polite: "UNAVAILABLE" | skip, logo, LEARN, DOCS |
-| `/login` | UltraNet \| Blockchain Network | Vault Access | h1 | main only | none | Skip → "ULTRAWALLET" tab → "CLI_SIGNED_PAYLOAD" tab → `input#node-identifier` |
+| `/docs/layer-0-foundation` | Layer 0 Foundation \| UltraNet Docs | Layer 0 Foundation | h1 h2×3 h3 h2 | nav → header → main | none | skip, logo, LEARN, DOCS |
+| `/docs/unified-scalability` | Unified Scalability \| UltraNet Docs | Unified Scalability | h1 h2×3 h3×2 h2 | nav → header → main | none | skip, logo, LEARN, DOCS |
+| `/docs/trusted-execution` | FHE Implementation Notes \| UltraNet Docs | FHE Implementation Notes | h1 h2×3 h3 h2 | nav → header → main | none | skip, logo, LEARN, DOCS |
+| `/docs/real-time-finality` | Execution and Performance Evidence \| UltraNet Docs | Execution and Performance Evidence | h1 h2×4 | nav → header → main | none | skip, logo, LEARN, DOCS |
+| `/docs/autonomous-intelligence` | AI Governor Implementation \| UltraNet Docs | AI Governor Implementation | h1 h2×4 | nav → header → main | polite: "UNAVAILABLE" | skip, logo, LEARN, DOCS |
+| `/login` | Vault Access \| UltraNet | Vault Access | h1 | main only | none | Skip → "ULTRAWALLET" tab → "CLI_SIGNED_PAYLOAD" tab → `input#node-identifier` |
 | `/operator` | UltraNet Operator Console \| Authenticated Operations | AUTH_SERVICE_UNAVAILABLE | h1 | main only | none | Skip → RETURN_TO_LOGIN → RETRY_CHECK |
 | `/appchains` | AppChains \| UltraNet Operator Console | AUTH_SERVICE_UNAVAILABLE | h1 | main only | none | Skip → RETURN_TO_LOGIN → RETRY_CHECK |
 | `/validator` | Validator Onboarding \| UltraNet v7.1.7 | Become a validator | h1 h2 h3×3 h2 h3×3 h2 h3×3 h2×2 | nav → main | polite ×2 (one empty, one "UltraWallet not detected") | skip, logo, LEARN, DOCS |
 | `/download` | Download UltraNet Node \| v7.1.7 | Sovereign Node v7.1 | h1 h2 h3×3 h2 h2 h3 h3 h2 | nav → main | none | skip, logo, LEARN, DOCS |
-| `/legislation` | UltraNet \| Blockchain Network | Protocol Legislation | h1 h2×3 h3 | nav → main | none | skip, logo, LEARN, DOCS |
-| `/transact` | Send $ULTRA \| UltraNet | Create a wallet | **h2 then h1** | nav → main | none | skip, logo, LEARN, DOCS |
+| `/legislation` | Protocol Legislation \| UltraNet | Protocol Legislation | h1 h2×3 h3 | nav → main | none | skip, logo, LEARN, DOCS |
+| `/transact` | Send $ULTRA \| UltraNet (redirect to `/send-ultra`) | Send Ultra | h1 h2 h2 | nav → main | none | skip, logo, LEARN, DOCS |
 | `/ultraverse` | UltraVerse Services \| UltraNet | Services on UltraNet | h1 h2 h3×3 h2 h3×4 | **main → header → nav** (named "Directory navigation") | none | Skip → UltraVerse logo → Services → Concepts |
 | `/learn` | Learn UltraNet \| UltraNet | Understand the network before you use it. | h1 h2×3 h3×5 h2×2 | nav → main | polite: "Node data unavailable" | skip, logo, LEARN, DOCS |
-| `/send-ultra` | Send $ULTRA \| UltraNet | Create a wallet | **h2 then h1** | nav → main | none | skip, logo, LEARN, DOCS |
+| `/send-ultra` | Send $ULTRA \| UltraNet | Send Ultra | h1 h2 h2 | nav → main | none | skip, logo, LEARN, DOCS |
 
 Two routes legitimately differ from the common shape and must not be "fixed" during an audit: `/login`,
 `/operator` and `/appchains` render without the site nav or footer (their only landmark is `main`, which is
@@ -60,14 +60,16 @@ why the skip link still works), and `/ultraverse` puts `main` before `header` an
 These are real, reproducible from the data above, and none of them is caught by axe. Either fix them first
 so the session tests the fixed site, or record them as known failures.
 
-1. **Duplicate page titles (WCAG 2.4.2, Level A).** Nine routes announce the identical title
-   *"UltraNet | Blockchain Network"*: `/`, `/docs`, `/docs/layer-0-foundation`, `/docs/unified-scalability`,
-   `/docs/trusted-execution`, `/docs/real-time-finality`, `/docs/autonomous-intelligence`, `/login`,
-   `/legislation`. `/transact` and `/send-ultra` also share *"Send $ULTRA | UltraNet"*. A reader user moving
-   between tabs gets no way to tell the pages apart. Fix: a per-route `metadata.title`.
-2. **Heading order breaks on two routes.** `/transact` and `/send-ultra` put an `h2` *before* the `h1`, so
-   `1` and `H` walk disagree with visual order (WCAG 1.3.1). The `h2` is "The node key identifies the
-   computer…"; the `h1` is "Create a wallet".
+1. ~~**Duplicate page titles (WCAG 2.4.2, Level A).**~~ **Fixed 2026-11-05.** Nine routes announced the
+   identical *"UltraNet | Blockchain Network"*; each now declares its own title — six in their page file,
+   three (`/docs`, `/docs/autonomous-intelligence`, `/login`, `/legislation` are client components) through a
+   nested `layout.tsx`. `/transact` turned out to be a redirect to `/send-ultra`, so the shared title was
+   never a second page. Re-run `npm run sr:inventory` to confirm no two routes announce the same title.
+2. ~~**Heading order breaks on two routes.**~~ **Fixed 2026-11-05.** `/transact` and `/send-ultra` opened
+   with an `h2` ("The node key identifies the computer…") before the `h1`. The page now owns the `h1`
+   ("Send Ultra") in the wallet-setup and wallet-locked states too, so the guidance callout is a real `h2`,
+   the setup and locked cards became `h2`, and their children stepped down to `h3`/`h4`. Outline is now
+   `h1 h2 h2` with no level skips anywhere on the site.
 3. **Landmarks are unnamed.** Only `/docs/whitepaper`'s main and `/ultraverse`'s nav declare a name. That is
    *acceptable* today because each type is unique per route — do not add labels to fix a problem that only
    appears when a second nav exists. Record it as "expected: announced as 'navigation' / 'main'".
@@ -128,5 +130,6 @@ regardless of the automated result.
 - **Mobile Safari + VoiceOver is entirely unmeasured.**
 - **Live-region politeness** across the command centre is unverified; automated tools cannot judge it, and
   step 5 is the only place it gets tested.
-- **The five defects above are open** as of `cd7f39e`: duplicate titles, two broken heading orders, unnamed
-  (but unique) landmarks, dev-only tab stop, eager live regions.
+- **Two of the five defects are fixed** (duplicate titles, heading order) as of the commit that carried this
+  edit; **three remain open**: unnamed (but unique) landmarks, the dev-only tab stop, and eager live regions.
+  The first two are cosmetic to the audit; the third is what step 5 exists to judge.
