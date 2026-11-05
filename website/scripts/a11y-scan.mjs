@@ -16,39 +16,18 @@
  * The browser binary is resolved from A11Y_CHROME_PATH, then the usual system
  * locations, then Playwright's own cache. No browser is downloaded by install.
  */
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { homedir } from "node:os";
-import path from "node:path";
 import process from "node:process";
 import { chromium } from "playwright-core";
+import { resolveChrome } from "./browser.mjs";
+import { ROUTES } from "./routes.mjs";
 
 const require = createRequire(import.meta.url);
 const AXE_SOURCE = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
 
-const DEFAULT_ROUTES = [
-  "/",
-  "/docs",
-  "/docs/whitepaper",
-  "/docs/layer-0-foundation",
-  "/docs/unified-scalability",
-  "/docs/trusted-execution",
-  "/docs/real-time-finality",
-  "/docs/autonomous-intelligence",
-  "/login",
-  "/operator",
-  "/appchains",
-  "/validator",
-  "/download",
-  "/legislation",
-  "/transact",
-  "/ultraverse",
-  "/learn",
-  "/send-ultra",
-];
-
 function parseArgs(argv) {
-  const options = { baseUrl: "http://localhost:3000", routes: DEFAULT_ROUTES, json: null, width: 1440 };
+  const options = { baseUrl: "http://localhost:3000", routes: ROUTES, json: null, width: 1440 };
   for (let i = 0; i < argv.length; i += 1) {
     const [flag, inline] = argv[i].split("=");
     const value = inline ?? argv[i + 1];
@@ -58,51 +37,6 @@ function parseArgs(argv) {
     else if (flag === "--width") { options.width = Number(value); if (inline === undefined) i += 1; }
   }
   return options;
-}
-
-function resolveChrome() {
-  if (process.env.A11Y_CHROME_PATH) return process.env.A11Y_CHROME_PATH;
-  const candidates = [
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-    "/opt/google/chrome/chrome",
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  ];
-  for (const candidate of candidates) {
-    try {
-      readFileSync(candidate);
-      return candidate;
-    } catch {
-      // try the next one
-    }
-  }
-  // Playwright's own downloaded Chromium, if the cache exists.
-  const cacheRoot = path.join(homedir(), ".cache/ms-playwright");
-  try {
-    const builds = readdirSync(cacheRoot)
-      .filter((entry) => entry.startsWith("chromium-"))
-      .sort()
-      .reverse();
-    for (const build of builds) {
-      for (const dir of ["chrome-linux64", "chrome-linux"]) {
-        const candidate = path.join(cacheRoot, build, dir, "chrome");
-        try {
-          readFileSync(candidate);
-          return candidate;
-        } catch {
-          // keep looking
-        }
-      }
-    }
-  } catch {
-    // no cache directory
-  }
-  throw new Error(
-    "No Chromium binary found. Set A11Y_CHROME_PATH to a Chrome/Chromium executable, " +
-      "or install one via your package manager.",
-  );
 }
 
 const AUDIT = async () => {
