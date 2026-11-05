@@ -105,6 +105,43 @@ jobs:
           ! grep -Fq "THIS PAGE COULD NOT BE FOUND" "${generated}"
           test -s website/public/docs/ultranet-whitepaper.pdf
 
+      # Accessibility gate. Runs the same full-rule axe scan used in the audits,
+      # including the whitepaper reader's embedded frame, against the exact build
+      # about to be deployed — and blocks the deploy instead of reporting after.
+      # It would have stopped the coin-label contrast regression that shipped on
+      # 2026-11-05.
+      - name: Restore the Chromium cache for the accessibility gate
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ultranet-a11y-chromium-${{ hashFiles('website/package-lock.json') }}
+          restore-keys: |
+            ultranet-a11y-chromium-
+
+      - name: Install Chromium for the accessibility gate
+        shell: bash
+        run: npx --yes playwright@1.64.1 install chromium
+
+      - name: Start the production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          ( cd website && npm run start > /tmp/next-start.log 2>&1 & )
+          for _ in $(seq 1 60); do
+            if curl --fail --silent --max-time 3 http://127.0.0.1:3000/ > /dev/null; then
+              echo "next start is ready on :3000"
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/next-start.log
+          echo "::error::next start did not become ready on :3000"
+          exit 1
+
+      - name: Accessibility gate
+        working-directory: website
+        run: npm run a11y -- --base-url http://127.0.0.1:3000
+
       - name: Package deployment inputs
         shell: bash
         run: |
