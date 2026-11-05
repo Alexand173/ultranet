@@ -412,6 +412,28 @@ Install the GitHub Actions public key in `/home/ultranet-deploy/.ssh/authorized_
 
 The deployment archive contains only the website source and `ULTRA_NET_TECHNICAL_GUIDE.md`; it excludes `.git`, `node_modules`, `.next`, environment files, keys, databases, and Rust build outputs. The canonical Markdown source is installed at `/opt/ultranet/ULTRA_NET_TECHNICAL_GUIDE.md` so future server builds can regenerate the HTML reader.
 
+### Accessibility gate
+
+The deploy workflow runs `npm run a11y` at step 13 of 18 — after the build, before packaging — against
+the candidate build on `127.0.0.1:3000`, not against the host. The scan covers 18 routes including the
+whitepaper reader's embedded frame and exits non-zero on any violation, so a regression blocks the deploy
+instead of shipping and being reported afterwards. It is the check that would have stopped the coin-label
+contrast regression that went live on 2026-11-05.
+
+Chromium is fetched by a one-shot `npx playwright@1.64.1 install chromium`; `playwright-core` never
+downloads a browser itself, so the server-side `npm ci` is unaffected. The scan's resolver looks in
+`$A11Y_CHROME_PATH`, then system locations, then Playwright's cache.
+
+Run the same gate before pushing a visual change:
+
+```bash
+cd website
+npm run build && npm run start &        # or npm run dev on :3000
+npm run a11y                            # 18 routes, exit 1 on any violation
+npm run a11y -- --base-url https://dashboard.ultranetwork.cc   # what the public sees
+npm run a11y -- --routes /,/docs --json a11y.json              # subset + machine-readable
+```
+
 ### Manual redeploy and rollback
 
 To redeploy a specific commit after the production secrets are configured, use the workflow's **Run workflow** action and enter its full commit SHA. The server helper builds and verifies the candidate before swapping `/opt/ultranet/website`. If the dashboard restart, local whitepaper routes, PDF route, validator state, or generated asset checks fail, it restores the previous website and restarts the prior dashboard release. `ultranet.service` is never restarted by this workflow.

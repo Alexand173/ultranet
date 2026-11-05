@@ -46,6 +46,22 @@ lockfile hash; `playwright-core` still ships no browser, so the server-side `npm
 This is not theoretical: the coin-label contrast regression that went live on 2026-11-05 would have been
 stopped by this step.
 
+**The gate was made to fail on purpose,** because a gate that has only ever been seen passing is not known
+to work. A throwaway page with an unlabelled image, an empty link and low-contrast text produced:
+
+```
+FAIL /bad.html  frames=1 incomplete=0 violations=3
+       color-contrast ×1 — p
+       image-alt ×1 — img
+       link-name ×1 — a
+SCANNER EXIT CODE: 1
+```
+
+Exit 1 on the scanner is what fails the workflow step, and the step sits before packaging, so the deploy
+stops instead of shipping the regression. (The first measurement of this read `EXIT CODE: 0` — that was the
+exit status of the `tail` in the pipeline, not the scanner. Measure the scanner directly, or with
+`pipefail`.)
+
 ## Aside: why the Windows suite was red
 
 Unrelated to the website work, but it was the first thing asked about, so the answer belongs on record.
@@ -66,6 +82,24 @@ The durable fix is not the one line: **no Linux job compiled test targets**, so 
 invisible until a 20-minute Windows run. `windows-tests.yml` now has a `Linux check (all targets)` job
 running `cargo check --locked --all-targets`, which catches the same drift in a couple of minutes on the
 platform the code is developed on.
+
+Both jobs on `04e7e03`: **`Windows x64 Rust tests` success, `Linux check (all targets)` success** — the
+first green Windows run since the drift landed.
+
+The suite was then run locally one target at a time (`-j 1 --test-threads=1`) because compiling every test
+target at once crashes this workstation:
+
+| target | result | time |
+|---|---|---|
+| `--lib` | 126 passed, 1 ignored | 314.9 s |
+| `--test faucet_api_test` | 2 passed | 0.02 s |
+| `--test faucet_service_test` | 3 passed | 0.03 s |
+| `--test integration_test` | 10 passed | 332.5 s |
+| `--test dag_stress_test` | 1 passed | 0.54 s |
+
+142 passed, 0 failed. That is higher than the 114 recorded on 2026-10-31; tests have been added in the
+meantime and the difference is not itemised here, so the two numbers are not comparable as a like-for-like
+regression signal — only the 0 failures is.
 
 ## Scope and limits
 
