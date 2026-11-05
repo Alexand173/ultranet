@@ -1,5 +1,10 @@
+import type { Metadata } from "next";
 import DocPage from "@/components/docs/DocPage";
 import { Cpu } from "lucide-react";
+
+export const metadata: Metadata = {
+  title: "Unified Scalability | UltraNet Docs",
+};
 
 export default function UnifiedScalabilityDoc() {
   return (

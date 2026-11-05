@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import CommandCenter from "@/components/landing/CommandCenter";
 import BentoDocs from "@/components/landing/BentoDocs";
@@ -5,6 +6,12 @@ import SwarmOnboarding from "@/components/landing/SwarmOnboarding";
 import LongevityTimeline from "@/components/landing/LongevityTimeline";
 import LegislationTable from "@/components/landing/LegislationTable";
 import { EXPLORER_URL } from "@/lib/links";
+
+// Every route states its own title. Ten routes used to inherit the layout's
+// default, so a reader user switching tabs could not tell them apart (WCAG 2.4.2).
+export const metadata: Metadata = {
+  title: "UltraNet | Sovereign Blockchain Network",
+};
 
 export default function Home() {
   return (

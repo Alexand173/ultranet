@@ -1,5 +1,10 @@
+import type { Metadata } from "next";
 import DocPage from "@/components/docs/DocPage";
 import { Activity } from "lucide-react";
+
+export const metadata: Metadata = {
+  title: "Layer 0 Foundation | UltraNet Docs",
+};
 
 export default function Layer0FoundationDoc() {
   return (

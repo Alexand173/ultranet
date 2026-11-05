@@ -1,5 +1,10 @@
+import type { Metadata } from "next";
 import DocPage from "@/components/docs/DocPage";
 import { Terminal } from "lucide-react";
+
+export const metadata: Metadata = {
+  title: "Execution and Performance Evidence | UltraNet Docs",
+};
 
 export default function RealTimeFinalityDoc() {
   return (

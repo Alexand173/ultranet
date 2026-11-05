@@ -1,5 +1,10 @@
+import type { Metadata } from "next";
 import DocPage from "@/components/docs/DocPage";
 import { Shield } from "lucide-react";
+
+export const metadata: Metadata = {
+  title: "FHE Implementation Notes | UltraNet Docs",
+};
 
 export default function TrustedExecutionDoc() {
   return (
