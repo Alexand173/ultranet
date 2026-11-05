@@ -17,6 +17,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Only the Windows job ever compiled test targets, so drift in tests/** or in
+  # #[cfg(test)] code stayed invisible until a 20-minute Windows compile — which
+  # is exactly how a one-line missing struct field kept this suite red from
+  # 2026-10-31 to 2026-11-05. `check` is enough to catch structural drift and
+  # costs a couple of minutes on a warm cache.
+  check-all-targets:
+    name: Linux check (all targets)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ultranet-linux-check-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ultranet-linux-check-
+
+      - name: Check that every target compiles
+        shell: bash
+        run: cargo check --locked --all-targets
+
   test-windows:
     name: Windows x64 Rust tests
     runs-on: windows-2022
