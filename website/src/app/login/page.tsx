@@ -16,7 +16,7 @@ import {
   AUTH_LOGIN_PAYLOAD_MAX_CHARS,
   parseAuthLoginPayload,
 } from "@/lib/auth-payload";
-import { getSafeReturnPath } from "@/lib/redirects";
+import { readReturnPath } from "@/lib/redirects";
 
 type LoginMode = "wallet" | "cli";
 
@@ -44,9 +44,6 @@ export default function LoginPage() {
   const [notice, setNotice] = useState("Checking for an active wallet session...");
   const nodeInputRef = useRef<HTMLInputElement>(null);
   const cliPayloadRef = useRef<HTMLTextAreaElement>(null);
-  const returnPath = getSafeReturnPath(
-    typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("next"),
-  );
 
   useEffect(() => {
     let active = true;
@@ -54,7 +51,7 @@ export default function LoginPage() {
       .then((session) => {
         if (!active) return;
         if (session) {
-          window.location.assign(returnPath ?? EXPLORER_URL);
+          window.location.assign(readReturnPath() ?? EXPLORER_URL);
           return;
         }
         setNotice("");
@@ -68,13 +65,13 @@ export default function LoginPage() {
     return () => {
       active = false;
     };
-  }, [returnPath]);
+  }, []);
 
   const finishLogin = (message: string) => {
     setStatus("success");
     setNotice(message);
     setCliPayload("");
-    window.setTimeout(() => window.location.assign(returnPath ?? EXPLORER_URL), 350);
+    window.setTimeout(() => window.location.assign(readReturnPath() ?? EXPLORER_URL), 350);
   };
 
   const handleWalletSubmit = async () => {

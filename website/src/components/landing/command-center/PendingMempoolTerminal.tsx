@@ -16,6 +16,9 @@ interface PendingMempoolTerminalProps {
 /** Age of a pending transaction, in the shortest readable unit. */
 function ageLabel(timestamp: number, nowMs: number): string {
   if (!Number.isSafeInteger(timestamp) || timestamp <= 0) return "—";
+  // No client clock yet: the server has a different one, so render nothing
+  // time-dependent until the browser can agree with itself.
+  if (!Number.isSafeInteger(nowMs) || nowMs <= 0) return "—";
   const seconds = Math.max(0, Math.round(nowMs / 1000) - timestamp);
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3_600) return `${Math.floor(seconds / 60)}m`;
@@ -85,7 +88,9 @@ function EmptyState({ status }: { status: FeedStatus }) {
 export default function PendingMempoolTerminal({ className }: PendingMempoolTerminalProps) {
   const [snapshot, setSnapshot] = useState<MempoolSnapshot>({ count: 0, transactions: [] });
   const [status, setStatus] = useState<FeedStatus>("loading");
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  // Seeded empty on purpose: a `useState(() => Date.now())` initialiser runs on
+  // the server too, so the two sides would disagree on every rendered age.
+  const [nowMs, setNowMs] = useState<number | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -159,7 +164,7 @@ export default function PendingMempoolTerminal({ className }: PendingMempoolTerm
                     {formatUltraAmount(transaction.amount)}
                   </span>
                   <span className="text-right tabular-nums text-platinum-muted">
-                    {ageLabel(transaction.timestamp, nowMs)}
+                    {ageLabel(transaction.timestamp, nowMs ?? 0)}
                   </span>
                 </li>
               ))}

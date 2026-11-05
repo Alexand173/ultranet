@@ -1,3 +1,15 @@
+/**
+ * Read the `?next=` destination from the browser's address bar.
+ *
+ * Reading this during render makes the server and client disagree: the server
+ * has no location, the client does. Call it from an effect or an event handler
+ * instead, where one answer is the only answer.
+ */
+export function readReturnPath(): string | null {
+  if (typeof window === "undefined") return null;
+  return getSafeReturnPath(new URLSearchParams(window.location.search).get("next"));
+}
+
 export function getSafeReturnPath(value: string | null | undefined): string | null {
   if (
     typeof value !== "string" ||
