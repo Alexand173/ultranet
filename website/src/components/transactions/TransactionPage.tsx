@@ -353,11 +353,11 @@ export default function TransactionPage({ returnTo, setupMode }: { returnTo?: st
   }
 
   if (sessionState === "none") {
-    return <main id="main-content" tabIndex={-1} className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-[1680px] px-6 pt-28 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} />{!setupMode && <EducationalWalletCallout variant="dark" placement="send-ultra" />}</div><WalletSetup key={setupMode ?? "create"} initialMode={setupMode} onCreated={handleCreated} /></main>;
+    return <main id="main-content" tabIndex={-1} className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-[1680px] px-6 pt-28 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} /><h1 className="sr-only">Send Ultra</h1>{!setupMode && <EducationalWalletCallout variant="dark" placement="send-ultra" />}</div><WalletSetup key={setupMode ?? "create"} initialMode={setupMode} onCreated={handleCreated} /></main>;
   }
 
   if (sessionState === "locked" && storedWallet) {
-    return <main id="main-content" tabIndex={-1} className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-[1680px] px-6 pt-28 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} />{!setupMode && <EducationalWalletCallout variant="dark" placement="send-ultra" />}</div><WalletLocked key={setupMode ?? "locked"} initialAction={getWalletLockedInitialAction(setupMode)} wallet={storedWallet} onUnlocked={handleUnlock} onCreated={handleCreated} /></main>;
+    return <main id="main-content" tabIndex={-1} className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-[1680px] px-6 pt-28 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} /><h1 className="sr-only">Send Ultra</h1>{!setupMode && <EducationalWalletCallout variant="dark" placement="send-ultra" />}</div><WalletLocked key={setupMode ?? "locked"} initialAction={getWalletLockedInitialAction(setupMode)} wallet={storedWallet} onUnlocked={handleUnlock} onCreated={handleCreated} /></main>;
   }
 
   if (!account || !walletAddress || !storedWallet) {

@@ -192,7 +192,9 @@ export default function WalletSetup({
       <div className="mb-8 flex flex-col gap-5 border-b border-platinum/15 pb-8 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="font-mono text-xs uppercase tracking-[0.24em] text-cyan-glow">WALLET // PHASE_0</p>
-          <h1 id="wallet-setup-title" className="mt-4 font-space-grotesk text-3xl font-bold uppercase tracking-tight text-platinum sm:text-5xl">{title}</h1>
+          {/* h2, not h1: the page owns the single h1 ("Send Ultra"), so this card
+              is a section of it and the guidance callout above stays a real h2. */}
+          <h2 id="wallet-setup-title" className="mt-4 font-space-grotesk text-3xl font-bold uppercase tracking-tight text-platinum sm:text-5xl">{title}</h2>
           <p className="mt-4 max-w-2xl text-sm leading-7 text-platinum/60">Your keys stay on this device. UltraNet never receives your private key, password, or recovery phrase.</p>
         </div>
         <div className="flex flex-wrap items-center gap-4 self-start sm:self-auto">
@@ -264,7 +266,7 @@ export default function WalletSetup({
 
       {mode === "create" && step === "verify" && (
         <form className="max-w-2xl space-y-6" onSubmit={handleVerifySubmit}>
-          <div><p className="font-mono text-xs uppercase tracking-[0.18em] text-cyan-glow">Backup verification</p><h2 className="mt-3 font-space-grotesk text-2xl font-bold uppercase tracking-tight text-platinum">Check your backup</h2><p className="mt-3 text-sm leading-7 text-platinum/60">Enter the two requested words exactly as you wrote them. The phrase stays hidden while you check.</p></div>
+          <div><p className="font-mono text-xs uppercase tracking-[0.18em] text-cyan-glow">Backup verification</p><h3 className="mt-3 font-space-grotesk text-2xl font-bold uppercase tracking-tight text-platinum">Check your backup</h3><p className="mt-3 text-sm leading-7 text-platinum/60">Enter the two requested words exactly as you wrote them. The phrase stays hidden while you check.</p></div>
           <div className="grid gap-5 sm:grid-cols-2">{checkPositions.map((position, index) => <div key={position} className="space-y-2"><label htmlFor={`recovery-word-${position}`} className="font-mono text-[10px] uppercase tracking-[0.16em] text-platinum/60">Word {position}</label><input id={`recovery-word-${position}`} type="text" autoComplete="off" spellCheck={false} value={checkWords[index]} onChange={(event) => { const next = [...checkWords] as [string, string]; next[index] = event.target.value; setCheckWords(next); }} className="h-14 w-full border border-platinum/15 bg-platinum/[0.03] px-4 font-mono text-sm text-platinum outline-hidden focus:border-cyan-glow focus:ring-1 focus:ring-cyan-glow/40" /></div>)}</div>
           <button type="submit" disabled={busy} className="inline-flex min-h-11 items-center justify-center bg-cyan-glow px-6 py-4 font-mono text-xs font-black uppercase tracking-[0.16em] text-ink-black hover:bg-platinum focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-[#0A0A1A] disabled:cursor-wait disabled:opacity-50">{busy ? "Creating wallet…" : "Check your backup"}</button>
         </form>
