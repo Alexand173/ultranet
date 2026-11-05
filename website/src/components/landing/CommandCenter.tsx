@@ -44,28 +44,39 @@ export default function CommandCenter() {
   const height = stats.totalBlocks === null ? "Unavailable" : new Intl.NumberFormat("en-US").format(stats.totalBlocks);
   const provingTime = formatMetric(stats.provingTimeMs, " ms");
 
+  // `min-h`, not `h`: the command centre should own the first screen when there
+  // is room for it, but a fixed height means a shorter window silently cuts the
+  // hero off instead of letting the page scroll.
   return (
-    <section className="relative w-full mt-20 flex flex-col 2xl:h-[calc(100vh-5rem)] bg-[#010B13] border-b border-platinum/10">
+    <section className="relative w-full mt-20 flex flex-col 2xl:min-h-[calc(100vh-5rem)] bg-[#010B13] border-b border-platinum/10">
       <StatusTicker position="top" blockHeight={height} provingTime={provingTime} />
 
       {/* The homepage uses the center lane to orient ordinary users first.
           The technical Coin Nexus remains available as a component for future
           protocol surfaces, while the learning hub becomes the first step here. */}
-      <div className="flex-1 flex flex-col 2xl:grid 2xl:grid-cols-[minmax(260px,16vw)_minmax(560px,1fr)_minmax(260px,16vw)] gap-px bg-platinum/10 2xl:overflow-hidden">
+      {/*
+        The fixed-height section only works if the terminals can shrink. Left to
+        their own content, the three stacked terminals on the right demand ~906px,
+        which outgrows the lane, inflates the grid row and clips the centre hero
+        (it is stretched to the inflated row and centred in it, so it lands below
+        the folded edge). `grid-rows-[minmax(0,1fr)]` plus `min-h-0` on every
+        column and terminal lets them compress and scroll internally instead.
+      */}
+      <div className="flex-1 min-h-0 flex flex-col 2xl:grid 2xl:grid-cols-[minmax(260px,16vw)_minmax(560px,1fr)_minmax(260px,16vw)] 2xl:grid-rows-[minmax(0,1fr)] gap-px bg-platinum/10 2xl:overflow-hidden">
         {/* Left column: TL + BL terminals (desktop only) */}
-        <div className="hidden 2xl:flex 2xl:flex-col gap-px bg-platinum/10">
-          <NodeDiagnosticsTerminal className="flex-1" />
-          <ShardedStateTerminal className="flex-1" />
+        <div className="hidden 2xl:flex 2xl:flex-col min-h-0 overflow-hidden gap-px bg-platinum/10 2xl:max-h-[var(--command-center-lane)]">
+          <NodeDiagnosticsTerminal className="flex-1 min-h-0" />
+          <ShardedStateTerminal className="flex-1 min-h-0" />
         </div>
 
         {/* Center: ordinary-user orientation */}
-        <HomeLearningIntro className="flex-1 min-h-[85vh] 2xl:min-h-0" />
+        <HomeLearningIntro className="flex-1 min-h-[85vh] min-w-0 2xl:min-h-0" />
 
         {/* Right column: TR + BR terminals (desktop only) */}
-        <div className="hidden 2xl:flex 2xl:flex-col gap-px bg-platinum/10">
-          <LedgerTerminal className="flex-1" />
-          <PendingMempoolTerminal className="flex-1" />
-          <AdminConsoleTerminal className="flex-1" />
+        <div className="hidden 2xl:flex 2xl:flex-col min-h-0 overflow-hidden gap-px bg-platinum/10 2xl:max-h-[var(--command-center-lane)]">
+          <LedgerTerminal className="flex-1 min-h-0" />
+          <PendingMempoolTerminal className="flex-1 min-h-0" />
+          <AdminConsoleTerminal className="flex-1 min-h-0" />
         </div>
       </div>
 

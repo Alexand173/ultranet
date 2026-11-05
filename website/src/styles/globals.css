@@ -57,6 +57,17 @@
     letter-spacing: 0.1em;
   }
 
+  /* The first screen of the homepage is a fixed-height command centre: nav
+     (5rem) plus the two status tickers. The terminal columns are capped to that
+     lane, because three stacked terminals otherwise claim ~906px of intrinsic
+     height, inflate the grid row past the lane and carry the centred hero down
+     with them — which is what clipped the cards on shorter windows. */
+  :root {
+    --command-center-nav: 5rem;
+    --command-center-tickers: 4.0625rem;
+    --command-center-lane: calc(100dvh - var(--command-center-nav) - var(--command-center-tickers));
+  }
+
   /* Skip-link target. The nav is fixed at h-20, so the jump must clear it or
      the first heading lands underneath the bar. */
   #main-content {
