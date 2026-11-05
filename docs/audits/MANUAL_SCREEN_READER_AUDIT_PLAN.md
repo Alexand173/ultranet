@@ -118,8 +118,10 @@ reader is a blocker regardless of the automated result.
 
 ## Known gaps this plan must cover
 
-- **No skip link.** Nine nav links precede content on every page; a keyboard/reader user has no way to
-  bypass them. This is the single most likely manual finding.
+- ~~**No skip link.**~~ **Resolved 2026-11-05.** A `Skip to content` link is now the first tab stop on
+  every route and focuses `#main-content`; verified by real key presses on six routes. Re-test it as part
+  of this audit rather than assuming it works with a reader attached — see
+  [2026-11-05-skip-link-and-deploy-gate.md](./2026-11-05-skip-link-and-deploy-gate.md).
 - **No manual pass has ever been recorded** — including for the reader's iframe, which no tool
   navigates with a reader attached.
 - **Mobile Safari + VoiceOver is entirely unmeasured.**
