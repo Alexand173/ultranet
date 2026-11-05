@@ -8,7 +8,7 @@ import { EXPLORER_URL } from "@/lib/links";
 
 export default function Home() {
   return (
-    <main className="min-h-screen overflow-x-clip bg-ink-black terminal-overlay">
+    <main id="main-content" tabIndex={-1} className="min-h-screen overflow-x-clip bg-ink-black terminal-overlay">
       <CommandCenter />
       <div className="section-connector" />
       <BentoDocs />

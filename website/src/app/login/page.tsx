@@ -189,7 +189,7 @@ export default function LoginPage() {
                   : "INITIALIZE_SESSION";
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-ink-black px-4 py-8 dot-grid sm:px-8 md:px-0 md:pt-[68px]">
+    <main id="main-content" tabIndex={-1} className="relative min-h-screen overflow-hidden bg-ink-black px-4 py-8 dot-grid sm:px-8 md:px-0 md:pt-[68px]">
       <motion.div
         initial={{ opacity: 0, scale: 0.97 }}
         animate={{ opacity: 1, scale: 1 }}

@@ -7,7 +7,7 @@ import EducationalWalletCallout from "@/components/wallet/EducationalWalletCallo
 
 export default function LearnHub() {
   return (
-    <main className="min-h-screen bg-learn-canvas text-learn-ink">
+    <main id="main-content" tabIndex={-1} className="min-h-screen bg-learn-canvas text-learn-ink">
       <section className="mx-auto max-w-6xl px-5 pb-16 pt-28 sm:px-8 sm:pt-36">
         <div className="grid items-end gap-10 lg:grid-cols-[1.05fr_0.95fr]">
           <div>

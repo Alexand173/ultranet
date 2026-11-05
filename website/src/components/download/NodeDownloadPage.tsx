@@ -32,7 +32,7 @@ const PLATFORM_ICONS = {
 
 export default function NodeDownloadPage() {
   return (
-    <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay">
+    <main id="main-content" tabIndex={-1} className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay">
       <section className="relative mt-20 overflow-hidden border-b border-platinum/10 px-6 py-16 sm:px-10 lg:px-12 lg:py-24">
         <div className="absolute inset-0 dot-grid opacity-20" aria-hidden="true" />
         <div className="data-rain-col pointer-events-none absolute inset-0 opacity-20" aria-hidden="true" />

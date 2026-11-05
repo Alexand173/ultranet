@@ -39,7 +39,7 @@ export default function DocPage({ title, subtitle, pillar, content, icon }: DocP
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-6 py-20 relative">
+      <main id="main-content" tabIndex={-1} className="max-w-5xl mx-auto px-6 py-20 relative">
         {/* Pillar Indicator */}
         <motion.div 
           initial={{ opacity: 0, y: 20 }}

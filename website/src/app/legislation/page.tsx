@@ -47,7 +47,7 @@ export default function LegislationPage() {
   };
 
   return (
-    <main className="min-h-screen py-24 px-6 max-w-4xl mx-auto space-y-16 pt-32">
+    <main id="main-content" tabIndex={-1} className="min-h-screen py-24 px-6 max-w-4xl mx-auto space-y-16 pt-32">
       <div className="space-y-6 text-center">
         <Scale className="w-16 h-12 text-cyan-glow mx-auto" aria-hidden="true" />
         <h1 className="text-4xl md:text-6xl font-bold tracking-tighter uppercase">Protocol Legislation</h1>

@@ -51,6 +51,18 @@
     text-transform: uppercase;
     letter-spacing: 0.1em;
   }
+
+  /* Skip-link target. The nav is fixed at h-20, so the jump must clear it or
+     the first heading lands underneath the bar. */
+  #main-content {
+    scroll-margin-top: 5rem;
+  }
+
+  #main-content:focus {
+    /* The scroll jump is the affordance; a ring around a whole page is noise.
+       The skip link itself keeps its visible focus ring. */
+    outline: none;
+  }
 }
 
 @utility orbital-ring {

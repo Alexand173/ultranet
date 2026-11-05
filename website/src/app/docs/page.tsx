@@ -32,7 +32,7 @@ export default function DocsHub() {
       {/* One page-level landmark: the hero, search, whitepaper card, callout and
           status bar used to sit outside any landmark, so screen-reader users had
           no way to skip to the content or past it. */}
-      <main>
+      <main id="main-content" tabIndex={-1}>
         {/* Hero Header */}
       <section className="relative pt-24 pb-16 px-6 border-b border-platinum/10 bg-[#010B13]/40 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto">

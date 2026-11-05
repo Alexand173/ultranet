@@ -45,7 +45,7 @@ export default function LearnArticle({ article }: { article: LearnArticleData })
   }, [article.slug]);
 
   return (
-    <main className="min-h-screen bg-learn-canvas text-learn-ink">
+    <main id="main-content" tabIndex={-1} className="min-h-screen bg-learn-canvas text-learn-ink">
       <article className="mx-auto max-w-6xl px-5 pb-24 pt-28 sm:px-8 sm:pt-36">
         <Link href="/learn" className="inline-flex items-center gap-2 text-sm font-semibold text-learn-muted transition-colors hover:text-learn-violet focus:outline-none focus:ring-2 focus:ring-learn-violet focus:ring-offset-2">
           <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back to learning hub

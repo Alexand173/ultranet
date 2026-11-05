@@ -56,7 +56,7 @@ const PACKAGE_FILES = [
 
 export default function ValidatorOnboardingPage() {
   return (
-    <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay">
+    <main id="main-content" tabIndex={-1} className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay">
       <section className="relative mt-20 overflow-hidden border-b border-platinum/10 px-6 py-16 sm:px-10 lg:px-12 lg:py-24">
         <div className="pointer-events-none absolute right-0 top-0 h-full w-1/3 dot-grid opacity-20" aria-hidden="true" />
         <div className="relative z-10 mx-auto grid max-w-[1680px] gap-12 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-stretch lg:gap-16">

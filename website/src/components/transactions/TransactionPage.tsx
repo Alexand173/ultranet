@@ -326,7 +326,7 @@ export default function TransactionPage({ returnTo, setupMode }: { returnTo?: st
 
   if (setupMode && sessionState === "unlocked") {
     return (
-      <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay px-6 py-28 sm:px-10 lg:px-12">
+      <main id="main-content" tabIndex={-1} className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay px-6 py-28 sm:px-10 lg:px-12">
         <section className="mx-auto max-w-3xl border-y border-platinum/15 py-12" aria-labelledby="wallet-setup-intent-title">
           <h1 id="wallet-setup-intent-title" className="font-space-grotesk text-3xl font-bold uppercase tracking-tight text-platinum sm:text-4xl">
             Lock wallet to continue
@@ -345,30 +345,30 @@ export default function TransactionPage({ returnTo, setupMode }: { returnTo?: st
   }
 
   if (sessionState === "checking") {
-    return <main className="relative min-h-screen bg-ink-black px-6 pb-24 pt-36 sm:px-10 lg:px-12"><div className="mx-auto max-w-7xl border-y border-platinum/15 py-16"><p className="font-mono text-xs uppercase tracking-[0.2em] text-cyan-glow">WALLET_STATUS / READING_LOCAL_STORAGE</p><p className="mt-4 text-sm text-platinum/50">Checking this device for a protected UltraNet wallet…</p></div></main>;
+    return <main id="main-content" tabIndex={-1} className="relative min-h-screen bg-ink-black px-6 pb-24 pt-36 sm:px-10 lg:px-12"><div className="mx-auto max-w-7xl border-y border-platinum/15 py-16"><p className="font-mono text-xs uppercase tracking-[0.2em] text-cyan-glow">WALLET_STATUS / READING_LOCAL_STORAGE</p><p className="mt-4 text-sm text-platinum/50">Checking this device for a protected UltraNet wallet…</p></div></main>;
   }
 
   if (storageError) {
-    return <main className="relative min-h-screen bg-ink-black px-6 pb-24 pt-36 sm:px-10 lg:px-12"><div className="mx-auto max-w-3xl border border-red-300/40 bg-red-300/10 p-6 sm:p-8" role="alert"><AlertTriangle className="h-6 w-6 text-red-300" aria-hidden="true" /><h1 className="mt-5 font-space-grotesk text-2xl font-bold uppercase text-red-200">Local wallet unavailable</h1><p className="mt-3 text-sm leading-7 text-red-100/80">{pageError || storageError}</p></div></main>;
+    return <main id="main-content" tabIndex={-1} className="relative min-h-screen bg-ink-black px-6 pb-24 pt-36 sm:px-10 lg:px-12"><div className="mx-auto max-w-3xl border border-red-300/40 bg-red-300/10 p-6 sm:p-8" role="alert"><AlertTriangle className="h-6 w-6 text-red-300" aria-hidden="true" /><h1 className="mt-5 font-space-grotesk text-2xl font-bold uppercase text-red-200">Local wallet unavailable</h1><p className="mt-3 text-sm leading-7 text-red-100/80">{pageError || storageError}</p></div></main>;
   }
 
   if (sessionState === "none") {
-    return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-[1680px] px-6 pt-28 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} />{!setupMode && <EducationalWalletCallout variant="dark" placement="send-ultra" />}</div><WalletSetup key={setupMode ?? "create"} initialMode={setupMode} onCreated={handleCreated} /></main>;
+    return <main id="main-content" tabIndex={-1} className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-[1680px] px-6 pt-28 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} />{!setupMode && <EducationalWalletCallout variant="dark" placement="send-ultra" />}</div><WalletSetup key={setupMode ?? "create"} initialMode={setupMode} onCreated={handleCreated} /></main>;
   }
 
   if (sessionState === "locked" && storedWallet) {
-    return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-[1680px] px-6 pt-28 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} />{!setupMode && <EducationalWalletCallout variant="dark" placement="send-ultra" />}</div><WalletLocked key={setupMode ?? "locked"} initialAction={getWalletLockedInitialAction(setupMode)} wallet={storedWallet} onUnlocked={handleUnlock} onCreated={handleCreated} /></main>;
+    return <main id="main-content" tabIndex={-1} className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay"><div className="mx-auto max-w-[1680px] px-6 pt-28 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} />{!setupMode && <EducationalWalletCallout variant="dark" placement="send-ultra" />}</div><WalletLocked key={setupMode ?? "locked"} initialAction={getWalletLockedInitialAction(setupMode)} wallet={storedWallet} onUnlocked={handleUnlock} onCreated={handleCreated} /></main>;
   }
 
   if (!account || !walletAddress || !storedWallet) {
-    return <main className="relative min-h-screen bg-ink-black px-6 pb-24 pt-36 sm:px-10 lg:px-12"><div className="mx-auto max-w-3xl border-y border-platinum/15 py-16"><p className="font-mono text-xs uppercase tracking-[0.2em] text-cyan-glow">WALLET_STATUS / WAITING_FOR_ACCOUNT</p><p className="mt-4 text-sm text-platinum/50">Unlock the wallet to read its account.</p></div></main>;
+    return <main id="main-content" tabIndex={-1} className="relative min-h-screen bg-ink-black px-6 pb-24 pt-36 sm:px-10 lg:px-12"><div className="mx-auto max-w-3xl border-y border-platinum/15 py-16"><p className="font-mono text-xs uppercase tracking-[0.2em] text-cyan-glow">WALLET_STATUS / WAITING_FOR_ACCOUNT</p><p className="mt-4 text-sm text-platinum/50">Unlock the wallet to read its account.</p></div></main>;
   }
 
   const inReview = transferState === "reviewing" || transferState === "signing" || transferState === "submitting";
   const resultState = ["pending", "success", "failed", "unknown"].includes(transferState) ? transferState as Extract<TransferState, "pending" | "success" | "failed" | "unknown"> : null;
   const busy = transferState === "signing" || transferState === "submitting";
 
-  return <main className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay pb-24">
+  return <main id="main-content" tabIndex={-1} className="relative min-h-screen overflow-x-clip bg-ink-black terminal-overlay pb-24">
     <section className="relative mt-20 border-b border-platinum/10 px-6 py-12 sm:px-10 lg:px-12 lg:py-16"><div className="pointer-events-none absolute right-0 top-0 h-full w-1/3 dot-grid opacity-15" aria-hidden="true" /><div className="relative z-10 mx-auto flex max-w-[1680px] flex-col justify-between gap-6 md:flex-row md:items-end"><div><p className="font-mono text-xs uppercase tracking-[0.24em] text-cyan-glow">WALLET // SEND ULTRA // LOCAL</p><h1 className="mt-4 font-space-grotesk text-4xl font-bold uppercase tracking-tight text-platinum sm:text-6xl">Send Ultra</h1><p className="mt-4 max-w-2xl text-sm leading-7 text-platinum/55">Create or unlock your local wallet, review every amount and address, and sign a $ULTRA transfer on this device.</p></div><div className="flex flex-col items-start gap-3 md:items-end"><WalletConnectionStatus variant="dark" /><div className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.14em] text-emerald-300"><Check className="h-4 w-4" aria-hidden="true" /> Protected locally</div></div></div></section>
     <div className="relative z-10 mx-auto max-w-[1680px] px-6 pt-8 sm:px-10 lg:px-12"><SendUltraReturnBanner returnTo={returnTo} /><EducationalWalletCallout variant="dark" placement="send-ultra" /></div>
     <WalletLedger account={account} networkState={networkState} onRefresh={handleRefresh} onLock={handleLock} />

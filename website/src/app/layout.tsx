@@ -10,6 +10,7 @@ export const metadata: Metadata = {
 };
 
 import Navbar from "@/components/ui/Navbar";
+import SkipToContent from "@/components/ui/SkipToContent";
 import SmoothScroll from "@/components/ui/SmoothScroll";
 import GlobalCoin from "@/components/ui/GlobalCoin";
 import VisualNoise from "@/components/ui/VisualNoise";
@@ -25,6 +26,8 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="antialiased relative bg-ink-black noise-bg">
+        {/* Must stay the first focusable element in the document. */}
+        <SkipToContent />
         <VisualNoise />
         <GlobalCommandSearch />
         {/* Global High-Density Background Flash Overlay */}

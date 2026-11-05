@@ -34,7 +34,7 @@ function AccessState({ state, onRetry }: { state: Exclude<OperatorSessionState, 
       : "This surface is not public. Continue through the authenticated wallet or CLI login flow.";
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-ink-black px-4 py-10 dot-grid sm:px-8">
+    <main id="main-content" tabIndex={-1} className="relative flex min-h-screen items-center justify-center overflow-hidden bg-ink-black px-4 py-10 dot-grid sm:px-8">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_50%_45%,rgba(15,255,255,0.08),transparent_58%)]" />
       <section className="relative w-full max-w-lg border border-red-300/30 bg-ink-black/90 p-6 text-center shadow-[0_0_40px_rgba(15,255,255,0.08)] sm:p-10" aria-labelledby="operator-access-heading">
         <AlertTriangle className="mx-auto h-8 w-8 text-red-200" aria-hidden="true" />
@@ -63,7 +63,7 @@ function AccessState({ state, onRetry }: { state: Exclude<OperatorSessionState, 
 
 function CheckingState() {
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-ink-black px-4 py-10 dot-grid" aria-busy="true" aria-live="polite">
+    <main id="main-content" tabIndex={-1} className="relative flex min-h-screen items-center justify-center overflow-hidden bg-ink-black px-4 py-10 dot-grid" aria-busy="true" aria-live="polite">
       <div className="relative flex items-center gap-3 border border-cyan-glow/30 bg-ink-black/90 px-6 py-5 font-mono text-xs uppercase tracking-[0.18em] text-cyan-glow">
         <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
         SECURITY_CHECK
@@ -185,7 +185,7 @@ export default function OperatorConsole() {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-ink-black px-4 py-8 dot-grid sm:px-8 lg:px-10">
+    <main id="main-content" tabIndex={-1} className="relative min-h-screen overflow-hidden bg-ink-black px-4 py-8 dot-grid sm:px-8 lg:px-10">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_70%_20%,rgba(15,255,255,0.06),transparent_38%)]" />
       <div className="relative mx-auto max-w-7xl space-y-7 pt-2">
         <OperatorHeader session={session} isLoggingOut={isLoggingOut} onLogout={() => void handleLogout()} />

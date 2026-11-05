@@ -18,7 +18,7 @@ const pathIcons = {
 
 export default function UltraVerseLauncher() {
   return (
-    <main className={styles.page} data-page-shell="ultraverse">
+    <main id="main-content" tabIndex={-1} className={styles.page} data-page-shell="ultraverse">
       <div className={styles.shell}>
         <header className={styles.header} aria-label="UltraVerse">
           {/* No aria-label: the visible "UltraVerse / on UltraNet" already names this

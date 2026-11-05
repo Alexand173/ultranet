@@ -74,7 +74,7 @@ export default function WhitepaperReader() {
       <div aria-hidden="true" className="fixed inset-0 pointer-events-none dot-grid opacity-20" />
       <div aria-hidden="true" className="fixed inset-0 pointer-events-none bg-[radial-gradient(circle_at_50%_35%,rgba(15,255,255,0.06)_0%,transparent_58%)]" />
 
-      <main aria-label="Whitepaper reader" className="relative mx-auto max-w-[1680px] px-4 pb-8 pt-24 sm:px-6 lg:px-8">
+      <main id="main-content" tabIndex={-1} aria-label="Whitepaper reader" className="relative mx-auto max-w-[1680px] px-4 pb-8 pt-24 sm:px-6 lg:px-8">
         <div className="mb-5 flex flex-col gap-4 border-b border-platinum/10 pb-5 lg:flex-row lg:items-center lg:justify-between">
           <Link
             href="/docs"
