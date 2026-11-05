@@ -62,6 +62,9 @@ fn service() -> Arc<FaucetService> {
         max_queue_length: 100,
         max_submission_attempts: 5,
         confirmation_timeout_seconds: 900,
+        // The promotional cap is exercised in faucet_service_test.rs. Here it must
+        // not interfere with the API fixtures, so 0 (unlimited) is deliberate.
+        max_claims: 0,
         enabled: true,
         captcha_provider: "turnstile".into(),
         turnstile_hostname: "faucet.ultranetwork.cc".into(),
