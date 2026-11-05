@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "a11y": "node scripts/a11y-scan.mjs",
-    "hydration": "node scripts/hydration-check.mjs"
+    "hydration": "node scripts/hydration-check.mjs",
+    "sr:inventory": "node scripts/sr-inventory.mjs"
   },
   "keywords": [],
   "author": "Vladan Jotov",
