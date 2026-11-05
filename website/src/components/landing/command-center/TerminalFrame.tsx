@@ -40,7 +40,10 @@ export default function TerminalFrame({
 
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-platinum/10 bg-platinum/[0.02] shrink-0">
-        <span className="text-sm font-mono font-bold uppercase tracking-[0.15em] text-platinum/70">
+        <span
+          className="min-w-0 truncate text-sm font-mono font-bold uppercase tracking-[0.15em] text-platinum/70"
+          title={title}
+        >
           {title}
         </span>
         {liveLabel && (

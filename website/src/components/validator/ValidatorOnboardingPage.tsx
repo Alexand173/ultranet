@@ -151,7 +151,7 @@ export default function ValidatorOnboardingPage() {
 
       <section id="windows-runbook" aria-labelledby="windows-runbook-title" className="relative z-10 mx-auto max-w-[1680px] px-6 pb-16 sm:px-10 lg:px-12">
         <div className="grid gap-px border border-platinum/10 bg-platinum/10 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-          <div className="bg-ink-black p-6 sm:p-8">
+          <div className="min-w-0 bg-ink-black p-6 sm:p-8">
             <p className="font-mono text-xs uppercase tracking-[0.2em] text-cyan-glow">Windows x64 // first launch</p>
             <h2 id="windows-runbook-title" className="mt-3 font-space-grotesk text-2xl font-bold tracking-tight text-platinum sm:text-3xl">What the package contains</h2>
             <p className="mt-4 text-sm leading-7 text-platinum/55">Extract the complete release archive into a writable folder. The launcher creates the private sibling environment file on its first run.</p>
@@ -165,7 +165,7 @@ export default function ValidatorOnboardingPage() {
                 <div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-200" aria-hidden="true" /><div><p className="font-mono text-[10px] uppercase tracking-[0.18em] text-amber-200">01 // Private node password</p><h3 id="admin-token-explanation-title" className="mt-2 font-space-grotesk text-xl font-bold uppercase tracking-tight text-platinum">What is ULTRANET_ADMIN_TOKEN?</h3></div></div>
                 <p className="mt-4 text-sm leading-7 text-amber-100/85">Treat this token like a private key or a strong password for your node: anyone who has it can call protected administrator operations such as mining and maintenance. Technically, it is <strong className="text-amber-100">not</strong> your Dilithium wallet private key, not your <code> DILITHIUM_PUB_KEY.hex</code>, and not your public Peer ID. It cannot sign a wallet transfer or validator proposal.</p>
                 <p className="mt-3 text-sm leading-7 text-amber-100/85"><strong className="text-amber-100">Generate it locally, never on an online website.</strong> An internet generator could record the value. Use one of these commands on the same computer that runs your node:</p>
-                <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <div className="mt-5 grid gap-4 sm:grid-cols-2 [&>div]:min-w-0">
                   <div>
                     <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-amber-200/80">Linux // macOS // Git Bash</p>
                     <pre tabIndex={0} className="mt-2 overflow-x-auto border border-amber-200/20 bg-ink-black/50 p-3 font-mono text-[11px] leading-6 text-platinum/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/60"><code>{`openssl rand -hex 32`}</code></pre>
@@ -189,7 +189,7 @@ $token`}</code></pre>
             </div>
           </div>
 
-          <div className="bg-ink-black p-6 sm:p-8">
+          <div className="min-w-0 bg-ink-black p-6 sm:p-8">
             <div className="flex items-center gap-3 text-cyan-glow"><Package className="h-5 w-5" aria-hidden="true" /><p className="font-mono text-xs uppercase tracking-[0.18em]">RUNBOOK // POWERSHELL</p></div>
             <h3 className="mt-6 font-space-grotesk text-xl font-bold uppercase tracking-tight text-platinum">Verify, configure, start</h3>
             <pre tabIndex={0} className="mt-5 overflow-x-auto border border-platinum/10 bg-platinum/[0.03] p-4 font-mono text-xs leading-7 text-platinum/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-glow/60"><code>{`# verify the v${RELEASE_TAG.replace("v", "")} Windows archive

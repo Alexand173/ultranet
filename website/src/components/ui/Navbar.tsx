@@ -38,18 +38,24 @@ export default function Navbar() {
           </div>
         </Link>
 
-        {/* Desktop Nav */}
-        <div className="hidden lg:flex items-center gap-8">
+        {/* Desktop Nav.
+            The nine labels plus the vault button need 1331px at the original
+            spacing, but the row only offers 1232px inside max-w-7xl, so from
+            1024px the cluster was clipped by body overflow-x:hidden — the CTA
+            was unreachable at 100% zoom and only appeared when zooming out.
+            Narrower tracking and gaps keep it inside the row from xl, and the
+            full spacing returns at 2xl. */}
+        <div className="hidden xl:flex min-w-0 items-center gap-6 2xl:gap-8">
           {NAV_LINKS.map((link) => (
             <Link 
               key={link.name} 
               href={link.href}
-              className="text-xs font-bold tracking-[0.2em] text-platinum/60 hover:text-cyan-glow transition-colors"
+              className="whitespace-nowrap text-xs font-bold tracking-[0.1em] 2xl:tracking-[0.2em] text-platinum/60 hover:text-cyan-glow transition-colors"
             >
               {link.name}
             </Link>
           ))}
-          <Link href="/login" className="px-6 py-2 border border-cyan-glow text-cyan-glow text-xs font-black uppercase tracking-[0.2em] hover:bg-cyan-glow hover:text-ink-black transition-all shadow-[inset_0_0_10px_rgba(15,255,255,0)] hover:shadow-[inset_0_0_20px_rgba(15,255,255,0.5)]">
+          <Link href="/login" className="whitespace-nowrap px-5 2xl:px-6 py-2 border border-cyan-glow text-cyan-glow text-xs font-black uppercase tracking-[0.1em] 2xl:tracking-[0.2em] hover:bg-cyan-glow hover:text-ink-black transition-all shadow-[inset_0_0_10px_rgba(15,255,255,0)] hover:shadow-[inset_0_0_20px_rgba(15,255,255,0.5)]">
             VAULT_LOGIN
           </Link>
         </div>
@@ -57,7 +63,7 @@ export default function Navbar() {
         {/* Mobile Toggle */}
         <button
           type="button"
-          className="lg:hidden text-platinum"
+          className="xl:hidden text-platinum"
           onClick={() => setIsOpen(!isOpen)}
           aria-label={isOpen ? "Close navigation menu" : "Open navigation menu"}
           aria-expanded={isOpen}
@@ -75,7 +81,7 @@ export default function Navbar() {
           aria-label="Mobile navigation"
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="lg:hidden absolute top-20 left-0 right-0 bg-ink-black border-b border-platinum/10 p-8 flex flex-col gap-6"
+          className="xl:hidden absolute top-20 left-0 right-0 bg-ink-black border-b border-platinum/10 p-8 flex flex-col gap-6"
         >
           {NAV_LINKS.map((link) => (
             <Link 

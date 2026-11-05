@@ -133,7 +133,7 @@ export default function NodeDownloadPage() {
                   href={releaseAssetUrl(asset.fileName)}
                   target="_blank"
                   rel="noreferrer"
-                  aria-label={`Download ${asset.fileName}`}
+                  aria-label={`Download archive: ${asset.fileName}`}
                   className="mt-auto inline-flex items-center justify-between gap-3 border-t border-platinum/10 pt-5 font-mono text-xs font-bold uppercase tracking-[0.16em] text-platinum transition-colors hover:text-cyan-glow focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black"
                 >
                   Download archive <Download className="h-4 w-4 transition-transform group-hover:translate-y-0.5" aria-hidden="true" />
@@ -187,7 +187,7 @@ chmod +x UltraNetNode
           <h2 id="deployment-title" className="mt-3 font-space-grotesk text-3xl font-bold tracking-[-0.03em] text-platinum sm:text-4xl">Start the node your way</h2>
         </div>
         <div className="grid gap-px bg-platinum/10 lg:grid-cols-2">
-          <article className="bg-ink-black p-6 sm:p-8">
+          <article className="min-w-0 bg-ink-black p-6 sm:p-8">
             <div className="flex items-center gap-3 text-cyan-glow">
               <Package className="h-5 w-5" aria-hidden="true" />
               <p className="font-mono text-xs uppercase tracking-[0.18em]">DOCKER_COMPOSE_MODE</p>
@@ -201,7 +201,7 @@ docker compose up -d
 docker-compose up -d`}</code></pre>
           </article>
 
-          <article className="bg-ink-black p-6 sm:p-8">
+          <article className="min-w-0 bg-ink-black p-6 sm:p-8">
             <div className="flex items-center gap-3 text-cyan-glow">
               <GitBranch className="h-5 w-5" aria-hidden="true" />
               <p className="font-mono text-xs uppercase tracking-[0.18em]">SOURCE_BUILD_MODE</p>
