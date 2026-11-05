@@ -45,17 +45,17 @@ export default function Navbar() {
             was unreachable at 100% zoom and only appeared when zooming out.
             Narrower tracking and gaps keep it inside the row from xl, and the
             full spacing returns at 2xl. */}
-        <div className="hidden xl:flex min-w-0 items-center gap-6 2xl:gap-8">
+        <div className="hidden xl:flex min-w-0 items-center gap-6">
           {NAV_LINKS.map((link) => (
             <Link 
               key={link.name} 
               href={link.href}
-              className="whitespace-nowrap text-xs font-bold tracking-[0.1em] 2xl:tracking-[0.2em] text-platinum/60 hover:text-cyan-glow transition-colors"
+              className="whitespace-nowrap text-xs font-bold tracking-[0.1em] text-platinum/60 hover:text-cyan-glow transition-colors"
             >
               {link.name}
             </Link>
           ))}
-          <Link href="/login" className="whitespace-nowrap px-5 2xl:px-6 py-2 border border-cyan-glow text-cyan-glow text-xs font-black uppercase tracking-[0.1em] 2xl:tracking-[0.2em] hover:bg-cyan-glow hover:text-ink-black transition-all shadow-[inset_0_0_10px_rgba(15,255,255,0)] hover:shadow-[inset_0_0_20px_rgba(15,255,255,0.5)]">
+          <Link href="/login" className="whitespace-nowrap px-5 py-2 border border-cyan-glow text-cyan-glow text-xs font-black uppercase tracking-[0.1em] hover:bg-cyan-glow hover:text-ink-black transition-all shadow-[inset_0_0_10px_rgba(15,255,255,0)] hover:shadow-[inset_0_0_20px_rgba(15,255,255,0.5)]">
             VAULT_LOGIN
           </Link>
         </div>
