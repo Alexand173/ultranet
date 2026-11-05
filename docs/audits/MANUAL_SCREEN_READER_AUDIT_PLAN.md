@@ -1,128 +1,132 @@
-# Manual screen-reader audit plan (NVDA / VoiceOver)
+# Manual screen-reader audit — scripted checklist
 
-Automated scans are done and green, but they cannot tell you whether a page *makes sense* when
-spoken. This is the procedure for the manual pass that closes that gap. It has not been performed
-yet — nothing in this repository records a manual screen-reader result, and until one exists the
-audit story is "automated only".
+Automated scans are green, but axe cannot tell you whether a page *makes sense* when spoken. This is the
+procedure for the manual pass that closes that gap, and it is **scripted**: the per-route expectations
+below are generated from the running app, not remembered, so the checklist cannot quietly drift away from
+what the site actually announces.
 
-## Scope
+No manual screen-reader result exists in this repository yet. Until one does, the audit story is
+"automated only".
 
-**Surfaces, in priority order**
+## Refresh the expectations before every session
 
-| # | Route | Why it is first |
-|---|---|---|
-| 1 | `/validator` | The longest flow: two identities, key generation code blocks, a governance proposal. Also the page with the most interleaved headings and code. |
-| 2 | `/send-ultra` | Wallet signing: an unrecoverable action. A mis-spoken confirmation is the worst failure mode on the site. |
-| 3 | `/docs` | Index with search, filters and a card grid; tests live-region behaviour of the result count. |
-| 4 | `/docs/whitepaper` | Embedded reader inside an iframe; separate document context, own controls. |
-| 5 | `/download` | Code blocks, checksum warning, multiple release actions. |
-| 6 | `/login`, `/operator`, `/appchains`, `/ultraverse`, `/learn` | Spot checks of the remaining shells. |
+```bash
+cd website
+npm run dev                                             # the expectations come from the app
+npm run sr:inventory -- --json /tmp/sr-inventory.json    # all 18 routes
+npm run sr:inventory -- --routes /validator,/send-ultra  # just the ones you are auditing
+```
 
-**Browsers and readers**
+The script prints, per route: document title, first heading, heading outline, landmark chain, live regions,
+embedded frames, control names and the first tab stops. It is a description, **not a pass** — it cannot
+judge speech. If its output disagrees with the tables below, the tables are stale: update them from the
+script's output and note the date.
 
-- NVDA 2025.x + Firefox on Windows (primary; NVDA drives the market on Windows).
-- NVDA + Chrome on Windows (second pass — browse-mode differences are real).
-- VoiceOver + Safari on macOS (primary Apple desktop).
-- VoiceOver + Safari on iOS, iPhone (the mobile experience is untested by any tool we run).
+Expectations recorded **2026-11-05**, build `cd7f39e`.
 
-## Preparation
+## Per-route expectations
 
-1. Turn off the visible screen where possible; audit by ear only for the first pass.
-2. Set speech rate to something you can follow (NVDA default is fast for newcomers).
-3. Disable any "read all on page load" extensions so the run starts from a known state.
-4. Have the route list above open; keep a notes file per route.
+Reading the columns: *title* is what the browser/tab and `NVDA+T` announce; *outline* is the heading levels in
+document order; *landmarks* is what `D` cycles through; *live* is what will speak on its own; *first tabs*
+are the first stops after a fresh load, in order.
 
-## Test sequence — per route
+| Route | Title announced | `h1` | Outline | Landmarks (`D`) | Live regions | First tab stops |
+|---|---|---|---|---|---|---|
+| `/` | UltraNet \| Blockchain Network | A network you can actually understand. | h1 h2×4 h3 h4×4 h2 h3×4 h2 h3 h2×3 h3 | nav → main → footer | polite: "UltraWallet not detected" | Skip → logo → LEARN → DOCS |
+| `/docs` | UltraNet \| Blockchain Network | Documentation Hub | h1 h2 h2 h3×34 | nav → main | none | Skip → logo → LEARN → DOCS |
+| `/docs/whitepaper` | UltraNet Whitepaper \| The Sovereign Technical Guide | UltraNet Technical Whitepaper | h1 h2 | nav → main (named "Whitepaper reader") | polite: `0%_READ` | skip → logo → LEARN → DOCS; iframe titled "UltraNet v7.1 Sovereign Technical Whitepaper" |
+| `/docs/layer-0-foundation` | UltraNet \| Blockchain Network | Layer 0 Foundation | h1 h2×3 h3 h2 | nav → header → main | none | skip, logo, LEARN, DOCS |
+| `/docs/unified-scalability` | UltraNet \| Blockchain Network | Unified Scalability | h1 h2×3 h3×2 h2 | nav → header → main | none | skip, logo, LEARN, DOCS |
+| `/docs/trusted-execution` | UltraNet \| Blockchain Network | FHE Implementation Notes | h1 h2×3 h3 h2 | nav → header → main | none | skip, logo, LEARN, DOCS |
+| `/docs/real-time-finality` | UltraNet \| Blockchain Network | Execution and Performance Evidence | h1 h2×4 | nav → header → main | none | skip, logo, LEARN, DOCS |
+| `/docs/autonomous-intelligence` | UltraNet \| Blockchain Network | AI Governor Implementation | h1 h2×4 | nav → header → main | polite: "UNAVAILABLE" | skip, logo, LEARN, DOCS |
+| `/login` | UltraNet \| Blockchain Network | Vault Access | h1 | main only | none | Skip → "ULTRAWALLET" tab → "CLI_SIGNED_PAYLOAD" tab → `input#node-identifier` |
+| `/operator` | UltraNet Operator Console \| Authenticated Operations | AUTH_SERVICE_UNAVAILABLE | h1 | main only | none | Skip → RETURN_TO_LOGIN → RETRY_CHECK |
+| `/appchains` | AppChains \| UltraNet Operator Console | AUTH_SERVICE_UNAVAILABLE | h1 | main only | none | Skip → RETURN_TO_LOGIN → RETRY_CHECK |
+| `/validator` | Validator Onboarding \| UltraNet v7.1.7 | Become a validator | h1 h2 h3×3 h2 h3×3 h2 h3×3 h2×2 | nav → main | polite ×2 (one empty, one "UltraWallet not detected") | skip, logo, LEARN, DOCS |
+| `/download` | Download UltraNet Node \| v7.1.7 | Sovereign Node v7.1 | h1 h2 h3×3 h2 h2 h3 h3 h2 | nav → main | none | skip, logo, LEARN, DOCS |
+| `/legislation` | UltraNet \| Blockchain Network | Protocol Legislation | h1 h2×3 h3 | nav → main | none | skip, logo, LEARN, DOCS |
+| `/transact` | Send $ULTRA \| UltraNet | Create a wallet | **h2 then h1** | nav → main | none | skip, logo, LEARN, DOCS |
+| `/ultraverse` | UltraVerse Services \| UltraNet | Services on UltraNet | h1 h2 h3×3 h2 h3×4 | **main → header → nav** (named "Directory navigation") | none | Skip → UltraVerse logo → Services → Concepts |
+| `/learn` | Learn UltraNet \| UltraNet | Understand the network before you use it. | h1 h2×3 h3×5 h2×2 | nav → main | polite: "Node data unavailable" | skip, logo, LEARN, DOCS |
+| `/send-ultra` | Send $ULTRA \| UltraNet | Create a wallet | **h2 then h1** | nav → main | none | skip, logo, LEARN, DOCS |
 
-Run every step on **every** route in scope. Record `pass`, `pass with note`, or `fail`.
+Two routes legitimately differ from the common shape and must not be "fixed" during an audit: `/login`,
+`/operator` and `/appchains` render without the site nav or footer (their only landmark is `main`, which is
+why the skip link still works), and `/ultraverse` puts `main` before `header` and `nav`.
 
-### 1. Landmark and heading navigation (structural)
+## Defects the inventory found — decide before you start
 
-- `D`/`R` (NVDA: `D`) — cycle landmarks. Expected: banner → main → contentinfo, in that order, no
-  duplicate `main`.
-- `H`/`1..6` — walk headings. Expected: a single `h1`, then `h2` per section, then `h3`; **no level
-  is skipped**. Docs pages: `h1` (title) → `h2` (sections) → `h3` (sub-sections).
-- `K` — links list. Expected: every link name describes its destination; no "here", no bare icon.
+These are real, reproducible from the data above, and none of them is caught by axe. Either fix them first
+so the session tests the fixed site, or record them as known failures.
 
-### 2. Reading order and content
+1. **Duplicate page titles (WCAG 2.4.2, Level A).** Nine routes announce the identical title
+   *"UltraNet | Blockchain Network"*: `/`, `/docs`, `/docs/layer-0-foundation`, `/docs/unified-scalability`,
+   `/docs/trusted-execution`, `/docs/real-time-finality`, `/docs/autonomous-intelligence`, `/login`,
+   `/legislation`. `/transact` and `/send-ultra` also share *"Send $ULTRA | UltraNet"*. A reader user moving
+   between tabs gets no way to tell the pages apart. Fix: a per-route `metadata.title`.
+2. **Heading order breaks on two routes.** `/transact` and `/send-ultra` put an `h2` *before* the `h1`, so
+   `1` and `H` walk disagree with visual order (WCAG 1.3.1). The `h2` is "The node key identifies the
+   computer…"; the `h1` is "Create a wallet".
+3. **Landmarks are unnamed.** Only `/docs/whitepaper`'s main and `/ultraverse`'s nav declare a name. That is
+   *acceptable* today because each type is unique per route — do not add labels to fix a problem that only
+   appears when a second nav exists. Record it as "expected: announced as 'navigation' / 'main'".
+4. **`/operator` tab order contains the dev-only `nextjs-portal`.** Present only in development; a production
+   build has no such stop. Audit the deployed build, not `npm run dev`, if a tab stop looks unexplained.
+5. **Live regions speak on load**, not only on change: `/` announces "UltraWallet not detected",
+   `/learn` "Node data unavailable", `/docs/autonomous-intelligence` "UNAVAILABLE", `/validator` has an
+   empty polite region plus the wallet notice. Judging whether that is *one announcement too many* is exactly
+   what step 5 is for.
 
-- Read the page top to bottom with `Down`/`NVDA+Down`. Expected: no repeated text, no announcement of
-  decoration (the corner coin, the noise layer, the "Visual_Decoration" labels must be silent).
-- Tab to the main content: is there a skip mechanism, or does the reader land on the nav first? A nav
-  with nine links before content is acceptable only if a skip link exists; currently **none exists** —
-  record the cost of that in seconds-to-reach-content.
+## The checklist
 
-### 3. Tables and data
+Run every step on every route in scope; record `pass`, `pass with note`, or `fail`. The route-specific
+values are in the table above.
 
-- `T` — tables. Expected: columns announced with headers; `/appchains` and `/operator` tables must
-  announce header context on every cell.
-- The command-center terminals are `<ul>` grids, not tables. Expected: they read as lists, and the
-  live/status strings announce their state at sensible intervals (see 5).
+| # | Step | What to do | Expected |
+|---|---|---|---|
+| 1 | Landmarks | `D` repeatedly | Matches the route's landmark chain; exactly one `main`; no route announces two of the same type |
+| 2 | Headings | `H`, then `1..6` | One `h1` matching the table, no skipped levels (`h2` before `h1` on `/transact`, `/send-ultra` is defect 2) |
+| 3 | Skip link | `Tab` once, `Enter` | Announces "Skip to content"; focus lands in `main`, first heading is not under the fixed nav |
+| 4 | Reading order | `Down` / `NVDA+Down` from the top | No repeated text; the noise layer, corner coin and "Visual_Decoration" labels are silent |
+| 5 | Live regions | Sit for 30 s on `/`, `/learn`, `/validator`, `/docs/whitepaper` | Speaks once per meaningful change, **not** on every 5 s poll; the reader's `0%_READ` progress does not chatter |
+| 6 | Tables and lists | `T` on `/operator`, `/appchains`; arrow through terminals | Table cells carry header context; command-centre terminals read as lists, not fake tables |
+| 7 | Forms | `Tab` through `/send-ultra`, `/validator`, `/login` | Label spoken with each field; the 64-hex address field says what it wants and reads back without silent truncation |
+| 8 | Overlays | Open command search (`/`), mobile nav, approval dialog on `/` | Focus enters the dialog, `Esc` closes it, focus returns to the trigger, page behind is not read |
+| 9 | Code blocks | `Tab` to a `<pre>` on `/download`, `/validator` | Takes focus with a spoken name or clear context; multiline PowerShell is not merged or dropped |
+| 10 | Wallet flow | Unlock → review → approve on `/send-ultra` | Amount, recipient and fee spoken **before** the approve control; no silent state change |
 
-### 4. Forms and actions
-
-- On `/send-ultra` and `/validator`: tab through every control. Expected: label read with the field,
-  errors announced when they appear (`aria-live`), the submit button says what it does.
-- Corpus check: the recipient address field must announce that it is a 64-character hex address, and
-  read the entered value back without truncating it silently.
-
-### 5. Live regions and dynamic content
-
-- Watch the mempool/ledger terminals for 30 seconds. Expected: updates are announced **once per
-  meaningful change**, not on every 5-second poll. A feed that chatters every poll is a fail — record
-  it, do not dismiss it as cosmetic.
-- Trigger an error (submit an invalid address) and confirm the message is announced, then re-announced
-  no more than once.
-
-### 6. Modals, menus and focus management
-
-- Open the mobile navigation and the command search (`/` or the search field): focus must move into the
-  dialog, `Esc` must close it, focus must return to the trigger.
-- Open the approval dialog on `/` and confirm the reader does not read the page behind it.
-
-### 7. Code blocks and long values
-
-- On `/download` and `/validator`: tab to a `<pre>`. Expected: it takes focus with a spoken name or a
-  clear context; horizontal scrolling is announced as content continues (it is keyboard-reachable
-  since 2026-10-31, but the *speech* experience is unverified).
-- Multiline PowerShell snippets: confirm line-by-line reading does not merge or drop characters.
-
-### 8. Wallet flow (highest risk)
-
-- Complete a signing flow with the reader on: create/unlock, review the transfer, approve.
-- Expected: the confirmation reads the **amount, recipient and fee** before the approve control.
-  Any silent state change here is a release blocker, not a nice-to-have.
+Step 10 is the release-blocking one: a confirmation that reads wrongly is unrecoverable.
 
 ## Recording
 
-Add one file per session, e.g. `docs/audits/YYYY-MM-DD-manual-sr-nvda-windows.md`:
+One file per session, e.g. `docs/audits/YYYY-MM-DD-manual-sr-nvda-windows.md`:
 
 ```markdown
 # Manual screen-reader pass — NVDA 2025.x on Windows / Firefox
-**Date:** … **Reader:** … **Browser:** … **Routes:** …
-**Build:** commit SHA deployed at the time
+**Date:** …  **Reader:** …  **Browser:** …  **Build:** commit SHA deployed
+**Inventory:** npm run sr:inventory -- --json … (paste the route count)
 
 | Route | Step | Result | Note |
 |---|---|---|---|
-| /validator | 1 landmarks | pass | banner → main → contentinfo |
-| /validator | 5 live regions | fail | mempool announces on every poll |
+| /validator | 1 landmarks | pass | nav → main, one main |
+| / | 5 live regions | fail | "UltraWallet not detected" re-announces on every session check |
 ```
 
 Then link it from `docs/audits/README.md`. Keep failures visible; do not aggregate them away.
 
 ## Pass criteria
 
-A route passes when every step is `pass`, or `pass with note` where the note is a documented
-limitation. Anything that changes wallet state silently, traps focus, or hides content from the
-reader is a blocker regardless of the automated result.
+A route passes when every step is `pass`, or `pass with note` where the note is a documented limitation.
+Anything that changes wallet state silently, traps focus, or hides content from the reader is a blocker
+regardless of the automated result.
 
 ## Known gaps this plan must cover
 
-- ~~**No skip link.**~~ **Resolved 2026-11-05.** A `Skip to content` link is now the first tab stop on
-  every route and focuses `#main-content`; verified by real key presses on six routes. Re-test it as part
-  of this audit rather than assuming it works with a reader attached — see
-  [2026-11-05-skip-link-and-deploy-gate.md](./2026-11-05-skip-link-and-deploy-gate.md).
-- **No manual pass has ever been recorded** — including for the reader's iframe, which no tool
-  navigates with a reader attached.
+- **No manual pass has ever been recorded**, including for the reader's iframe, which no tool navigates with
+  a reader attached.
 - **Mobile Safari + VoiceOver is entirely unmeasured.**
-- **Live-region politeness** across the command centre is unverified; automated tools cannot judge it.
+- **Live-region politeness** across the command centre is unverified; automated tools cannot judge it, and
+  step 5 is the only place it gets tested.
+- **The five defects above are open** as of `cd7f39e`: duplicate titles, two broken heading orders, unnamed
+  (but unique) landmarks, dev-only tab stop, eager live regions.

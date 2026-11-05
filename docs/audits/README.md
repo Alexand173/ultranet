@@ -44,6 +44,19 @@ npm run hydration        # 18 routes, exits 1 on a mismatch
 It shares its route list and browser resolver with the accessibility scan, so the two cannot cover
 different surfaces. See [2026-11-05-hydration-determinism.md](./2026-11-05-hydration-determinism.md).
 
+## Refreshing the screen-reader expectations
+
+The manual audit checklist carries per-route expectations (title, heading outline, landmark chain, live
+regions, first tab stops). They are generated from the running app, not remembered:
+
+```bash
+npm run dev
+npm run sr:inventory -- --json /tmp/sr-inventory.json
+```
+
+It is a description, not a pass — it cannot judge speech. If its output disagrees with the checklist, the
+checklist is stale. See [MANUAL_SCREEN_READER_AUDIT_PLAN.md](./MANUAL_SCREEN_READER_AUDIT_PLAN.md).
+
 ## How a record is produced
 
 1. Run the scan against the deployed or local route in a browser with axe-core.
