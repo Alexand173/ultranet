@@ -21,7 +21,10 @@ export default function UltraVerseLauncher() {
     <main className={styles.page} data-page-shell="ultraverse">
       <div className={styles.shell}>
         <header className={styles.header} aria-label="UltraVerse">
-          <Link className={styles.brand} href="/ultraverse" aria-label="UltraVerse services">
+          {/* No aria-label: the visible "UltraVerse / on UltraNet" already names this
+              link, and a shorter label failed WCAG 2.5.3 (name must contain the
+              visible text). */}
+          <Link className={styles.brand} href="/ultraverse">
             <span className={styles.brandMark} aria-hidden="true">U</span>
             <span className={styles.brandCopy}>
               <span className={styles.brandName}>UltraVerse</span>

@@ -98,7 +98,8 @@ export default function GlobalCoin() {
         </div>
 
         {/* Decorative label; this coin graphic is not a node-health indicator. */}
-        <div className="absolute -top-6 left-1/2 -translate-x-1/2 font-mono text-[8px] text-cyan-glow/40 whitespace-nowrap uppercase tracking-widest">
+        {/* 8px text needs 4.5:1; at /40 this label measured 3.24:1 (#076D71). */}
+        <div className="absolute -top-6 left-1/2 -translate-x-1/2 font-mono text-[8px] text-cyan-glow/60 whitespace-nowrap uppercase tracking-widest">
           Protocol_Illustration
         </div>
       </motion.div>

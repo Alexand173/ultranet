@@ -37,7 +37,7 @@ export default function CopyMultiaddrButton({ value }: CopyMultiaddrButtonProps)
         type="button"
         onClick={() => void handleCopy()}
         className="inline-flex min-h-11 items-center justify-center gap-2 border border-cyan-glow/50 px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-glow transition-colors hover:bg-cyan-glow hover:text-ink-black focus:outline-none focus:ring-2 focus:ring-cyan-glow focus:ring-offset-2 focus:ring-offset-ink-black"
-        aria-label="Copy the full Genesis multiaddr"
+        aria-label={`${label} — full Genesis multiaddr`}
       >
         <Icon className="h-4 w-4" aria-hidden="true" />
         {label}
