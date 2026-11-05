@@ -41,8 +41,8 @@ are the first stops after a fresh load, in order.
 | `/docs/real-time-finality` | Execution and Performance Evidence \| UltraNet Docs | Execution and Performance Evidence | h1 h2×4 | nav → header → main | none | skip, logo, LEARN, DOCS |
 | `/docs/autonomous-intelligence` | AI Governor Implementation \| UltraNet Docs | AI Governor Implementation | h1 h2×4 | nav → header → main | polite: "UNAVAILABLE" | skip, logo, LEARN, DOCS |
 | `/login` | Vault Access \| UltraNet | Vault Access | h1 | main only | none | Skip → "ULTRAWALLET" tab → "CLI_SIGNED_PAYLOAD" tab → `input#node-identifier` |
-| `/operator` | UltraNet Operator Console \| Authenticated Operations | AUTH_SERVICE_UNAVAILABLE | h1 | main only | none | Skip → RETURN_TO_LOGIN → RETRY_CHECK |
-| `/appchains` | AppChains \| UltraNet Operator Console | AUTH_SERVICE_UNAVAILABLE | h1 | main only | none | Skip → RETURN_TO_LOGIN → RETRY_CHECK |
+| `/operator` | Vault Access \| UltraNet — **redirects to `/login` when unauthenticated**; with a session it announces *UltraNet Operator Console \| Authenticated Operations* and an `h1` of "AUTH_SERVICE_UNAVAILABLE" when the gate cannot reach the API | AUTH_SERVICE_UNAVAILABLE | h1 | main only | none | Skip → RETURN_TO_LOGIN → RETRY_CHECK |
+| `/appchains` | Vault Access \| UltraNet — same redirect; with a session, *AppChains \| UltraNet Operator Console* | AUTH_SERVICE_UNAVAILABLE | h1 | main only | none | Skip → RETURN_TO_LOGIN → RETRY_CHECK |
 | `/validator` | Validator Onboarding \| UltraNet v7.1.7 | Become a validator | h1 h2 h3×3 h2 h3×3 h2 h3×3 h2×2 | nav → main | polite ×2 (one empty, one "UltraWallet not detected") | skip, logo, LEARN, DOCS |
 | `/download` | Download UltraNet Node \| v7.1.7 | Sovereign Node v7.1 | h1 h2 h3×3 h2 h2 h3 h3 h2 | nav → main | none | skip, logo, LEARN, DOCS |
 | `/legislation` | Protocol Legislation \| UltraNet | Protocol Legislation | h1 h2×3 h3 | nav → main | none | skip, logo, LEARN, DOCS |
