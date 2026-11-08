@@ -62,7 +62,7 @@ difference in the new binary is the patch above. Validate any future claim the s
 | block 1 hash / state root | byte-identical to pre-deploy — history untouched |
 | `chain_length` / blocks | 2 → 3 only after the intended mine; no other block |
 | sovereign `3b8ef38a…` | 998,990.000000 → **1,000,000.000000** (v4 supply correction, block 2) |
-| faucet `787e68b2…` | 1,000.001000, unchanged (its key is not held anywhere; see the run sheet) |
+| account `787e68b2…` — **not the faucet**, a stranded balance | `1,000.001000`, unchanged (no reachable key; see the run sheet) |
 | approval journal | 1 record, unchanged |
 | peers | same persistent peer `12D3KooWS3AHS46…` reconnected after restart |
 

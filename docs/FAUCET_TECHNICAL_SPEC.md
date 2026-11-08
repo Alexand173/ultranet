@@ -77,18 +77,24 @@ The deployed faucet account is:
 
 ```text
 address:              fe0b9a9227ebb2bb40b408c5b10b0155a2591fdf97ce43580a1ab873271af1f8
-balance_base_units:   0
-balance_ultra:        0.000000
+balance_base_units:   1209981001
+balance_ultra:        1,209.981001
 reported decimals:    6
-planned float:        1,000,000,000 base units = 1,000.000000 $ULTRA
-measured:             2026-10-26
+nonce:                2
+measured:             2026-11-08
 ```
 
-The address is the one the production signer derives; intake stays disabled until the account is
-funded past `FAUCET_MIN_BALANCE_RESERVE_BASE_UNITS`. The previously documented `787e68b2…` is a
-different account — it holds a stranded balance and has no reachable key, so it is not this faucet.
+The account read `0` when this section was written on 2026-10-26 and was funded afterwards. The
+address is the one the production signer derives, and `check-config` refuses to start when
+`FAUCET_ADDRESS` disagrees with it, so a deployment cannot silently sign from another account. An
+earlier account named in this position holds a stranded balance with no reachable key; it is not part
+of the faucet and carries no signer.
 
-At the fixed claim policy, the theoretical balance-only maximum is `floor(1,000,000,000 / 1,010,000) = 990` claims. This is not an operating target. The service must retain a reserve, honor a much smaller global daily cap, and disable intake before the hot wallet is depleted.
+At the fixed claim policy each claim is a `1,010,000`-unit draw, so the `1,009,981,001` held above the
+`200,000,000` reserve covers 999 claims — the 1,000-claim promotional cap is therefore reached first,
+and the float is never the binding limit. That is not an operating target: the service must still
+retain its reserve, honour the much smaller global daily cap, and disable intake before the hot wallet
+is depleted.
 
 ### 2.4 Signing envelope
 

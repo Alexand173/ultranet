@@ -16,9 +16,10 @@ The faucet is a low-balance online signer for one dedicated address:
 fe0b9a9227ebb2bb40b408c5b10b0155a2591fdf97ce43580a1ab873271af1f8
 ```
 
-`787e68b2…` was the originally documented address. It is not this faucet: it holds `1,000.001000`
-$ULTRA and no key for it is reachable, so it is a stranded balance — never fund it, and never point a
-signer at it.
+This is the only faucet account. Older documentation and the 2026-08-30 faucet binary named a different
+account in this position; that one holds a stranded balance with no reachable key, appears in no host
+configuration, and must never be funded or given a signer. `FAUCET_ADDRESS` and the address derived
+from the signer credential are the whole story — `check-config` refuses to start on any mismatch.
 
 It may call only:
 
@@ -47,7 +48,17 @@ The initial beta policy is fixed and server-selected:
 | Address cooldown | `86,400` seconds | 24 rolling hours |
 | Promotional claim cap | 1,000 confirmed claims | `FAUCET_MAX_CLAIMS=1000` |
 
-The deployed faucet address held `0` base units on 2026-10-26, so it cannot pay a claim until a float is transferred to it: it needs more than `FAUCET_MIN_BALANCE_RESERVE_BASE_UNITS` (`200.000000` $ULTRA) plus the claim amount and its fee. At the historical `1,000,000,000` base units (`1,000.000000` $ULTRA) snapshot the balance-only ceiling was 990 claims, but the service must stop at the configured reserve and daily cap. Budget reservations include both amount and fee.
+The deployed faucet address held `0` base units when first inspected on 2026-10-26 and could not pay a
+claim until a float arrived. It has been funded and paying since 2026-10-31: on 2026-11-08 it holds
+`1,209,981,001` base units (`1,209.981001` $ULTRA) at nonce `2`. The nonce shows two draws from this
+account; the authoritative confirmed-claim count for the promotional cap lives in
+`/var/lib/ultranet-faucet/faucet.db`, not in the account record.
+
+Budget reservations include both amount and fee, so every claim is a `1,010,000` base-unit draw
+against this float. The `1,009,981,001` above the `200,000,000` reserve covers 999 claims, so the
+promotional cap binds first: 998 claims remain under it, costing `1,007,980,000` and leaving
+`202,001,001` base units standing. The service must still honour the reserve and the much smaller
+daily cap, and disable intake before the hot wallet is depleted.
 
 ## Funding the float
 
@@ -168,6 +179,10 @@ The first real float, executed 2026-10-31 from the signing host:
 | block | index 3 (`chain_length` 3 → 4), one transaction, `gas_used 81938` |
 | Sovereign after | `999,795.980000`, nonce 5 |
 | faucet after | `202.000000`, against the `201.010000` the first claim requires |
+
+That table is a snapshot of the transfer, not the current float. On 2026-11-08 the same account held
+`1,209.981001` $ULTRA at nonce `2`; read the live number from
+`GET https://api.ultranetwork.cc/api/account/<faucet-address>` rather than from this record.
 
 **Intake was enabled on 2026-10-31**, after the float landed: `FAUCET_ENABLED=true` in
 `/etc/ultranet-faucet/faucet.env`, service restarted, and `GET https://faucet.ultranetwork.cc/api/faucet/status`
