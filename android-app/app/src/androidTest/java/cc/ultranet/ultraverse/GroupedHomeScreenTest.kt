@@ -1,6 +1,7 @@
 package cc.ultranet.ultraverse
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -127,11 +128,12 @@ class GroupedHomeScreenTest {
     }
 
     @Test
-    fun swapAndProfileStayDisabledAndPortfolioUsesWalletPath() {
+    fun swapStaysDisabledWhileProfileAndPortfolioAreLiveDestinations() {
+        // Swap is the last tab without a native destination.
         compose.onNodeWithContentDescription("Swap. Not available yet.", substring = true)
             .assertIsNotEnabled()
-        compose.onNodeWithContentDescription("Profile. Not available yet.", substring = true)
-            .assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Profile. Your address and receive code.", substring = true)
+            .assertIsEnabled()
         compose.onNodeWithContentDescription("Portfolio. Opens the native local wallet.", substring = true)
             .assertIsDisplayed()
         compose.onNodeWithContentDescription("Apps. Scrolls to the grouped services.", substring = true)

@@ -73,6 +73,7 @@ import cc.ultranet.ultraverse.ui.wallet.WalletBalanceHeaderState
 import cc.ultranet.ultraverse.ui.wallet.WalletFlowScreen
 import cc.ultranet.ultraverse.ui.wallet.WalletRoute
 import cc.ultranet.ultraverse.ui.pay.PayScreen
+import cc.ultranet.ultraverse.ui.profile.ProfileScreen
 import cc.ultranet.ultraverse.wallet.ContactBook
 import cc.ultranet.ultraverse.wallet.ContactStore
 import cc.ultranet.ultraverse.wallet.FaucetApi
@@ -84,7 +85,7 @@ import cc.ultranet.ultraverse.wallet.faucetAmountLabel
 import kotlinx.coroutines.launch
 
 /** Top-level native destinations. Every supported catalog entry maps to one of these. */
-private enum class HomeSection { Apps, Wallet, Pay, Contacts, AppChains, Validator, Mining }
+private enum class HomeSection { Apps, Wallet, Pay, Contacts, Profile, AppChains, Validator, Mining }
 
 @Composable
 internal fun UltraVerseApp(
@@ -102,6 +103,9 @@ internal fun UltraVerseApp(
     var payRecipient by remember { mutableStateOf<String?>(null) }
     // Pay opened from a contact returns to Contacts on Back; opened from its tile, to the catalog.
     var payReturn by remember { mutableStateOf(HomeSection.Apps) }
+    // Tools opened from Profile return to it, so the tab is a place rather than a one-way trip.
+    var contactsReturn by remember { mutableStateOf(HomeSection.Apps) }
+    var validatorReturn by remember { mutableStateOf(HomeSection.Apps) }
     var section by remember { mutableStateOf(HomeSection.Apps) }
     // The faucet offer. The amount comes from the faucet status, so a policy change does not need an
     // app release; until it loads the copy falls back to the documented amount.
@@ -145,16 +149,20 @@ internal fun UltraVerseApp(
         when (service.id) {
             ServiceCatalog.WALLET_ID -> openWallet()
             ServiceCatalog.PAY_ID -> { payReturn = HomeSection.Apps; section = HomeSection.Pay }
-            ServiceCatalog.CONTACTS_ID -> section = HomeSection.Contacts
+            ServiceCatalog.CONTACTS_ID -> { contactsReturn = HomeSection.Apps; section = HomeSection.Contacts }
             ServiceCatalog.APPCHAINS_ID -> section = HomeSection.AppChains
-            ServiceCatalog.VALIDATOR_ID -> section = HomeSection.Validator
+            ServiceCatalog.VALIDATOR_ID -> { validatorReturn = HomeSection.Apps; section = HomeSection.Validator }
             ServiceCatalog.MINING_ID -> section = HomeSection.Mining
             else -> Unit
         }
     }
 
-    val showsBottomBar = section == HomeSection.Apps || section == HomeSection.Wallet
-    val selectedTab = if (section == HomeSection.Wallet) UltraVerseTab.Portfolio else UltraVerseTab.Apps
+    val showsBottomBar = section == HomeSection.Apps || section == HomeSection.Wallet || section == HomeSection.Profile
+    val selectedTab = when (section) {
+        HomeSection.Wallet -> UltraVerseTab.Portfolio
+        HomeSection.Profile -> UltraVerseTab.Profile
+        else -> UltraVerseTab.Apps
+    }
 
     Scaffold(
         containerColor = UltraVerseColors.background,
@@ -170,6 +178,11 @@ internal fun UltraVerseApp(
                         section = HomeSection.Apps
                         route = WalletRoute.Apps
                         scope.launch { listState.animateScrollToItem(index = HomeHeader.entries.size) }
+                    },
+                    onProfile = {
+                        // Same rule as Apps: browsing your own address is not a lock event.
+                        section = HomeSection.Profile
+                        route = WalletRoute.Apps
                     },
                 )
             }
@@ -273,8 +286,29 @@ internal fun UltraVerseApp(
                 onClaimFaucet = { faucetSheetOpen = true },
             )
 
+            HomeSection.Profile -> ProfileScreen(
+                state = controller.state,
+                // The page is drawn inside the Scaffold, so it must clear the status bar itself.
+                modifier = Modifier.padding(scaffoldPadding),
+                onOpenStatement = {
+                    portfolioReturn = HomeSection.Profile
+                    section = HomeSection.Wallet
+                    route = WalletRoute.Portfolio
+                },
+                onOpenContacts = {
+                    contactsReturn = HomeSection.Profile
+                    section = HomeSection.Contacts
+                },
+                onOpenValidator = {
+                    validatorReturn = HomeSection.Profile
+                    section = HomeSection.Validator
+                },
+                onCreateWallet = { openWallet(); route = WalletRoute.Create },
+                onUnlockWallet = { openWallet() },
+            )
+
             HomeSection.Contacts -> ContactsScreen(
-                onBack = { section = HomeSection.Apps },
+                onBack = { section = contactsReturn },
                 onPay = { address ->
                     payRecipient = address
                     payReturn = HomeSection.Contacts
@@ -297,7 +331,7 @@ internal fun UltraVerseApp(
             )
 
             HomeSection.Validator -> ValidatorScreen(
-                onBack = { section = HomeSection.Apps },
+                onBack = { section = validatorReturn },
                 walletUnlocked = controller.state.unlocked,
                 walletAddress = controller.state.storedWallet?.address,
                 walletReady = controller.state.account != null,
@@ -308,7 +342,10 @@ internal fun UltraVerseApp(
             HomeSection.Mining -> MiningScreen(
                 onBack = { section = HomeSection.Apps },
                 walletAddress = controller.state.storedWallet?.address,
-                onOpenValidator = { section = HomeSection.Validator },
+                onOpenValidator = {
+                    validatorReturn = HomeSection.Mining
+                    section = HomeSection.Validator
+                },
             )
         }
 

@@ -34,6 +34,7 @@ internal fun BottomNavigation(
     selectedTab: UltraVerseTab,
     onPortfolio: () -> Unit,
     onApps: () -> Unit,
+    onProfile: () -> Unit,
 ) {
     // A solid surface plus a hairline divider replaces Material's tonal elevation tint, which used to
     // paint a grey band above the bar in light mode.
@@ -48,13 +49,15 @@ internal fun BottomNavigation(
             tonalElevation = 0.dp,
         ) {
             UltraVerseTab.entries.forEach { tab ->
-                val enabled = tab == UltraVerseTab.Portfolio || tab == UltraVerseTab.Apps
+                // Swap is the only tab without a native destination; it keeps the unavailable badge.
+                val enabled = tab != UltraVerseTab.Swap
                 NavigationBarItem(
                     selected = selectedTab == tab,
                     onClick = when (tab) {
                         UltraVerseTab.Portfolio -> onPortfolio
                         UltraVerseTab.Apps -> onApps
-                        UltraVerseTab.Swap, UltraVerseTab.Profile -> ({})
+                        UltraVerseTab.Profile -> onProfile
+                        UltraVerseTab.Swap -> ({})
                     },
                     enabled = enabled,
                     icon = {
@@ -97,7 +100,8 @@ internal fun BottomNavigation(
                         contentDescription = when (tab) {
                             UltraVerseTab.Portfolio -> "Portfolio. Opens the native local wallet."
                             UltraVerseTab.Apps -> "Apps. Scrolls to the grouped services."
-                            UltraVerseTab.Swap, UltraVerseTab.Profile -> "${tab.label}. Not available yet."
+                            UltraVerseTab.Profile -> "Profile. Your address and receive code."
+                            UltraVerseTab.Swap -> "${tab.label}. Not available yet."
                         }
                     },
                 )

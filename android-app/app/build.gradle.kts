@@ -78,6 +78,9 @@ dependencies {
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
     implementation(libs.mlkit.barcode.scanning)
+    // Encoding the receive QR is arithmetic, not camera work: zxing's core is pure Java, so the
+    // Profile screen can draw the code without a second scanner dependency.
+    implementation(libs.zxing.core)
 
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     androidTestImplementation(platform(libs.androidx.compose.bom))
