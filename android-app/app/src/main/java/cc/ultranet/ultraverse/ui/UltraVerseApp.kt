@@ -320,16 +320,12 @@ internal fun UltraVerseApp(
 
             HomeSection.AppChains -> AppChainsScreen(
                 onBack = { section = HomeSection.Apps },
-                onFundTreasury = { address, chainName ->
-                    controller.startNewTransfer()
-                    controller.updateRecipient(address)
-                    section = HomeSection.Wallet
-                    route = if (controller.state.unlocked) WalletRoute.Send else WalletRoute.Portfolio
-                    scope.launch {
-                        snackbarHostState.showSnackbar("Treasury of $chainName set as the transfer recipient.")
-                    }
-                },
-                onOpenOperatorTools = { section = HomeSection.Mining },
+                modifier = Modifier.padding(scaffoldPadding),
+                walletAddress = controller.state.storedWallet?.address,
+                walletUnlocked = controller.state.unlocked,
+                onOpenWallet = { openWallet() },
+                onRegister = { name -> controller.registerAppChain(name) },
+                onAnchor = { chainId, root -> controller.anchorAppChain(chainId, root) },
             )
 
             HomeSection.Validator -> ValidatorScreen(

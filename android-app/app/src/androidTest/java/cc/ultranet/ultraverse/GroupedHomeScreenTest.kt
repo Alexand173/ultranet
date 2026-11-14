@@ -81,10 +81,12 @@ class GroupedHomeScreenTest {
         compose.onNodeWithTag("ultraverse-home").performScrollToIndex(5)
         compose.onNodeWithContentDescription("AppChains. Supported path.", substring = true).performClick()
         compose.waitUntil(5_000) {
-            runCatching { compose.onNodeWithText("Public registry").assertIsDisplayed(); true }.getOrDefault(false)
+            runCatching { compose.onNodeWithText("Register AppChain").assertIsDisplayed(); true }.getOrDefault(false)
         }
-        compose.onNodeWithText("Public registry").assertIsDisplayed()
-        compose.onNodeWithText("Create chain").assertIsDisplayed()
+        // Registration is the only supported path now, and the terms come from the node rather than
+        // from the client, so both labels render whether or not the ledger read succeeds.
+        compose.onNodeWithText("Register AppChain").assertIsDisplayed()
+        compose.onNodeWithText("Per anchor").assertIsDisplayed()
 
         // Back returns to the catalog, then the validator entry opens its own native screen.
         compose.onNodeWithContentDescription("Back").performClick()

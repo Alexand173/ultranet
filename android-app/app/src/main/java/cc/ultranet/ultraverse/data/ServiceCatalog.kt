@@ -100,7 +100,7 @@ internal object ServiceCatalog {
                     name = "AppChains",
                     availability = Availability.Supported,
                     icon = Icons.Outlined.Layers,
-                    detail = "Registry, treasury funding, anchoring",
+                    detail = "Register on L1 · owner-signed anchors",
                     actionLabel = "Open AppChains",
                 ),
                 ServiceEntry(

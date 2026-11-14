@@ -1,32 +1,56 @@
 package cc.ultranet.ultraverse.data
 
-/** How the node says a chain may be anchored right now. Mirrors `anchor_availability`. */
-internal enum class AnchorAvailability {
-    Production,
-    TestOnly,
-    Disabled,
-    ;
-
-    val isAnchorable: Boolean get() = this != Disabled
-}
-
-internal data class AppChainSummary(
+/**
+ * One AppChain as it exists in consensus: an L1 object with an owner, not a node-local record.
+ * `owner` is the address that signed the registration and the only address that may anchor.
+ */
+internal data class AppChainLedgerChain(
     val id: Int,
     val name: String,
     val owner: String,
-    val treasuryAddress: String?,
-    val anchorFeeBaseUnits: Long?,
-    val treasuryBalanceBaseUnits: Long?,
-    val anchorCount: Long?,
-    val latestAnchorAtEpochSeconds: Long?,
-    val availability: AnchorAvailability,
+    val registeredTx: String,
+    val registeredBlock: Long,
+    val anchorCount: Long,
+    val latestStateRoot: String?,
+    val latestAnchorBlock: Long?,
 )
 
-internal data class AppChainRegistry(
-    val chains: List<AppChainSummary>,
-    val availability: AnchorAvailability,
-    val proofScheme: String?,
+/** The node's AppChain terms, read live rather than assumed by the client. */
+internal data class AppChainTerms(
+    val version: Int,
+    val recipient: String,
+    val registerFeeBaseUnits: Long,
+    val anchorFeeBaseUnits: Long,
+    /** Null means this node refuses AppChain transactions: the activation height is not set. */
+    val activationHeight: Long?,
 )
+
+internal data class AppChainLedger(
+    val terms: AppChainTerms,
+    val chains: List<AppChainLedgerChain>,
+)
+
+/** One owner-signed state root, as returned by the anchor history route. */
+internal data class AppChainAnchorRecord(
+    val chainId: Int,
+    val sequence: Long,
+    val stateRoot: String,
+    val txHash: String,
+    val blockIndex: Long,
+    val blockTimestamp: Long,
+)
+
+/** The node accepted a signed AppChain transaction into its mempool. */
+internal data class AppChainSubmission(
+    val txHash: String,
+    val status: String,
+)
+
+/** Outcome of signing and submitting from the wallet, so the screen can show the truth. */
+internal sealed interface AppChainOutcome {
+    data class Accepted(val txHash: String, val chainId: Int?) : AppChainOutcome
+    data class Failed(val message: String) : AppChainOutcome
+}
 
 /** Public node counters used by the mining screen. */
 internal data class NodeStats(

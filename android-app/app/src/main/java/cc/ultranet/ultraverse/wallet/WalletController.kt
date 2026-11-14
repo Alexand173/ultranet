@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import cc.ultranet.ultraverse.data.AppChainOutcome
+import cc.ultranet.ultraverse.data.UltraNetOperatorApi
 import cc.ultranet.ultraverse.data.ValidatorProposalPayload
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -16,6 +18,7 @@ import java.util.Locale
 internal class WalletController(
     context: Context,
     private val api: WalletApi = UltraNetWalletApi(),
+    private val appChainApi: UltraNetOperatorApi = UltraNetOperatorApi(),
 ) {
     private val appContext = context.applicationContext
     private val store = EncryptedWalletStore(appContext)
@@ -354,7 +357,82 @@ internal class WalletController(
         }
     }
 
+    /**
+     * Registers an AppChain as an L1 transaction signed by this wallet. Registration is permanent,
+     * costs the registration fee, and makes the signing address the chain's owner.
+     */
+    suspend fun registerAppChain(name: String): AppChainOutcome =
+        signAppChain(AppChainOperation.Register(name.trim()))
+
+    /**
+     * Anchors a state root for a chain this wallet owns. The game server submits the same transaction
+     * on a schedule; this path exists for a manual anchor and for verifying the flow end to end.
+     */
+    suspend fun anchorAppChain(chainId: Int, stateRootHex: String): AppChainOutcome =
+        signAppChain(AppChainOperation.Anchor(chainId, stateRootHex.trim().lowercase()))
+
+    /**
+     * The one place an AppChain transaction is signed and submitted. It deliberately does not touch
+     * `unresolvedTransfer`: an AppChain transaction carries no amount, so a failed submission cannot
+     * strand value the way an interrupted transfer can — it only costs a nonce and a retry.
+     */
+    private suspend fun signAppChain(operation: AppChainOperation): AppChainOutcome {
+        state = state.copy(isBusy = true, error = null)
+        try {
+            check(activeSeed != null) { "Unlock the local wallet before signing an AppChain transaction." }
+            val account = state.account
+                ?: throw IllegalStateException("Refresh the account before signing an AppChain transaction.")
+            val fee = AppChainSigner.requiredFee(operation)
+            if (account.balanceBaseUnits < fee) {
+                throw IllegalStateException(
+                    "This transaction costs ${ultraLabel(fee)} \$ULTRA and the wallet holds " +
+                        "${ultraLabel(account.balanceBaseUnits)} \$ULTRA.",
+                )
+            }
+            val generation = operationGeneration
+            val seed = activeSeed?.copyOf() ?: throw IllegalStateException("The wallet is locked.")
+            val signed = try {
+                withContext(Dispatchers.Default) {
+                    AppChainSigner.sign(
+                        seed = seed,
+                        sender = account.address,
+                        nonce = account.nonce,
+                        timestamp = System.currentTimeMillis() / 1000L,
+                        operation = operation,
+                    )
+                }
+            } finally {
+                seed.fill(0)
+            }
+            try {
+                if (generation != operationGeneration) {
+                    throw IllegalStateException("The wallet was locked before the transaction could be submitted.")
+                }
+                val submission = withContext(Dispatchers.IO) { appChainApi.submitAppChain(signed) }
+                refreshAccount()
+                return AppChainOutcome.Accepted(
+                    txHash = submission.txHash,
+                    chainId = (operation as? AppChainOperation.Anchor)?.chainId,
+                )
+            } finally {
+                signed.wipe()
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            val message = error.message ?: "The AppChain transaction could not be submitted."
+            state = state.copy(error = message)
+            return AppChainOutcome.Failed(message)
+        } finally {
+            state = state.copy(isBusy = false)
+        }
+    }
+
+    private fun ultraLabel(baseUnits: Long): String =
+        String.format(Locale.US, "%.6f", baseUnits.toDouble() / ULTRA_BASE_UNITS.toDouble())
+
     suspend fun checkPendingOutcome(): TransactionRecord? {
+
         val wallet = state.storedWallet ?: return null
         val pending = state.unresolvedTransfer ?: return state.lastTransaction
         state = state.copy(isRefreshing = true, error = null)

@@ -110,7 +110,7 @@ class WalletSessionStatementTest {
         // The balance reaches a tool's own top bar, and tapping it opens Portfolio from there.
         compose.onNodeWithTag("ultraverse-home").performScrollToIndex(5)
         compose.onNodeWithContentDescription("AppChains. Supported path.", substring = true).performClick()
-        compose.waitUntil(30_000) { textExists("Public registry") }
+        compose.waitUntil(30_000) { textExists("Register AppChain") }
         compose.onNodeWithContentDescription("Wallet balance", substring = true).assertIsDisplayed()
         compose.onNodeWithContentDescription("Open Portfolio", substring = true).performClick()
 

@@ -1,6 +1,9 @@
 package cc.ultranet.ultraverse.data
 
 import android.util.Base64
+import cc.ultranet.ultraverse.wallet.AppChainOperation
+import cc.ultranet.ultraverse.wallet.AppChainSigner
+import cc.ultranet.ultraverse.wallet.SignedAppChainTransaction
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -28,30 +31,64 @@ internal class UltraNetOperatorApi(
     private val connectTimeoutMillis: Int = 12_000,
     private val readTimeoutMillis: Int = 60_000,
 ) {
-    suspend fun registry(): AppChainRegistry = parseRegistry(get("/api/appchain/overview"))
+    /**
+     * The AppChain ledger as consensus sees it, plus the node's live terms. Public: the registry is
+     * a public fact on L1, and the terms carry the activation height, which is the only honest way
+     * to know whether this node accepts AppChain transactions at all.
+     */
+    suspend fun appChainLedger(): AppChainLedger = parseLedger(get("/api/appchain/ledger"))
 
-    suspend fun createAppChain(adminToken: CharArray, name: String, owner: String): AppChainSummary {
-        val body = JSONObject()
-            .put("name", name.trim())
-            .put("owner", owner.trim())
-            .toString()
-        val payload = post("/api/appchain/create", body, adminToken)
-        val chain = payload.optJSONObject("chain")
-            ?: throw IOException(payload.optString("message").ifBlank { "The node did not return the created AppChain." })
-        return parseChain(chain)
-            ?: throw IOException("The node returned an AppChain record without an id, name or owner.")
+    /** Owner-signed anchors for one chain, ordered by sequence. */
+    suspend fun appChainAnchors(chainId: Int, limit: Int = 50): List<AppChainAnchorRecord> {
+        val payload = get("/api/appchain/ledger/$chainId/anchors?limit=$limit")
+        return payload.optJSONArray("anchors").orEmpty().mapObjects { row ->
+            AppChainAnchorRecord(
+                chainId = row.optInt("chain_id", chainId),
+                sequence = row.optLong("sequence"),
+                stateRoot = row.optString("state_root"),
+                txHash = row.optString("tx_hash"),
+                blockIndex = row.optLong("block_index"),
+                blockTimestamp = row.optLong("block_timestamp"),
+            )
+        }.sortedBy { it.sequence }
     }
 
-    suspend fun anchor(adminToken: CharArray, chainId: Int): AnchorOutcome {
-        val payload = post("/api/appchain/$chainId/anchor", body = null, adminToken = adminToken)
-        return AnchorOutcome(
-            chainId = payload.optInt("chain_id", chainId),
-            anchorNumber = payload.optLong("anchor_number"),
-            stateRoot = payload.optString("state_root"),
-            chargedBaseUnits = payload.optionalLong("charged_base_units"),
-            balanceBaseUnits = payload.optionalLong("balance"),
-            isTest = payload.optBoolean("is_test", false),
-        )
+    /**
+     * Submits an owner-signed AppChain transaction. No admin token: the Dilithium signature over the
+     * version-5 envelope is the authorization, and the node gates the rest on its activation height.
+     */
+    suspend fun submitAppChain(tx: SignedAppChainTransaction): AppChainSubmission {
+        val operation = JSONObject()
+        when (val signed = tx.operation) {
+            is AppChainOperation.Register ->
+                operation.put("register", JSONObject().put("name", signed.name))
+
+            is AppChainOperation.Anchor ->
+                operation.put(
+                    "anchor",
+                    JSONObject()
+                        .put("chain_id", signed.chainId)
+                        .put("state_root", signed.stateRootHex.trim().lowercase()),
+                )
+        }
+        val body = JSONObject()
+            .put("sender", tx.sender)
+            .put("sender_public_key", tx.senderPublicKey.toJsonArray())
+            .put("nonce", tx.nonce)
+            .put("timestamp", tx.timestamp)
+            .put("nullifier", tx.nullifier.toJsonArray())
+            .put("fee", tx.fee)
+            .put("signature", tx.signature.toJsonArray())
+            .put("version", AppChainSigner.TX_VERSION)
+            .put("operation", operation)
+            .toString()
+        val payload = post("/api/appchain/tx", body, adminToken = null)
+        val data = payload.optJSONObject("data")
+        val hash = data?.optString("hash").orEmpty()
+        if (!HASH_PATTERN.matches(hash)) {
+            throw IOException("The node accepted the transaction but did not return a usable hash.")
+        }
+        return AppChainSubmission(txHash = hash, status = data?.optString("status").orEmpty())
     }
 
     /** `GET /api/stats` is public and reports `mempool_size` and `chain_length` as strings. */
@@ -157,37 +194,41 @@ internal class UltraNetOperatorApi(
         )
     }
 
-    private fun parseRegistry(payload: JSONObject): AppChainRegistry {
-        val chains = payload.optJSONArray("chains").orEmpty().mapObjects(::parseChain).sortedBy { it.id }
-        return AppChainRegistry(
-            chains = chains,
-            availability = parseAvailability(payload.optString("anchor_availability")),
-            proofScheme = payload.optString("proof_scheme").takeIf { it.isNotBlank() },
+    private fun parseLedger(payload: JSONObject): AppChainLedger {
+        val terms = payload.optJSONObject("terms")
+        return AppChainLedger(
+            terms = AppChainTerms(
+                version = terms?.optInt("version", 0) ?: 0,
+                recipient = terms?.optString("recipient").orEmpty(),
+                registerFeeBaseUnits = terms?.optionalLong("register_fee_base_units")
+                    ?: AppChainSigner.REGISTER_FEE_BASE_UNITS,
+                anchorFeeBaseUnits = terms?.optionalLong("anchor_fee_base_units")
+                    ?: AppChainSigner.ANCHOR_FEE_BASE_UNITS,
+                // Absent or null means the node refuses AppChain transactions: the operator has not
+                // set an activation height yet. That is a fact the screen must show, not hide.
+                activationHeight = terms?.optionalLong("activation_height"),
+            ),
+            chains = payload.optJSONArray("chains").orEmpty()
+                .mapObjects(::parseLedgerChain)
+                .sortedBy { it.id },
         )
     }
 
-    private fun parseChain(row: JSONObject): AppChainSummary? {
+    private fun parseLedgerChain(row: JSONObject): AppChainLedgerChain? {
         val id = row.opt("id").asIntOrNull() ?: return null
         val name = row.optString("name").trim()
         val owner = row.optString("owner").trim()
         if (name.isEmpty() || owner.isEmpty()) return null
-        return AppChainSummary(
+        return AppChainLedgerChain(
             id = id,
             name = name,
             owner = owner,
-            treasuryAddress = row.optString("account_address").takeIf { it.isNotBlank() },
-            anchorFeeBaseUnits = row.optionalLong("anchor_fee"),
-            treasuryBalanceBaseUnits = row.optionalLong("balance"),
-            anchorCount = row.optionalLong("anchor_count"),
-            latestAnchorAtEpochSeconds = row.optionalLong("latest_anchor_at"),
-            availability = parseAvailability(row.optString("anchor_availability")),
+            registeredTx = row.optString("registered_tx"),
+            registeredBlock = row.optionalLong("registered_block") ?: 0L,
+            anchorCount = row.optionalLong("anchor_count") ?: 0L,
+            latestStateRoot = row.optString("latest_state_root").takeIf { it.isNotBlank() },
+            latestAnchorBlock = row.optionalLong("latest_anchor_block"),
         )
-    }
-
-    private fun parseAvailability(value: String): AnchorAvailability = when (value) {
-        "production" -> AnchorAvailability.Production
-        "test-only" -> AnchorAvailability.TestOnly
-        else -> AnchorAvailability.Disabled
     }
 
     private suspend fun get(path: String): JSONObject {
@@ -282,5 +323,6 @@ internal class UltraNetOperatorApi(
     companion object {
         private const val API_BASE_URL = "https://api.ultranetwork.cc"
         private const val PROPOSAL_ENVELOPE_VERSION = 2
+        private val HASH_PATTERN = Regex("^[0-9a-f]{64}$")
     }
 }
