@@ -103,14 +103,28 @@ Accept the RSA debugging prompt on the phone the first time. For USB instead, bi
 
 ### Running the suites
 
+On this workstation, use the runner, not `connectedAndroidTest`:
+
 ```sh
-cd android-app && source ./env.sh
-./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=cc.ultranet.ultraverse.WindowPaletteConsistencyTest
+cd android-app && ./run-instrumented-tests.sh                    # every class
+cd android-app && ./run-instrumented-tests.sh ValidatorRecordMatchTest ChessRulesTest
+cd android-app && SKIP_BUILD=1 ./run-instrumented-tests.sh       # APKs already current
 ```
 
-One class per invocation: a comma-separated `class=` argument silently runs only the first entry. Each run overwrites `app/build/outputs/androidTest-results/connected/debug/*.xml`, so read that XML rather than trusting the exit code. With more than one device attached, export `ANDROID_SERIAL=<serial>` — otherwise Gradle fans out across all of them and a stale emulator fails the run with `No connected devices!`.
+One `connectedAndroidTest` invocation holds a 4 GB Gradle daemon and a Gradle-managed emulator at the same time and runs every class in one process; on a 23 GB host that ran out of memory and took the machine down with the results. The runner builds once with `--no-daemon` and a 3 GB heap, installs with adb, boots one headless emulator, then runs **one class per `am instrument` call** with `pm clear` before each so classes cannot leak wallet state into each other. It restarts the emulator and retries a class once if the emulator died, recycles the emulator when free memory drops below 3.5 GB, and always kills it on exit.
 
-`WalletCryptoParityTest` is the one to plan around: its four 310 000-iteration PBKDF2 derivations cost about 80 s per case under software emulation, and well under a second on a phone or a KVM-accelerated emulator.
+Results go to `build/instrumented-tests/summary.txt` and `<Class>.log`, so a crash cannot erase what already passed. Full suite, 2026-11-14: 18 classes, 64 tests, about two and a half minutes, 20 s boot.
+
+On a physical device, Gradle is fine:
+
+```sh
+cd android-app && source ./env.sh
+ANDROID_SERIAL=<serial> ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=cc.ultranet.ultraverse.WindowPaletteConsistencyTest
+```
+
+A comma-separated `class=` argument silently runs only the first entry, so one class per invocation there too. Each run overwrites `app/build/outputs/androidTest-results/connected/debug/*.xml`, so read that XML rather than trusting the exit code. With more than one device attached, export `ANDROID_SERIAL` — otherwise Gradle fans out across all of them and a stale emulator fails the run with `No connected devices!`
+
+`WalletCryptoParityTest` used to be the one to plan around: its four 310 000-iteration PBKDF2 derivations cost about 80 s per case under software emulation. With KVM acceleration it finishes in about 3 s, so what matters now is having `/dev/kvm` access at all (`id -nG | grep kvm`); the runner refuses to start without it.
 
 ### Confirm both ABIs shipped
 
