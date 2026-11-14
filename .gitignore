@@ -60,6 +60,7 @@ website/crypto/ultra-dilithium5/build/
 !deploy/ultranet-memory-monitor.sh
 !deploy/cloudflare-origin-lockdown.sh
 !deploy/faucet-staging-origin-lockdown.sh
+!android-app/run-instrumented-tests.sh
 !scripts/migrate_appchain_registry.sh
 !scripts/check_approval_staging.sh
 !tools/pqclean_dilithium5/build.sh
