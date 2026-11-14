@@ -19,6 +19,15 @@
   const CLAIM_ID_PATTERN = /^[0-9a-f]{32}$/;
   const HEX_DIGITS = /^[0-9a-fA-F]$/;
 
+  // The Android app embeds this page and prefills the destination, so the user never pastes 64
+  // characters. A plain browser has neither the query parameter nor the bridge.
+  const query = new URLSearchParams(window.location.search);
+  const presetAddress = (query.get("address") || "").trim().replace(/^0[xX]/, "").toLowerCase();
+  const bridge = () =>
+    window.UltraVerseFaucet && typeof window.UltraVerseFaucet === "object" ? window.UltraVerseFaucet : null;
+  // Replaced by the faucet status once it loads; the fallback matches the documented policy.
+  let claimLabel = "0.1";
+
   const form = document.getElementById("claim-form");
   const recipientInput = document.getElementById("recipient");
   const rule = document.getElementById("address-rule");
@@ -72,7 +81,7 @@
     } else if (phase === "accepted") {
       submitLabel.textContent = "Claim submitted";
     } else {
-      submitLabel.textContent = "Claim 1 $ULTRA";
+      submitLabel.textContent = `Claim ${claimLabel} $ULTRA`;
     }
   }
 
@@ -198,6 +207,8 @@
     setStatus("Claim accepted. Payout follows once a block includes it.", "success");
     updateControls();
     receipt.scrollIntoView({ block: "nearest" });
+    const app = bridge();
+    if (app) app.onClaimAccepted(claim.claim_id);
     pollClaim(claim.claim_id);
   }
 
@@ -229,11 +240,15 @@
           const payload = await response.json().catch(() => null);
           const state = payload && payload.data && payload.data.status;
           if (state === "confirmed") {
-            settleReceipt("Confirmed on chain. The 1 $ULTRA is in your wallet.", "success", "done");
+            settleReceipt(`Confirmed on chain. The ${claimLabel} $ULTRA is in your wallet.`, "success", "done");
+            const app = bridge();
+            if (app) app.onClaimConfirmed(claimLabel);
             return;
           }
           if (state === "failed") {
             settleReceipt("The faucet could not complete this payout. Nothing was sent.", "error", "stopped");
+            const app = bridge();
+            if (app) app.onClaimFailed("The faucet could not complete this payout. Nothing was sent.");
             return;
           }
         }
@@ -309,7 +324,7 @@
         form.hidden = true;
         receipt.hidden = false;
         receiptId.textContent = claim.claim_id;
-        settleReceipt("Confirmed on chain. The 1 $ULTRA is in your wallet.", "success", "done");
+        settleReceipt(`Confirmed on chain. The ${claimLabel} $ULTRA is in your wallet.`, "success", "done");
         phase = "accepted";
         updateControls();
         return;
@@ -339,8 +354,35 @@
     updateControls();
   });
 
+  // The app's copy shows the amount, so the page must state the same figure; a hard-coded "1"
+  // would start lying the moment the policy changed.
+  async function loadPolicy() {
+    try {
+      const response = await fetch("/api/faucet/status", {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      if (!response.ok) return;
+      const payload = await response.json().catch(() => null);
+      const amount = payload && payload.data && payload.data.claim_amount_ultra;
+      if (typeof amount === "string" && amount.length > 0) {
+        claimLabel = amount.replace(/0+$/, "").replace(/\.$/, "");
+        updateControls();
+      }
+    } catch {
+      /* the documented amount stays */
+    }
+  }
+
   form.addEventListener("submit", submitClaim);
-  window.addEventListener("load", () => waitForTurnstile());
+  window.addEventListener("load", () => {
+    if (presetAddress) {
+      recipientInput.value = presetAddress;
+      paintRule(presetAddress);
+    }
+    loadPolicy();
+    waitForTurnstile();
+  });
   window.addEventListener("beforeunload", () => {
     token = null;
     if (pollTimer) window.clearTimeout(pollTimer);
