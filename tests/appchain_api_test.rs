@@ -11,6 +11,7 @@ use actix_web::{test as actix_test, web, App};
 use chrono::Utc;
 use parking_lot::RwLock;
 use serde_json::Value;
+use sha3::{Digest, Sha3_256};
 use std::fs;
 use std::sync::Arc;
 use UltraNet::api::{
@@ -19,7 +20,7 @@ use UltraNet::api::{
     AppState,
 };
 use UltraNet::appchain::ledger::{
-    APPCHAIN_ANCHOR_FEE, APPCHAIN_REGISTER_FEE, APPCHAIN_TX_VERSION,
+    APPCHAIN_ANCHOR_FEE, APPCHAIN_REGISTER_FEE, APPCHAIN_TRANSFER_FEE, APPCHAIN_TX_VERSION,
 };
 use UltraNet::storage::Storage;
 use UltraNet::*;
@@ -29,9 +30,14 @@ const START_BALANCE: u64 = 1_000_000;
 
 /// Build the request a client would send, signed over the node's own preimage.
 fn signed_request(wallet: &UltraWallet, nonce: u64, fee: u64, operation: AppChainOperation) -> AppChainTxRequest {
+    // Nullifiers are a global set, not per sender: deriving one from the nonce alone made a second
+    // wallet's first transaction collide with the first wallet's registration. Real clients
+    // randomise; this derives it from (sender, nonce) so a run is reproducible without colliding.
     let mut nullifier = vec![0u8; 32];
-    nullifier[..8].copy_from_slice(&nonce.to_le_bytes());
-    nullifier[31] = 0x5A;
+    let mut nullifier_hasher = Sha3_256::new();
+    nullifier_hasher.update(wallet.address.as_bytes());
+    nullifier_hasher.update(nonce.to_le_bytes());
+    nullifier.copy_from_slice(&nullifier_hasher.finalize());
     let mut request = AppChainTxRequest {
         sender: wallet.address.clone(),
         sender_public_key: wallet.keypair.public_key.clone(),
@@ -56,8 +62,12 @@ async fn register_then_anchor_through_the_public_api() {
     let _ = fs::remove_dir_all(DB_PATH);
 
     let owner = UltraWallet::new();
+    let successor = UltraWallet::new();
     let storage = Arc::new(Storage::new(DB_PATH).expect("test storage"));
     storage.save_state(&owner.address, START_BALANCE).expect("seed owner balance");
+    storage
+        .save_state(&successor.address, START_BALANCE)
+        .expect("seed successor balance");
     let blockchain = Arc::new(RwLock::new(UltraBlockchain::with_storage(storage)));
 
     let app = actix_test::init_service(
@@ -76,6 +86,7 @@ async fn register_then_anchor_through_the_public_api() {
     let ledger: Value = actix_test::call_and_read_body_json(&app, get("/api/appchain/ledger")).await;
     assert_eq!(ledger["terms"]["register_fee_base_units"], APPCHAIN_REGISTER_FEE);
     assert_eq!(ledger["terms"]["anchor_fee_base_units"], APPCHAIN_ANCHOR_FEE);
+    assert_eq!(ledger["terms"]["transfer_fee_base_units"], APPCHAIN_TRANSFER_FEE);
     assert_eq!(ledger["terms"]["activation_height"], 0);
     assert_eq!(ledger["chains"].as_array().unwrap().len(), 0);
 
@@ -159,10 +170,72 @@ async fn register_then_anchor_through_the_public_api() {
     let missing = actix_test::call_service(&app, get("/api/appchain/ledger/7")).await;
     assert_eq!(missing.status(), 404);
 
+    // Hand the chain over. The successor is named inside the signed bytes, so this is the only
+    // way its ownership can change.
+    let handover = signed_request(
+        &owner,
+        2,
+        APPCHAIN_TRANSFER_FEE,
+        AppChainOperation::TransferOwner {
+            chain_id: 1,
+            new_owner: successor.address.clone(),
+        },
+    );
+    let accepted: Value = actix_test::call_and_read_body_json(
+        &app,
+        actix_test::TestRequest::post().uri("/api/appchain/tx").set_json(&handover).to_request(),
+    )
+    .await;
+    assert_eq!(accepted["success"], true, "{accepted}");
+    blockchain.write().mine_block().expect("block with the handover");
+
+    let chain: Value = actix_test::call_and_read_body_json(&app, get("/api/appchain/ledger/1")).await;
+    assert_eq!(chain["chain"]["owner"], successor.address.as_str());
+    // The anchors signed before the handover stay exactly where they were.
+    let anchors: Value =
+        actix_test::call_and_read_body_json(&app, get("/api/appchain/ledger/1/anchors")).await;
+    assert_eq!(anchors["anchors"].as_array().unwrap().len(), 1);
+
+    // The previous owner is a stranger now, and the node says so before the block is built.
+    let stale = signed_request(
+        &owner,
+        3,
+        APPCHAIN_ANCHOR_FEE,
+        AppChainOperation::Anchor { chain_id: 1, state_root: "cd".repeat(32) },
+    );
+    let response = actix_test::call_service(
+        &app,
+        actix_test::TestRequest::post().uri("/api/appchain/tx").set_json(&stale).to_request(),
+    )
+    .await;
+    assert_eq!(response.status(), 400);
+
+    // The successor anchors the chain from its own wallet.
+    let inherited = signed_request(
+        &successor,
+        0,
+        APPCHAIN_ANCHOR_FEE,
+        AppChainOperation::Anchor { chain_id: 1, state_root: "cd".repeat(32) },
+    );
+    let accepted: Value = actix_test::call_and_read_body_json(
+        &app,
+        actix_test::TestRequest::post().uri("/api/appchain/tx").set_json(&inherited).to_request(),
+    )
+    .await;
+    assert_eq!(accepted["success"], true, "{accepted}");
+    blockchain.write().mine_block().expect("block with the inherited anchor");
+    let chain: Value = actix_test::call_and_read_body_json(&app, get("/api/appchain/ledger/1")).await;
+    assert_eq!(chain["chain"]["anchor_count"], 2);
+    assert_eq!(chain["chain"]["latest_state_root"], "cd".repeat(32));
+
     // Fees came out of the owner's balance and nothing else moved.
     assert_eq!(
         blockchain.read().get_balance(&owner.address),
-        START_BALANCE - APPCHAIN_REGISTER_FEE - APPCHAIN_ANCHOR_FEE
+        START_BALANCE - APPCHAIN_REGISTER_FEE - APPCHAIN_ANCHOR_FEE - APPCHAIN_TRANSFER_FEE
+    );
+    assert_eq!(
+        blockchain.read().get_balance(&successor.address),
+        START_BALANCE - APPCHAIN_ANCHOR_FEE
     );
 
     drop(app);

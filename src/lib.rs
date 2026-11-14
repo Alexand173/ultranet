@@ -923,6 +923,10 @@ pub enum TransactionPayload {
     /// Owner-signed state root for an AppChain. L1 records it; it does not
     /// compute or judge the AppChain's state.
     AppChainAnchor { chain_id: u32, state_root: [u8; 32] },
+    /// Owner-signed handover: the chain's owner becomes `new_owner`. The new
+    /// owner's address is part of the signed bytes, so a handover cannot be
+    /// redirected by anyone who handles the payload afterwards.
+    AppChainTransferOwner { chain_id: u32, new_owner: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2392,6 +2396,17 @@ impl UltraBlockchain {
                     return Err(format!("Only the owner of AppChain #{chain_id} may anchor it"));
                 }
             }
+            TransactionPayload::AppChainTransferOwner { chain_id, new_owner } => {
+                self.check_appchain_activation()?;
+                let chain = appchain::ledger::LedgerView::chain(self.storage.as_ref(), *chain_id)
+                    .ok_or_else(|| format!("AppChain #{chain_id} is not registered"))?;
+                if chain.owner != tx.sender {
+                    return Err(format!("Only the owner of AppChain #{chain_id} may transfer it"));
+                }
+                if chain.owner == *new_owner {
+                    return Err(format!("AppChain #{chain_id} is already owned by that address"));
+                }
+            }
         }
         // NAPOMENA: Nullifier se NE registruje ovde! `validate_transaction` se poziva
         // više puta za istu transakciju (pri dodavanju u mempool i ponovo pri
@@ -2892,6 +2907,7 @@ impl UltraBlockchain {
                 | TransactionPayload::SovereignSupplyCorrection { .. }
                 | TransactionPayload::AppChainRegister { .. }
                 | TransactionPayload::AppChainAnchor { .. }
+                | TransactionPayload::AppChainTransferOwner { .. }
         ) {
             tree.insert(format!("{}:move", tx.sender).as_bytes(), &tx.get_hash());
         }
@@ -3701,7 +3717,8 @@ impl UltraBlockchain {
                     // Governance events handled in transition layer
                 }
                 TransactionPayload::AppChainRegister { .. }
-                | TransactionPayload::AppChainAnchor { .. } => {
+                | TransactionPayload::AppChainAnchor { .. }
+                | TransactionPayload::AppChainTransferOwner { .. } => {
                     // Applied below in one planned pass, shared with update_state.
                 }
                 _ => unreachable!(),
@@ -3995,7 +4012,8 @@ impl UltraBlockchain {
                     // Handled at protocol addition layer
                 }
                 TransactionPayload::AppChainRegister { .. }
-                | TransactionPayload::AppChainAnchor { .. } => {
+                | TransactionPayload::AppChainAnchor { .. }
+                | TransactionPayload::AppChainTransferOwner { .. } => {
                     // Applied below in one planned pass, shared with re-execution.
                 }
             }

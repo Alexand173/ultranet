@@ -493,6 +493,7 @@ impl Storage {
     //   reg:<tx hash>              -> u32 BE chain id
     //   anchor:<id BE><seq BE>     -> JSON LedgerAnchor
     //   atx:<tx hash>              -> u32 BE chain id ++ u64 BE sequence
+    //   ttx:<tx hash>              -> u32 BE chain id
     // Records are JSON so new optional fields can be added over the decades
     // without a migration.
     // ------------------------------------------------------------
@@ -591,9 +592,24 @@ impl Storage {
                     );
                     wrote = true;
                 }
+                LedgerEffect::TransferOwnership {
+                    chain,
+                    tx_hash,
+                    fresh: true,
+                } => {
+                    let hash = hex::decode(tx_hash)
+                        .map_err(|error| format!("invalid transfer hash: {error}"))?;
+                    batch.insert(
+                        Self::ledger_chain_key(chain.id),
+                        serde_json::to_vec(chain).map_err(|error| error.to_string())?,
+                    );
+                    batch.insert([b"ttx:".as_slice(), &hash].concat(), &chain.id.to_be_bytes());
+                    wrote = true;
+                }
                 // Replayed effects are already stored.
                 LedgerEffect::Register { fresh: false, .. }
-                | LedgerEffect::Anchor { fresh: false, .. } => {}
+                | LedgerEffect::Anchor { fresh: false, .. }
+                | LedgerEffect::TransferOwnership { fresh: false, .. } => {}
             }
         }
         if !wrote {
@@ -1747,6 +1763,20 @@ impl LedgerView for Storage {
             )),
             Ok(None) => None,
             Ok(Some(_)) => panic!("AppChain ledger anchor record is malformed"),
+            Err(error) => panic!("AppChain ledger is unreadable: {error}"),
+        }
+    }
+
+    fn transfer_for_tx(&self, tx_hash: &[u8; 32]) -> Option<u32> {
+        match self
+            .appchain_ledger
+            .get([b"ttx:".as_slice(), tx_hash].concat())
+        {
+            Ok(Some(value)) if value.len() == 4 => Some(u32::from_be_bytes(
+                value.as_ref().try_into().expect("checked length"),
+            )),
+            Ok(None) => None,
+            Ok(Some(_)) => panic!("AppChain ledger transfer record is malformed"),
             Err(error) => panic!("AppChain ledger is unreadable: {error}"),
         }
     }

@@ -1765,13 +1765,15 @@ async fn list_anchors(state: web::Data<AppState>) -> impl Responder {
 // ============================================================
 
 /// What the owner is signing. Externally tagged:
-/// `{"register": {"name": "UltraNet Grid"}}` or
-/// `{"anchor": {"chain_id": 1, "state_root": "<64 hex>"}}`.
+/// `{"register": {"name": "UltraNet Grid"}}`,
+/// `{"anchor": {"chain_id": 1, "state_root": "<64 hex>"}}` or
+/// `{"transfer_owner": {"chain_id": 1, "new_owner": "<64 hex>"}}`.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum AppChainOperation {
     Register { name: String },
     Anchor { chain_id: u32, state_root: String },
+    TransferOwner { chain_id: u32, new_owner: String },
 }
 
 /// A wallet-signed AppChain ledger transaction. The client signs the version-5
@@ -1812,6 +1814,13 @@ pub fn appchain_request_to_transaction(req: &AppChainTxRequest) -> Result<Transa
                 state_root,
             }
         }
+        AppChainOperation::TransferOwner {
+            chain_id,
+            new_owner,
+        } => TransactionPayload::AppChainTransferOwner {
+            chain_id: *chain_id,
+            new_owner: new_owner.clone(),
+        },
     };
     Ok(Transaction {
         sender: req.sender.clone(),
@@ -1871,6 +1880,7 @@ fn appchain_ledger_terms() -> serde_json::Value {
         "recipient": ledger::APPCHAIN_TX_RECIPIENT,
         "register_fee_base_units": ledger::APPCHAIN_REGISTER_FEE,
         "anchor_fee_base_units": ledger::APPCHAIN_ANCHOR_FEE,
+        "transfer_fee_base_units": ledger::APPCHAIN_TRANSFER_FEE,
         "gas_limit": ledger::APPCHAIN_TX_GAS_LIMIT,
         "gas_price": ledger::APPCHAIN_TX_GAS_PRICE,
         // null means this node does not accept AppChain transactions yet.

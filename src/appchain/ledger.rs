@@ -39,6 +39,10 @@ pub const APPCHAIN_ENVELOPE_DOMAIN: &[u8] = b"UltraNet/appchain-envelope/v5";
 pub const APPCHAIN_REGISTER_FEE: u64 = 10_000;
 /// Anchor fee: 0.001 $ULTRA per owner-signed state root.
 pub const APPCHAIN_ANCHOR_FEE: u64 = 1_000;
+/// Ownership-transfer fee: 0.001 $ULTRA, one ledger write like an anchor. It is
+/// deliberately cheap: when an owner's key is lost or leaked, the cost of the fix
+/// must never be the reason nobody reaches for it.
+pub const APPCHAIN_TRANSFER_FEE: u64 = 1_000;
 
 pub const APPCHAIN_NAME_MAX_LEN: usize = 64;
 /// Gas fields are fixed for ledger transactions so the envelope has one shape.
@@ -70,7 +74,9 @@ pub fn is_active_at(block_index: u64) -> bool {
 pub fn is_appchain_payload(payload: &TransactionPayload) -> bool {
     matches!(
         payload,
-        TransactionPayload::AppChainRegister { .. } | TransactionPayload::AppChainAnchor { .. }
+        TransactionPayload::AppChainRegister { .. }
+            | TransactionPayload::AppChainAnchor { .. }
+            | TransactionPayload::AppChainTransferOwner { .. }
     )
 }
 
@@ -79,6 +85,7 @@ pub fn required_fee(payload: &TransactionPayload) -> Option<u64> {
     match payload {
         TransactionPayload::AppChainRegister { .. } => Some(APPCHAIN_REGISTER_FEE),
         TransactionPayload::AppChainAnchor { .. } => Some(APPCHAIN_ANCHOR_FEE),
+        TransactionPayload::AppChainTransferOwner { .. } => Some(APPCHAIN_TRANSFER_FEE),
         _ => None,
     }
 }
@@ -144,6 +151,21 @@ pub fn validate_envelope(tx: &Transaction) -> Result<(), String> {
     if let TransactionPayload::AppChainRegister { name } = &tx.payload {
         validate_name(name)?;
     }
+    if let TransactionPayload::AppChainTransferOwner {
+        chain_id,
+        new_owner,
+    } = &tx.payload
+    {
+        if *chain_id == 0 {
+            return Err("An ownership transfer must name the chain it transfers".to_string());
+        }
+        if !crate::UltraBlockchain::is_valid_address(new_owner) {
+            return Err("The new owner must be a 64-hex address".to_string());
+        }
+        if *new_owner == tx.sender {
+            return Err("An AppChain owner cannot transfer it to itself".to_string());
+        }
+    }
     Ok(())
 }
 
@@ -166,6 +188,15 @@ pub fn append_signing_payload(hasher: &mut Sha3_256, tx: &Transaction) {
             hasher.update(b"AppChainAnchor");
             hasher.update(chain_id.to_le_bytes());
             hasher.update(state_root);
+        }
+        TransactionPayload::AppChainTransferOwner {
+            chain_id,
+            new_owner,
+        } => {
+            hasher.update(b"AppChainTransferOwner");
+            hasher.update(chain_id.to_le_bytes());
+            hasher.update((new_owner.len() as u64).to_le_bytes());
+            hasher.update(new_owner.as_bytes());
         }
         _ => {}
     }
@@ -202,6 +233,7 @@ pub trait LedgerView {
     fn next_chain_id(&self) -> u32;
     fn registration_for_tx(&self, tx_hash: &[u8; 32]) -> Option<u32>;
     fn anchor_for_tx(&self, tx_hash: &[u8; 32]) -> Option<(u32, u64)>;
+    fn transfer_for_tx(&self, tx_hash: &[u8; 32]) -> Option<u32>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,6 +247,12 @@ pub enum LedgerEffect {
         anchor: LedgerAnchor,
         /// The chain record after this anchor.
         chain: LedgerChain,
+        fresh: bool,
+    },
+    TransferOwnership {
+        /// The chain record after the handover: `owner` is the new owner.
+        chain: LedgerChain,
+        tx_hash: String,
         fresh: bool,
     },
 }
@@ -239,6 +277,11 @@ impl LedgerEffect {
             LedgerEffect::Anchor { anchor, .. } => vec![(
                 format!("appchain:{}:anchor:{}", anchor.chain_id, anchor.sequence),
                 hex::decode(&anchor.state_root).unwrap_or_default(),
+            )],
+            // The registration digest includes the owner, so a handover rewrites it.
+            LedgerEffect::TransferOwnership { chain, .. } => vec![(
+                format!("appchain:{}", chain.id),
+                registration_digest(chain).to_vec(),
             )],
         }
     }
@@ -322,12 +365,16 @@ pub fn plan_block<V: LedgerView>(
                     .cloned()
                     .or_else(|| view.chain(*chain_id))
                     .ok_or_else(|| format!("AppChain #{chain_id} is not registered"))?;
-                if current.owner != tx.sender {
+                let stored = view.anchor_for_tx(&tx_hash);
+                // A replayed transaction is reproduced, not authorised: by now its signer
+                // may have transferred the chain, so re-checking ownership would reject a
+                // block that is already in the chain.
+                if stored.is_none() && current.owner != tx.sender {
                     return Err(format!(
                         "Only the owner of AppChain #{chain_id} may anchor it"
                     ));
                 }
-                if let Some((stored_chain, sequence)) = view.anchor_for_tx(&tx_hash) {
+                if let Some((stored_chain, sequence)) = stored {
                     if stored_chain != *chain_id {
                         return Err("AppChain anchor record names a different chain".to_string());
                     }
@@ -369,6 +416,44 @@ pub fn plan_block<V: LedgerView>(
                     }
                 }
             }
+            TransactionPayload::AppChainTransferOwner {
+                chain_id,
+                new_owner,
+            } => {
+                let current = overlay
+                    .get(chain_id)
+                    .cloned()
+                    .or_else(|| view.chain(*chain_id))
+                    .ok_or_else(|| format!("AppChain #{chain_id} is not registered"))?;
+                let replaying = view.transfer_for_tx(&tx_hash).is_some();
+                if !replaying && current.owner != tx.sender {
+                    return Err(format!(
+                        "Only the owner of AppChain #{chain_id} may transfer it"
+                    ));
+                }
+                if replaying {
+                    // Replaying: the stored record already names the final owner.
+                    LedgerEffect::TransferOwnership {
+                        chain: current,
+                        tx_hash: hex::encode(tx_hash),
+                        fresh: false,
+                    }
+                } else {
+                    if current.owner == *new_owner {
+                        return Err(format!(
+                            "AppChain #{chain_id} is already owned by that address"
+                        ));
+                    }
+                    let mut updated = current;
+                    updated.owner = new_owner.clone();
+                    overlay.insert(*chain_id, updated.clone());
+                    LedgerEffect::TransferOwnership {
+                        chain: updated,
+                        tx_hash: hex::encode(tx_hash),
+                        fresh: true,
+                    }
+                }
+            }
             _ => unreachable!("filtered by is_appchain_payload"),
         };
         planned.push(PlannedTx {
@@ -391,6 +476,7 @@ mod tests {
         chains: HashMap<u32, LedgerChain>,
         registrations: HashMap<[u8; 32], u32>,
         anchors: HashMap<[u8; 32], (u32, u64)>,
+        transfers: HashMap<[u8; 32], u32>,
     }
 
     impl MemoryView {
@@ -404,6 +490,10 @@ mod tests {
                     }
                     LedgerEffect::Anchor { anchor, chain, .. } => {
                         self.anchors.insert(hash, (anchor.chain_id, anchor.sequence));
+                        self.chains.insert(chain.id, chain.clone());
+                    }
+                    LedgerEffect::TransferOwnership { chain, .. } => {
+                        self.transfers.insert(hash, chain.id);
                         self.chains.insert(chain.id, chain.clone());
                     }
                 }
@@ -423,6 +513,9 @@ mod tests {
         }
         fn anchor_for_tx(&self, tx_hash: &[u8; 32]) -> Option<(u32, u64)> {
             self.anchors.get(tx_hash).copied()
+        }
+        fn transfer_for_tx(&self, tx_hash: &[u8; 32]) -> Option<u32> {
+            self.transfers.get(tx_hash).copied()
         }
     }
 
@@ -458,6 +551,17 @@ mod tests {
             TransactionPayload::AppChainAnchor {
                 chain_id,
                 state_root: [byte; 32],
+            },
+        )
+    }
+
+    fn transfer(sender: &str, nonce: u64, chain_id: u32, new_owner: &str) -> Transaction {
+        tx(
+            sender,
+            nonce,
+            TransactionPayload::AppChainTransferOwner {
+                chain_id,
+                new_owner: new_owner.to_string(),
             },
         )
     }
@@ -544,8 +648,90 @@ mod tests {
         let original: Vec<_> = first.iter().flat_map(|item| item.effect.trie_entries()).collect();
         assert_eq!(entries, original);
         assert!(replay.iter().all(|item| match &item.effect {
-            LedgerEffect::Register { fresh, .. } | LedgerEffect::Anchor { fresh, .. } => !fresh,
+            LedgerEffect::Register { fresh, .. }
+            | LedgerEffect::Anchor { fresh, .. }
+            | LedgerEffect::TransferOwnership { fresh, .. } => !fresh,
         }));
+    }
+
+    #[test]
+    fn only_the_owner_may_transfer_and_the_new_owner_may_anchor() {
+        let mut view = MemoryView::default();
+        let block1 = vec![register(OWNER, 0, "UltraNet Grid")];
+        view.apply(&plan_block(&view, 1, 10, &block1).unwrap(), &block1);
+
+        // A stranger cannot take the chain.
+        let hostile = vec![transfer(OTHER, 1, 1, OTHER)];
+        let error = plan_block(&view, 2, 20, &hostile).unwrap_err();
+        assert!(error.contains("Only the owner"), "{error}");
+
+        // The owner can hand it over.
+        let handover = vec![transfer(OWNER, 1, 1, OTHER)];
+        let planned = plan_block(&view, 2, 20, &handover).unwrap();
+        match &planned[0].effect {
+            LedgerEffect::TransferOwnership { chain, fresh, .. } => {
+                assert!(fresh);
+                assert_eq!(chain.id, 1);
+                assert_eq!(chain.owner, OTHER);
+            }
+            _ => panic!("expected a transfer"),
+        }
+        view.apply(&planned, &handover);
+
+        // The old owner can no longer anchor it...
+        assert!(plan_block(&view, 3, 30, &[anchor(OWNER, 2, 1, 0xAA)]).is_err());
+        // ...and the new owner can.
+        assert!(plan_block(&view, 3, 30, &[anchor(OTHER, 3, 1, 0xBB)]).is_ok());
+    }
+
+    #[test]
+    fn replaying_a_transfer_leaves_one_owner() {
+        let mut view = MemoryView::default();
+        let block1 = vec![register(OWNER, 0, "Grid")];
+        view.apply(&plan_block(&view, 1, 10, &block1).unwrap(), &block1);
+        let block2 = vec![transfer(OWNER, 1, 1, OTHER)];
+        let planned = plan_block(&view, 2, 20, &block2).unwrap();
+        view.apply(&planned, &block2);
+
+        // Re-planning the applied block must reproduce the record, not hand it over twice.
+        let replay = plan_block(&view, 2, 20, &block2).unwrap();
+        match &replay[0].effect {
+            LedgerEffect::TransferOwnership { chain, fresh, .. } => {
+                assert!(!fresh);
+                assert_eq!(chain.owner, OTHER);
+            }
+            _ => panic!("expected a transfer"),
+        }
+    }
+
+    #[test]
+    fn a_transfer_needs_a_usable_address_a_chain_and_a_new_owner() {
+        // Self-transfer, a malformed address and chain 0 are stateless rejections.
+        assert!(validate_envelope(&transfer(OWNER, 0, 1, OWNER)).is_err());
+        assert!(validate_envelope(&transfer(OWNER, 0, 1, "not-an-address")).is_err());
+        assert!(validate_envelope(&transfer(OWNER, 0, 0, OTHER)).is_err());
+
+        // The fee is the transfer fee, not the anchor fee.
+        let mut underpaid = transfer(OWNER, 0, 1, OTHER);
+        underpaid.fee = APPCHAIN_TRANSFER_FEE - 1;
+        assert!(validate_envelope(&underpaid)
+            .unwrap_err()
+            .contains("fee is too low"));
+        assert_eq!(
+            required_fee(&TransactionPayload::AppChainTransferOwner {
+                chain_id: 1,
+                new_owner: OTHER.to_string(),
+            }),
+            Some(APPCHAIN_TRANSFER_FEE)
+        );
+
+        // Transferring to the address that already owns it is a stateful rejection.
+        let view = MemoryView::default();
+        let block1 = vec![register(OWNER, 0, "Grid")];
+        let mut view = view;
+        view.apply(&plan_block(&view, 1, 10, &block1).unwrap(), &block1);
+        let error = plan_block(&view, 2, 20, &[transfer(OWNER, 1, 1, OWNER)]).unwrap_err();
+        assert!(error.contains("already owned"), "{error}");
     }
 
     #[test]
@@ -579,6 +765,8 @@ mod signing_vectors {
     use crate::ProofType;
 
     pub const VECTOR_SENDER: &str = "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e";
+    pub const VECTOR_NEW_OWNER: &str = "2859eb671f8e03129932efd184f4707352a9770e61fc5e6b8215911c8bd377ed";
+    pub const VECTOR_OTHER_OWNER: &str = "e6766eab2df27d29a224fe8554b0ca22ce100323993e3554ec7eeb9d590fa37b";
 
     fn vector_tx(payload: TransactionPayload, nonce: u64) -> Transaction {
         Transaction {
@@ -611,16 +799,27 @@ mod signing_vectors {
             TransactionPayload::AppChainAnchor { chain_id: 1, state_root: [0xAB; 32] },
             1,
         );
+        let transfer = vector_tx(
+            TransactionPayload::AppChainTransferOwner {
+                chain_id: 1,
+                new_owner: VECTOR_NEW_OWNER.to_string(),
+            },
+            2,
+        );
         let register_digest = hex::encode(crate::UltraBlockchain::create_transaction_message_for(&register));
         let anchor_digest = hex::encode(crate::UltraBlockchain::create_transaction_message_for(&anchor));
+        let transfer_digest = hex::encode(crate::UltraBlockchain::create_transaction_message_for(&transfer));
         println!("REGISTER_DIGEST={register_digest}");
         println!("ANCHOR_DIGEST={anchor_digest}");
+        println!("TRANSFER_DIGEST={transfer_digest}");
         assert_eq!(register_digest, REGISTER_DIGEST);
         assert_eq!(anchor_digest, ANCHOR_DIGEST);
+        assert_eq!(transfer_digest, TRANSFER_DIGEST);
     }
 
     const REGISTER_DIGEST: &str = "7dcaf29f0809d289fdf6e10223ae79c6e7e1b319d45c51de8b17550756130f90";
     const ANCHOR_DIGEST: &str = "f1c64d0830b020aa34c0add54ae7815f61cbe0007e2b6795e844bbbfadd43a72";
+    const TRANSFER_DIGEST: &str = "702b1dd8dcdf04061511aea85a9d049843b3e2e531cca690b9176d50b8bcf9ab";
 
     /// A pinned digest proves the bytes are reproducible, not that every field is in them: a field
     /// silently dropped from the preimage would still match a regenerated constant. Changing one
@@ -654,6 +853,20 @@ mod signing_vectors {
         version.version = 4;
         assert_ne!(baseline, digest(&version), "the envelope version must be in the preimage");
 
+        let mut sender = base.clone();
+        sender.sender = VECTOR_OTHER_OWNER.to_string();
+        assert_ne!(baseline, digest(&sender), "the sender must be in the preimage");
+
+        let mut nullifier = base.clone();
+        nullifier.nullifier = [0x12; 32];
+        assert_ne!(baseline, digest(&nullifier), "the nullifier must be in the preimage");
+
+        // The transaction's own L1 chain id, which is a different field from the
+        // anchored chain number asserted further down.
+        let mut l1_chain = base.clone();
+        l1_chain.chain_id = 1;
+        assert_ne!(baseline, digest(&l1_chain), "the L1 chain id must be in the preimage");
+
         let anchor_base = vector_tx(
             TransactionPayload::AppChainAnchor { chain_id: 1, state_root: [0xAB; 32] },
             1,
@@ -663,8 +876,27 @@ mod signing_vectors {
         chain.payload = TransactionPayload::AppChainAnchor { chain_id: 2, state_root: [0xAB; 32] };
         assert_ne!(anchor_digest, digest(&chain), "the anchored chain id must be in the preimage");
 
-        let mut root = anchor_base;
+        let mut root = anchor_base.clone();
         root.payload = TransactionPayload::AppChainAnchor { chain_id: 1, state_root: [0xAC; 32] };
         assert_ne!(anchor_digest, digest(&root), "the state root must be in the preimage");
+
+        let handover = vector_tx(
+            TransactionPayload::AppChainTransferOwner {
+                chain_id: 1,
+                new_owner: VECTOR_NEW_OWNER.to_string(),
+            },
+            2,
+        );
+        let handover_digest = digest(&handover);
+        let mut redirect = handover;
+        redirect.payload = TransactionPayload::AppChainTransferOwner {
+            chain_id: 1,
+            new_owner: VECTOR_OTHER_OWNER.to_string(),
+        };
+        assert_ne!(
+            handover_digest,
+            digest(&redirect),
+            "the new owner must be in the preimage"
+        );
     }
 }
