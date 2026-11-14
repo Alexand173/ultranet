@@ -4,6 +4,9 @@
 finished game** — never a move. The receipt is what a payout can be audited against, and the anchor
 is what makes it tamper-evident afterwards.
 
+**P0 delivered (2026-11-14):** rules, opponent, screen and the catalogue tile are in the app and
+green on the emulator (62 tests). Nothing below the app line has been built yet.
+
 **Non-goals for v1:** move-by-move storage, game logic on the node, PvP, matchmaking, a chess clock,
 resuming a game across launches.
 
