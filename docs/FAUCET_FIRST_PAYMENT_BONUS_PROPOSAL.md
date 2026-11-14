@@ -1,6 +1,7 @@
 # First-payment bonus — proposal and anti-farming design
 
-**Status:** proposal, not implemented
+**Status:** proposal, not implemented. §9's five decisions are settled; §10 is the implementation
+spec derived from them.
 **Depends on:** the 0.1 $ULTRA claim policy (`FAUCET_CLAIM_AMOUNT_BASE_UNITS=100000`)
 **Question it answers:** how to reward the behaviour we actually want — a first payment to another
 person — without paying bots or wash-traders.
@@ -33,8 +34,8 @@ size nothing is — but to make farming cost more effort than the bonus is worth
 | R3 | Amount ≥ threshold (recommend `50,000` = 0.05 $ULTRA) | dust payment crafted only to unlock the bonus |
 | R4 | Recipient differs from the sender **and** from the faucet address | self-send, faucet round-trip |
 | R5 | The payment is `confirmed` on chain, not merely accepted | paying the bonus for a transfer that never settled |
-| R6 | Payment occurs within `BONUS_WINDOW_SECONDS` of the claim (recommend 14 days) | claiming a bonus months later on a cold address |
-| R7 | No cycle in the bonus window: the recipient has not paid the claimant, and the claimant has not paid that recipient before | ping-pong between two colluding wallets |
+| R6 | The payment is within **14 days** of the claim *and* the bonus is requested within **7 days** of the payment (D3) | claiming a bonus months later on a cold address, or banking a payment and requesting late |
+| R7 | The recipient has not paid the claimant inside the same window — the direct two-party ring is **blocked** (D5); longer rings are **flagged** for review, not refused | ping-pong between two colluding wallets |
 | R8 | Recipient is not an address previously funded by the same claimant under the same abuse digest | one person with N wallets fanning out and collecting |
 | R9 | Bonus submission is bounded by the same per-IP/per-subnet abuse digests as claims | scripted mass submission |
 | R10 | The separate bonus budget has not been exhausted | one incident draining the float |
@@ -107,14 +108,152 @@ and the existing `service_state` kill switch stops both.
 
 ## 8. Phases
 
-| Phase | Work | Value |
+| Phase | Work | Exit criterion |
 |---|---|---|
-| 0 | Operator-run script: read claims + the node, list qualifying payments, pay them by hand | proves the mechanic before any code path |
-| 1 | `bonuses` table, endpoint, worker payout, reason codes; R1–R6 and R9–R10 | the feature, automated |
-| 2 | R7/R8 graph checks and the separate budget window | closes ping-pong and fan-out |
+| 0 | **Measure first.** Operator script reads `claims` and the node and answers one question: of the addresses that claimed, how many made an outgoing payment of ≥ 0.05 within 14 days? | a number, recorded in this file. Below roughly one in five, stop — the bonus is premature regardless of how well it resists farming |
+| 1 | `bonuses` table and migration, endpoint, worker payout, reason codes: R1–R6, R9, R10 and the **D5 block** | one real bonus paid end-to-end and one direct ring refused, both visible in the store |
+| 2 | The **D5 flag**: edge table, review queue, operator listing (`/internal/bonuses?status=review`), and the daily/global bonus caps enforced in their own window | a flagged ring appears for review and no longer auto-rejects a reciprocal pair of genuine payers |
+| 3 | App surface: after a confirmed transfer, the receipt says the bonus is available and offers one tap | the offer is only shown when the claim exists locally and the endpoint says `eligible` |
 
-Phase 0 is worth doing first: if almost nobody makes a payment after claiming, the bonus is premature
-regardless of how well it resists farming.
+Phase 0 should run before any code is written. Phase 2 is where the graph work lives, and it can be
+deferred: until the volume exists, the direct-ring block plus the daily cap is the whole defence.
+
+## 10. Implementation spec, refined against §9
+
+Everything below is written to drop into the existing faucet crate (`src/faucet/`), reusing the claim
+path rather than inventing a parallel one.
+
+### 10.1 Configuration
+
+| Key | Value | Source |
+|---|---|---|
+| `FAUCET_BONUS_ENABLED` | `false` until phase 1 ships | new; mirrors `FAUCET_ENABLED` |
+| `FAUCET_BONUS_AMOUNT_BASE_UNITS` | `100000` | D1 |
+| `FAUCET_BONUS_MIN_PAYMENT_BASE_UNITS` | `50000` | D2 |
+| `FAUCET_BONUS_CLAIM_WINDOW_SECONDS` | `1209600` (14 days) | D3 |
+| `FAUCET_BONUS_REQUEST_WINDOW_SECONDS` | `604800` (7 days after the payment) | D3 |
+| `FAUCET_BONUS_DAILY_CAP_BASE_UNITS` | `5000000` (5 ULTRA ≈ 49 bonuses) | D4 |
+| `FAUCET_BONUS_GLOBAL_CAP` | `2000` bonuses | D4 |
+| `FAUCET_BONUS_CYCLE_MODE` | `block_direct` | D5 |
+
+`check-config` must reject a bonus daily cap that exceeds the claim daily cap, and a bonus amount
+that is a multiple other than 1× the claim amount without an explicit override comment. The point of
+D4 is that a farming incident cannot outrun claim intake; a config that breaks that is a refusal at
+startup, not a warning in a log.
+
+### 10.2 Schema (migration `user_version` 1 → 2)
+
+```sql
+CREATE TABLE bonuses (
+    bonus_id          TEXT PRIMARY KEY NOT NULL,
+    claim_id          TEXT NOT NULL UNIQUE REFERENCES claims(claim_id),
+    payer_address     TEXT NOT NULL,
+    payer_digest      BLOB NOT NULL,
+    payment_hash      TEXT NOT NULL UNIQUE,
+    recipient         TEXT NOT NULL,
+    amount_base_units INTEGER NOT NULL,
+    status            TEXT NOT NULL CHECK (status IN
+                        ('eligible','review','queued','paid','rejected','failed')),
+    reason_code       TEXT,
+    created_at        INTEGER NOT NULL,
+    queued_at         INTEGER,
+    paid_hash         TEXT,
+    paid_at           INTEGER
+);
+CREATE INDEX bonuses_payer_idx ON bonuses(payer_digest, created_at);
+CREATE INDEX bonuses_status_idx ON bonuses(status, created_at);
+
+-- D5: one row per observed payment edge between an evaluated claimant and a counterparty.
+CREATE TABLE bonus_edges (
+    payer_digest      BLOB NOT NULL,
+    counterparty      TEXT NOT NULL,
+    direction         TEXT NOT NULL CHECK (direction IN ('out','in')),
+    first_seen_at     INTEGER NOT NULL,
+    PRIMARY KEY (payer_digest, counterparty, direction)
+);
+
+CREATE TABLE bonus_windows (
+    window_start_utc      INTEGER PRIMARY KEY NOT NULL,
+    window_end_utc        INTEGER NOT NULL,
+    reserved_base_units   INTEGER NOT NULL CHECK (reserved_base_units >= 0),
+    confirmed_base_units  INTEGER NOT NULL CHECK (confirmed_base_units >= 0),
+    bonus_count           INTEGER NOT NULL CHECK (bonus_count >= 0),
+    global_bonus_count    INTEGER NOT NULL CHECK (global_bonus_count >= 0)
+);
+```
+
+`payer_digest` is the same abuse-keyed digest the claim path already stores (`address_digest`), so
+this table never holds a second copy of an address that the claims table could leak.
+
+Two states exist for reasons that matter: `review` is a **paid-nothing** state that waits for an
+operator, and `rejected` is a terminal refusal the app can explain. Collapsing them into one state
+would make D5 unrepresentable.
+
+### 10.3 Endpoint
+
+```
+POST /api/faucet/bonuses        { "claim_id": "...", "payment_hash": "..." }
+GET  /api/faucet/bonuses/{id}   -> { status: eligible|review|queued|paid|rejected|failed }
+```
+
+Same contract as claims: `Content-Type: application/json`, an `Idempotency-Key`, `202` with the
+bonus id on acceptance, and polling for the outcome. `202` means "accepted for evaluation" and is
+never a payout.
+
+Evaluation order matters, because the reason code should name the first thing that failed:
+
+| Order | Check | Reason code | Outcome |
+|---|---|---|---|
+| 1 | `claim_id` exists and is `confirmed` | `NO_CLAIM` | 422 |
+| 2 | No bonus row for this `claim_id` | `ALREADY_CREDITED` | 409 |
+| 3 | Payment hash known and no row for it | `PAYMENT_NOT_FOUND` | 422 |
+| 4 | Sender is the claimant | `NOT_SENDER` | 422 |
+| 5 | Recipient ≠ sender, ≠ faucet address | `SELF_PAYMENT` | 422 |
+| 6 | Amount ≥ 50,000 | `BELOW_MINIMUM` | 422 |
+| 7 | Payment confirmed, and within 14 days of the claim | `WINDOW_EXPIRED` | 422 |
+| 8 | Requested within 7 days of the payment | `REQUEST_EXPIRED` | 422 |
+| 9 | D5 block: recipient has not paid the claimant in the window | `CYCLE_BLOCKED` | 422 |
+| 10 | D5 flag: claimant has paid this recipient before, or the recipient is in a longer ring | — | `review`, 202 |
+| 11 | Bonus window has room, global cap not reached | `BUDGET_EXHAUSTED` / `GLOBAL_CAP_REACHED` | 429 |
+| 12 | Per-IP / per-subnet digest has room (R9) | `RATE_LIMITED` | 429 |
+
+Steps 9 and 10 need the node's transaction history
+(`GET /api/address/{address}/transactions?limit=…`). Cache the answer per address for the life of
+one evaluation; do not walk a graph inside a request.
+
+### 10.4 Payout
+
+`eligible` → the existing worker picks it up exactly like a claim: sign, persist to `payouts`,
+submit, poll, mark `paid`. Two rules carry over unchanged and must be re-asserted for bonuses:
+
+- the faucet's own nonce is read from `service_state.last_observed_nonce`, never assumed;
+- `service_state.enabled = 0` stops bonus payout as well as claims.
+
+The bonus debits `bonus_windows`, not `budget_windows`. A bonus that cannot debit its own window is
+not queued — it is refused with `BUDGET_EXHAUSTED`, because the alternative is silently halving the
+claim runway that D4 exists to protect.
+
+### 10.5 Tests
+
+| Test | Asserts |
+|---|---|
+| `bonus_requires_confirmed_claim` | a `pending` claim cannot earn a bonus |
+| `bonus_pays_once_per_claim` | a second request with a fresh payment hash returns `ALREADY_CREDITED` |
+| `bonus_rejects_dust` | 49,999 base units → `BELOW_MINIMUM`; 50,000 → eligible |
+| `bonus_rejects_self_and_faucet` | recipient = sender, and recipient = `service_state.faucet_address` |
+| `bonus_windows_are_independent` | 50 bonuses drain `bonus_windows` and leave `budget_windows` untouched |
+| `direct_ring_is_blocked` | A→B then B→A returns `CYCLE_BLOCKED` for the second side |
+| `longer_ring_is_flagged_not_refused` | A→B→C→A yields one `review` row and no rejection |
+| `global_cap_stops_payout` | at 2,000 bonuses the endpoint returns `GLOBAL_CAP_REACHED` |
+| `kill_switch_stops_bonus_payout` | `enabled = 0` leaves queued bonuses unsubmitted |
+
+### 10.6 Deliberately out of scope
+
+- **Exchange and off-app payments** — unchanged from §7: paying a hot wallet earns the bonus, paying
+  from a wallet the app never saw does not.
+- **App-side push** — phase 3. The receipt's offer must be driven by the endpoint's answer, never by a
+  client-side guess, or the app will promise a bonus the faucet then refuses.
+- **Retroactive bonuses** — the table starts empty. Phase 0 is an operator script, not a migration.
 
 ## 9. Decisions
 
