@@ -33,9 +33,10 @@ pub const APPCHAIN_TX_RECIPIENT: &str = "appchain";
 /// Domain string bound into the version-5 signing preimage.
 pub const APPCHAIN_ENVELOPE_DOMAIN: &[u8] = b"UltraNet/appchain-envelope/v5";
 
-/// Registration fee: 0.1 $ULTRA. Registration is permanent, so it is priced to
-/// keep the registry from being filled with throwaway names.
-pub const APPCHAIN_REGISTER_FEE: u64 = 100_000;
+/// Registration fee: 0.01 $ULTRA. Registration is permanent; the fee is a nominal
+/// barrier against throwaway names, not a revenue line, so it sits ten times the
+/// anchor fee rather than driving what an AppChain costs to run.
+pub const APPCHAIN_REGISTER_FEE: u64 = 10_000;
 /// Anchor fee: 0.001 $ULTRA per owner-signed state root.
 pub const APPCHAIN_ANCHOR_FEE: u64 = 1_000;
 
@@ -464,69 +465,6 @@ mod tests {
     const OWNER: &str = "1111111111111111111111111111111111111111111111111111111111111111";
     const OTHER: &str = "2222222222222222222222222222222222222222222222222222222222222222";
 
-    /// The Android signer reproduces this digest byte for byte
-    /// (`cc.ultranet.ultraverse.AppChainSignerTest`). Pinning it on both sides is
-    /// what stops the version-5 preimage in the app from drifting away from the
-    /// node: a change to either implementation breaks one of the two tests.
-    #[test]
-    fn envelope_v5_digest_matches_the_app_signing_fixture() {
-        let tx = Transaction {
-            sender: "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e".to_string(),
-            sender_public_key: vec![],
-            recipient: APPCHAIN_TX_RECIPIENT.to_string(),
-            amount: 0,
-            signature: vec![],
-            zk_proof: vec![],
-            nullifier: [0x11; 32],
-            timestamp: 1_763_200_000,
-            fee: APPCHAIN_REGISTER_FEE,
-            nonce: 7,
-            gas_limit: APPCHAIN_TX_GAS_LIMIT,
-            gas_price: APPCHAIN_TX_GAS_PRICE,
-            proof_type: ProofType::Ownership,
-            payload: TransactionPayload::AppChainRegister {
-                name: "UltraNet Grid".to_string(),
-            },
-            chain_id: 0,
-            version: APPCHAIN_TX_VERSION,
-        };
-        assert_eq!(
-            hex::encode(crate::UltraBlockchain::create_transaction_message_for(&tx)),
-            "c44e3ef0ffd17f2f71bdaa4d111a885d817a4d1fac3625646f0f753d834215b5"
-        );
-    }
-
-    /// The anchor half of the same fixture. The game server signs this transaction 730 times a year,
-    /// so the app and the server must agree with the node on it, not just on registration.
-    #[test]
-    fn anchor_v5_digest_matches_the_app_signing_fixture() {
-        let tx = Transaction {
-            sender: "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e".to_string(),
-            sender_public_key: vec![],
-            recipient: APPCHAIN_TX_RECIPIENT.to_string(),
-            amount: 0,
-            signature: vec![],
-            zk_proof: vec![],
-            nullifier: [0x11; 32],
-            timestamp: 1_763_200_000,
-            fee: APPCHAIN_ANCHOR_FEE,
-            nonce: 8,
-            gas_limit: APPCHAIN_TX_GAS_LIMIT,
-            gas_price: APPCHAIN_TX_GAS_PRICE,
-            proof_type: ProofType::Ownership,
-            payload: TransactionPayload::AppChainAnchor {
-                chain_id: 1,
-                state_root: [0x66; 32],
-            },
-            chain_id: 0,
-            version: APPCHAIN_TX_VERSION,
-        };
-        assert_eq!(
-            hex::encode(crate::UltraBlockchain::create_transaction_message_for(&tx)),
-            "d73176d963283da5e78324ed2dd085cef0e89cb69ecf74d88725e2af9c50bebc"
-        );
-    }
-
     #[test]
     fn registration_assigns_sequential_ids_and_the_signer_owns_the_chain() {
         let view = MemoryView::default();
@@ -681,6 +619,52 @@ mod signing_vectors {
         assert_eq!(anchor_digest, ANCHOR_DIGEST);
     }
 
-    const REGISTER_DIGEST: &str = "4cae1287d082ced46163dcb5ecbb1945c9677120dde509907a57c603ce64f155";
+    const REGISTER_DIGEST: &str = "7dcaf29f0809d289fdf6e10223ae79c6e7e1b319d45c51de8b17550756130f90";
     const ANCHOR_DIGEST: &str = "f1c64d0830b020aa34c0add54ae7815f61cbe0007e2b6795e844bbbfadd43a72";
+
+    /// A pinned digest proves the bytes are reproducible, not that every field is in them: a field
+    /// silently dropped from the preimage would still match a regenerated constant. Changing one
+    /// field at a time has to change the digest, and that is what this asserts.
+    #[test]
+    fn every_envelope_field_changes_the_digest() {
+        let digest = |tx: &Transaction| crate::UltraBlockchain::create_transaction_message_for(tx);
+        let base = vector_tx(
+            TransactionPayload::AppChainRegister { name: "UltraNet Grid".into() },
+            0,
+        );
+        let baseline = digest(&base);
+
+        let mut nonce = base.clone();
+        nonce.nonce = 1;
+        assert_ne!(baseline, digest(&nonce), "nonce must be in the preimage");
+
+        let mut timestamp = base.clone();
+        timestamp.timestamp += 1;
+        assert_ne!(baseline, digest(&timestamp), "timestamp must be in the preimage");
+
+        let mut fee = base.clone();
+        fee.fee += 1;
+        assert_ne!(baseline, digest(&fee), "fee must be in the preimage");
+
+        let mut name = base.clone();
+        name.payload = TransactionPayload::AppChainRegister { name: "UltraNet Grids".into() };
+        assert_ne!(baseline, digest(&name), "the registered name must be in the preimage");
+
+        let mut version = base.clone();
+        version.version = 4;
+        assert_ne!(baseline, digest(&version), "the envelope version must be in the preimage");
+
+        let anchor_base = vector_tx(
+            TransactionPayload::AppChainAnchor { chain_id: 1, state_root: [0xAB; 32] },
+            1,
+        );
+        let anchor_digest = digest(&anchor_base);
+        let mut chain = anchor_base.clone();
+        chain.payload = TransactionPayload::AppChainAnchor { chain_id: 2, state_root: [0xAB; 32] };
+        assert_ne!(anchor_digest, digest(&chain), "the anchored chain id must be in the preimage");
+
+        let mut root = anchor_base;
+        root.payload = TransactionPayload::AppChainAnchor { chain_id: 1, state_root: [0xAC; 32] };
+        assert_ne!(anchor_digest, digest(&root), "the state root must be in the preimage");
+    }
 }

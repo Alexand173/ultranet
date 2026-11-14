@@ -61,7 +61,7 @@ internal object AppChainSigner {
     const val TX_VERSION = 5
     /** Fixed recipient: AppChain transactions move no amount. */
     const val RECIPIENT = "appchain"
-    const val REGISTER_FEE_BASE_UNITS = 100_000L
+    const val REGISTER_FEE_BASE_UNITS = 10_000L
     const val ANCHOR_FEE_BASE_UNITS = 1_000L
     const val GAS_LIMIT = 100_000L
     const val GAS_PRICE = 1L

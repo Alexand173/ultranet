@@ -104,7 +104,7 @@ curl -s https://api.ultranetwork.cc/api/appchain/ledger | python3 -c \
 curl -s https://api.ultranetwork.cc/api/stats
 ```
 
-Expected: `activation_height` is the agreed integer (not `null`), fees read `100000` and `1000`,
+Expected: `activation_height` is the agreed integer (not `null`), fees read `10000` and `1000`,
 version reads `5`, and the chain keeps producing blocks. A registration submitted **below** the agreed
 height is refused with `AppChain transactions are not active on this network yet` — that refusal, seen
 before the height, is the flag working.
@@ -135,6 +135,6 @@ not a configuration change. Nothing in this runbook deletes ledger state.
 ## 8. After the first registration
 
 Once chain #1 exists, anchoring is owner-signed and the fee comes from the owner's L1 balance —
-`0.001` per anchor, `0.1` for a registration. Keep at least a year of anchors funded: at two anchors a
+`0.001` per anchor, `0.01` for a registration. Keep at least a year of anchors funded: at two anchors a
 day that is `0.73` on top of the registration. The ledger endpoint reports the running totals per
 chain, and `GET /api/appchain/ledger/{id}/anchors` is the owner's audit trail.

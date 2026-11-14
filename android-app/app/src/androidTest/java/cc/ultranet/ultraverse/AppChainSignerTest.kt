@@ -14,10 +14,10 @@ import org.junit.runner.RunWith
 /**
  * Pins the version-5 AppChain envelope against the node.
  *
- * Both digests are asserted on the node side too
- * (`appchain::ledger::tests::envelope_v5_digest_matches_the_app_signing_fixture` and
- * `..._anchor_v5_digest_...`), so a change to the preimage, the field order or the endianness breaks
- * one of the two tests instead of surfacing as a rejected transaction on a live ledger.
+ * These are the canonical vectors from `appchain::ledger::signing_vectors::version_5_digests_are_pinned`
+ * — the same sender, nonce, timestamp, name and state root — so the node and the phone assert one set
+ * of numbers rather than two that happen to agree. A change to the preimage, the field order or the
+ * endianness breaks both tests instead of surfacing as a rejected transaction on a live ledger.
  */
 @RunWith(AndroidJUnit4::class)
 class AppChainSignerTest {
@@ -44,13 +44,13 @@ class AppChainSignerTest {
         val digest = AppChainSigner.buildDigest(
             sender = owner,
             fee = AppChainSigner.REGISTER_FEE_BASE_UNITS,
-            nonce = 7,
-            timestamp = 1_763_200_000,
+            nonce = 0,
+            timestamp = 1_800_000_000,
             nullifier = ByteArray(32) { 0x11 },
             operation = AppChainOperation.Register("UltraNet Grid"),
         )
         assertEquals(
-            "c44e3ef0ffd17f2f71bdaa4d111a885d817a4d1fac3625646f0f753d834215b5",
+            "7dcaf29f0809d289fdf6e10223ae79c6e7e1b319d45c51de8b17550756130f90",
             hex(digest),
         )
     }
@@ -60,13 +60,13 @@ class AppChainSignerTest {
         val digest = AppChainSigner.buildDigest(
             sender = owner,
             fee = AppChainSigner.ANCHOR_FEE_BASE_UNITS,
-            nonce = 8,
-            timestamp = 1_763_200_000,
+            nonce = 1,
+            timestamp = 1_800_000_000,
             nullifier = ByteArray(32) { 0x11 },
-            operation = AppChainOperation.Anchor(chainId = 1, stateRootHex = "66".repeat(32)),
+            operation = AppChainOperation.Anchor(chainId = 1, stateRootHex = "ab".repeat(32)),
         )
         assertEquals(
-            "d73176d963283da5e78324ed2dd085cef0e89cb69ecf74d88725e2af9c50bebc",
+            "f1c64d0830b020aa34c0add54ae7815f61cbe0007e2b6795e844bbbfadd43a72",
             hex(digest),
         )
     }
