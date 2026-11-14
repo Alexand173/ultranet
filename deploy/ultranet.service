@@ -14,6 +14,9 @@ Type=simple
 User=ultranet
 Group=ultranet
 WorkingDirectory=/opt/ultranet
+# Consensus-relevant values live here, not in this unit: in particular
+# ULTRANET_APPCHAIN_ACTIVATION_HEIGHT must be identical on every validator, and
+# an unset value disables AppChain transactions instead of enabling them.
 EnvironmentFile=-/etc/ultranet/ultranet.env
 # Never wait for interactive input when systemd reports a startup error.
 Environment=ULTRANET_PAUSE_ON_ERROR=false
