@@ -10,6 +10,14 @@ green on the emulator (62 tests). Nothing below the app line has been built yet.
 **Non-goals for v1:** move-by-move storage, game logic on the node, PvP, matchmaking, a chess clock,
 resuming a game across launches.
 
+**Superseded in part (2026-11-14):** the node now carries a consensus AppChain ledger
+(`src/appchain/ledger.rs`): `AppChainRegister` and `AppChainAnchor` are owner-signed L1 transactions,
+and the app signs both itself (`AppChainSigner.kt`, `POST /api/appchain/tx`). So §3's operator-token
+state path was never built and is not the plan; §1's "the app cannot write the receipt itself" and §4's
+prize service still hold for *receipts and money*, but registration and anchoring no longer need an
+admin token, an operator, or a treasury the node derives. What stands unchanged below: the game layer,
+the receipt idea, the prize arithmetic and the caps.
+
 ## 1. What goes where
 
 ```
