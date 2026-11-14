@@ -40,13 +40,25 @@ The initial beta policy is fixed and server-selected:
 
 | Value | Base units | Human-readable |
 | --- | ---: | ---: |
-| Claim amount | `1,000,000` | `1.000000 $ULTRA` |
-| Minimum fee | `10,000` | `0.010000 $ULTRA` |
-| Source debit | `1,010,000` | `1.010000 $ULTRA` |
-| Daily debit cap | `100,000,000` | `100.000000 $ULTRA` |
+| Claim amount | `100,000` | `0.100000 $ULTRA` |
+| Minimum fee | `1,000` | `0.001000 $ULTRA` |
+| Source debit | `101,000` | `0.101000 $ULTRA` |
+| Daily debit cap | `10,000,000` | `10.000000 $ULTRA` |
 | Minimum source reserve | `200,000,000` | `200.000000 $ULTRA` |
 | Address cooldown | `86,400` seconds | 24 rolling hours |
-| Promotional claim cap | 1,000 confirmed claims | `FAUCET_MAX_CLAIMS=1000` |
+| Per-IP claims | `25` per rolling day | `FAUCET_IP_CLAIMS_PER_DAY=25` |
+| Per-subnet claims | `250` per rolling day | `FAUCET_SUBNET_CLAIMS_PER_DAY=250` |
+| Promotional claim cap | 10,000 confirmed claims | `FAUCET_MAX_CLAIMS=10000` |
+
+The claim is a tenth of a coin by design. It funds roughly ten times as many first-time users as the
+previous `1.000000`, and a fake claim is worth a tenth as much to a bot, while `0.100000` still covers
+a real payment: a `0.050000` transfer costs `0.000500` in fees.
+
+The per-IP limit was `3` and the per-subnet limit `25`. That rejected real claimants: mobile carriers
+put many subscribers behind one CGNAT address, and an office shares one address, so a fourth colleague
+was told they had already claimed. The 24-hour destination cooldown already prevents duplicate claims
+and the daily debit cap bounds a coordinated drain, so the source limits were raised to `25` and `250`
+and are now configurable. Setting either to `0` removes that scope.
 
 The deployed faucet address held `0` base units when first inspected on 2026-10-26 and could not pay a
 claim until a float arrived. It has been funded and paying since 2026-10-31: on 2026-11-08 it holds
@@ -54,11 +66,16 @@ claim until a float arrived. It has been funded and paying since 2026-10-31: on 
 account; the authoritative confirmed-claim count for the promotional cap lives in
 `/var/lib/ultranet-faucet/faucet.db`, not in the account record.
 
-Budget reservations include both amount and fee, so every claim is a `1,010,000` base-unit draw
-against this float. The `1,009,981,001` above the `200,000,000` reserve covers 999 claims, so the
-promotional cap binds first: 998 claims remain under it, costing `1,007,980,000` and leaving
-`202,001,001` base units standing. The service must still honour the reserve and the much smaller
-daily cap, and disable intake before the hot wallet is depleted.
+Budget reservations include both amount and fee, so every claim is a `101,000` base-unit draw against
+this float. The `1,009,981,001` above the `200,000,000` reserve covers 9,999 claims. Two claims have
+already settled, so 9,998 remain under the 10,000-claim cap and the **cap binds first**, by one claim:
+9,998 x `101,000` = `1,009,798,000`, leaving `200,183,001` base units standing — still above the
+reserve. The 10,000-claim cap is therefore reachable, and intake closes as `exhausted` rather than as
+a budget failure.
+
+The limit that matters day to day is the `10.000000` daily debit cap: about 99 claims a day, which is
+the pace the previous 100 $ULTRA cap allowed. The service must still honour the reserve and disable
+intake before the hot wallet is depleted.
 
 ## Funding the float
 
@@ -68,10 +85,10 @@ signatures. `send_ultra.py` performs it. It is a dry run unless `--send` is pass
 A float does not clear the reserve by landing above `200.000000`: the check is
 `balance >= claim_amount + fee + reserve` (`src/faucet/service.rs:394`), so the first claim needs
 
-    1.000000 (claim) + 0.010000 (fee) + 200.000000 (reserve) = 201.010000
+    0.100000 (claim) + 0.001000 (fee) + 200.000000 (reserve) = 200.101000
 
-`201.000000` is therefore **0.010000 short** and `BudgetExhausted` is still returned. Fund at least
-`201.010000`; `202.000000` leaves a clean margin (it debits `204.020000` with its own `2.020000` fee).
+`200.100000` is therefore **0.001000 short** and `BudgetExhausted` is still returned. Fund at least
+`200.101000`; `201.000000` leaves a clean margin (it debits `203.010000` with its own `2.010000` fee).
 
 The fee is **not flat**: the node charges `max(1, amount / 100)` — one percent on the amount
 (`UltraBlockchain::minimum_transfer_fee`, `src/lib.rs:1443`). Moving `201.000000` therefore costs

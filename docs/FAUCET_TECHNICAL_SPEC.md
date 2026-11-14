@@ -66,9 +66,9 @@ max(1, amount_base_units / 100)
 For the initial claim policy:
 
 ```text
-claim amount:  1,000,000 base units = 1.000000 $ULTRA
-minimum fee:      10,000 base units = 0.010000 $ULTRA
-source debit:  1,010,000 base units = 1.010000 $ULTRA
+claim amount:    100,000 base units = 0.100000 $ULTRA
+minimum fee:       1,000 base units = 0.001000 $ULTRA
+source debit:    101,000 base units = 0.101000 $ULTRA
 ```
 
 The faucet budget counts `amount + fee`, not only the amount received by the user.
@@ -90,11 +90,12 @@ address is the one the production signer derives, and `check-config` refuses to 
 earlier account named in this position holds a stranded balance with no reachable key; it is not part
 of the faucet and carries no signer.
 
-At the fixed claim policy each claim is a `1,010,000`-unit draw, so the `1,009,981,001` held above the
-`200,000,000` reserve covers 999 claims — the 1,000-claim promotional cap is therefore reached first,
-and the float is never the binding limit. That is not an operating target: the service must still
-retain its reserve, honour the much smaller global daily cap, and disable intake before the hot wallet
-is depleted.
+At the fixed claim policy each claim is a `101,000`-unit draw, so the `1,009,981,001` held above the
+`200,000,000` reserve covers 9,999 claims. With two already confirmed, 9,998 remain under the
+10,000-claim promotional cap, so the cap is reached first: 9,998 x `101,000` = `1,009,798,000`,
+leaving `200,183,001` above the reserve and intake closed as `exhausted`. That is not an operating
+target: the service must still retain its reserve, honour the much smaller global daily cap
+(`10.000000`, about 99 claims a day), and disable intake before the hot wallet is depleted.
 
 ### 2.4 Signing envelope
 
