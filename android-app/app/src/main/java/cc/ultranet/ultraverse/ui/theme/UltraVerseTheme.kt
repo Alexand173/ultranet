@@ -34,6 +34,9 @@ internal data class UltraVersePalette(
     val unavailable: Color,
     /** Glyph drawn on an `unavailable` tint, where the plain role drops below AA. */
     val unavailableStrong: Color,
+    /** The chess plate: two tones that keep contrast in both appearances. */
+    val boardLight: Color,
+    val boardDark: Color,
     val heroGradient: List<Color>,
     val cardShadowAlpha: Float,
     val navDividerAlpha: Float,
@@ -56,6 +59,8 @@ private val DarkPalette = UltraVersePalette(
     supported = Color(0xFF51E08A),
     unavailable = Color(0xFFFF5869),
     unavailableStrong = Color(0xFFFF8894),
+    boardLight = Color(0xFF1B4257),
+    boardDark = Color(0xFF0B2334),
     heroGradient = listOf(
         Color(0xFF103948).copy(alpha = 0.72f),
         Color(0xFF10172E).copy(alpha = 0.62f),
@@ -84,6 +89,8 @@ private val LightPalette = UltraVersePalette(
     supported = Color(0xFF0E7047),
     unavailable = Color(0xFFC13342),
     unavailableStrong = Color(0xFFA32A36),
+    boardLight = Color(0xFFF4FAFD),
+    boardDark = Color(0xFFC7DCE6),
     heroGradient = listOf(
         Color(0xFFE7F6F8),
         Color(0xFFF7FBFC),
@@ -112,6 +119,8 @@ internal object UltraVerseColors {
     val supported: Color @Composable @ReadOnlyComposable get() = LocalUltraVersePalette.current.supported
     val unavailable: Color @Composable @ReadOnlyComposable get() = LocalUltraVersePalette.current.unavailable
     val unavailableStrong: Color @Composable @ReadOnlyComposable get() = LocalUltraVersePalette.current.unavailableStrong
+    val boardLight: Color @Composable @ReadOnlyComposable get() = LocalUltraVersePalette.current.boardLight
+    val boardDark: Color @Composable @ReadOnlyComposable get() = LocalUltraVersePalette.current.boardDark
     val heroGradient: List<Color> @Composable @ReadOnlyComposable get() = LocalUltraVersePalette.current.heroGradient
     val cardShadowAlpha: Float @Composable @ReadOnlyComposable get() = LocalUltraVersePalette.current.cardShadowAlpha
     val navDividerAlpha: Float @Composable @ReadOnlyComposable get() = LocalUltraVersePalette.current.navDividerAlpha

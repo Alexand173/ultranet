@@ -54,6 +54,7 @@ import cc.ultranet.ultraverse.R
 import cc.ultranet.ultraverse.data.ServiceCatalog
 import cc.ultranet.ultraverse.data.ServiceEntry
 import cc.ultranet.ultraverse.ui.appchains.AppChainsScreen
+import cc.ultranet.ultraverse.ui.chess.ChessScreen
 import cc.ultranet.ultraverse.ui.contacts.ContactsScreen
 import cc.ultranet.ultraverse.ui.contacts.LocalContactBook
 import cc.ultranet.ultraverse.ui.home.AvailabilityLegend
@@ -85,7 +86,7 @@ import cc.ultranet.ultraverse.wallet.faucetAmountLabel
 import kotlinx.coroutines.launch
 
 /** Top-level native destinations. Every supported catalog entry maps to one of these. */
-private enum class HomeSection { Apps, Wallet, Pay, Contacts, Profile, AppChains, Validator, Mining }
+private enum class HomeSection { Apps, Wallet, Pay, Contacts, Profile, AppChains, Validator, Mining, Chess }
 
 @Composable
 internal fun UltraVerseApp(
@@ -153,6 +154,7 @@ internal fun UltraVerseApp(
             ServiceCatalog.APPCHAINS_ID -> section = HomeSection.AppChains
             ServiceCatalog.VALIDATOR_ID -> { validatorReturn = HomeSection.Apps; section = HomeSection.Validator }
             ServiceCatalog.MINING_ID -> section = HomeSection.Mining
+            ServiceCatalog.CHESS_ID -> section = HomeSection.Chess
             else -> Unit
         }
     }
@@ -337,6 +339,11 @@ internal fun UltraVerseApp(
                 walletReady = controller.state.account != null,
                 onSignProposal = { alias, publicKeyHex -> controller.signValidatorProposal(alias, publicKeyHex) },
                 onOpenWallet = { openWallet() },
+            )
+
+            HomeSection.Chess -> ChessScreen(
+                onBack = { section = HomeSection.Apps },
+                modifier = Modifier.padding(scaffoldPadding),
             )
 
             HomeSection.Mining -> MiningScreen(

@@ -51,17 +51,22 @@ class GroupedHomeScreenTest {
     }
 
     @Test
-    fun catalogContainsSixSupportedAndTenUnavailableServices() {
+    fun catalogContainsSevenSupportedAndNineUnavailableServices() {
         assertEquals(4, ServiceCatalog.groups.size)
         assertEquals(listOf(3, 5, 6, 2), ServiceCatalog.groups.map { it.services.size })
         assertEquals(16, ServiceCatalog.groups.sumOf { it.services.size })
-        // Contacts replaced the Name Service concept: a local address book, no on-chain names.
-        assertEquals(6, ServiceCatalog.supportedCount)
-        assertEquals(10, ServiceCatalog.unavailableCount)
+        // Contacts replaced the Name Service concept, and Ultra Chess replaced the Games concept.
+        assertEquals(7, ServiceCatalog.supportedCount)
+        assertEquals(9, ServiceCatalog.unavailableCount)
         val payments = ServiceCatalog.groups.first { it.id == "payments-addresses" }
         assertEquals(
             listOf(ServiceCatalog.WALLET_ID, ServiceCatalog.PAY_ID, ServiceCatalog.CONTACTS_ID),
             payments.services.map { it.id },
+        )
+        val applications = ServiceCatalog.groups.first { it.id == "applications" }
+        assertEquals(
+            listOf(ServiceCatalog.CHESS_ID, "nft-marketplace"),
+            applications.services.map { it.id },
         )
         // Mining lives inside Build & participate, next to the validator application tile.
         val buildGroup = ServiceCatalog.groups.first { it.id == "build-participate" }
