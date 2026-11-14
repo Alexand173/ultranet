@@ -6,6 +6,7 @@ use sha3::Digest;
 use sled::{Batch, Db, Tree};
 use std::collections::HashMap;
 
+use crate::appchain::ledger::{LedgerAnchor, LedgerChain, LedgerEffect, LedgerView};
 use crate::appchain::{AnchoredState, AppChainConfig};
 use crate::bls_aggregation::ValidatorInfo;
 use crate::dag_mysticeti::{MysticetiVertex, ValidatorStats};
@@ -40,6 +41,8 @@ pub struct Storage {
     pub auth_sessions: Tree,
     pub appchain_configs: Tree,
     pub appchain_anchors: Tree,
+    /// Consensus AppChain ledger: L1-object AppChains and owner-signed anchors.
+    pub appchain_ledger: Tree,
     pub supply_corrections: Tree,
     pub move_modules: Tree,
     pub move_resources: Tree,
@@ -82,6 +85,7 @@ impl Storage {
             auth_sessions: db.open_tree("auth_sessions")?,
             appchain_configs: db.open_tree("appchain_configs")?,
             appchain_anchors: db.open_tree("appchain_anchors")?,
+            appchain_ledger: db.open_tree("appchain_ledger")?,
             supply_corrections: db.open_tree("supply_corrections")?,
             move_modules: db.open_tree("move_modules")?,
             move_resources: db.open_tree("move_resources")?,
@@ -477,6 +481,131 @@ impl Storage {
     pub fn delete_appchain_config(&self, chain_id: u32) -> Result<(), sled::Error> {
         self.appchain_configs.remove(chain_id.to_be_bytes())?;
         self.db.flush()?;
+        Ok(())
+    }
+
+    // ------------------------------------------------------------
+    // Consensus AppChain ledger (see `appchain::ledger`).
+    //
+    // Keys in `appchain_ledger`:
+    //   next_id                    -> u32 BE
+    //   chain:<id BE>              -> JSON LedgerChain
+    //   reg:<tx hash>              -> u32 BE chain id
+    //   anchor:<id BE><seq BE>     -> JSON LedgerAnchor
+    //   atx:<tx hash>              -> u32 BE chain id ++ u64 BE sequence
+    // Records are JSON so new optional fields can be added over the decades
+    // without a migration.
+    // ------------------------------------------------------------
+
+    fn ledger_chain_key(id: u32) -> Vec<u8> {
+        [b"chain:".as_slice(), &id.to_be_bytes()].concat()
+    }
+
+    fn ledger_anchor_key(id: u32, sequence: u64) -> Vec<u8> {
+        [b"anchor:".as_slice(), &id.to_be_bytes(), &sequence.to_be_bytes()].concat()
+    }
+
+    pub fn ledger_chain(&self, id: u32) -> Result<Option<LedgerChain>, String> {
+        match self
+            .appchain_ledger
+            .get(Self::ledger_chain_key(id))
+            .map_err(|error| error.to_string())?
+        {
+            None => Ok(None),
+            Some(value) => serde_json::from_slice(&value)
+                .map(Some)
+                .map_err(|error| format!("invalid AppChain ledger record #{id}: {error}")),
+        }
+    }
+
+    pub fn ledger_chains(&self) -> Result<Vec<LedgerChain>, String> {
+        let mut chains = Vec::new();
+        for item in self.appchain_ledger.scan_prefix(b"chain:") {
+            let (_, value) = item.map_err(|error| error.to_string())?;
+            chains.push(
+                serde_json::from_slice::<LedgerChain>(&value)
+                    .map_err(|error| format!("invalid AppChain ledger record: {error}"))?,
+            );
+        }
+        chains.sort_by_key(|chain| chain.id);
+        Ok(chains)
+    }
+
+    /// Anchors of one chain with `sequence >= from`, oldest first, at most `limit`.
+    pub fn ledger_anchors(
+        &self,
+        id: u32,
+        from: u64,
+        limit: usize,
+    ) -> Result<Vec<LedgerAnchor>, String> {
+        let start = Self::ledger_anchor_key(id, from);
+        let end = Self::ledger_anchor_key(id, u64::MAX);
+        let mut anchors = Vec::new();
+        for item in self.appchain_ledger.range(start..=end).take(limit) {
+            let (_, value) = item.map_err(|error| error.to_string())?;
+            anchors.push(
+                serde_json::from_slice::<LedgerAnchor>(&value)
+                    .map_err(|error| format!("invalid AppChain anchor record: {error}"))?,
+            );
+        }
+        Ok(anchors)
+    }
+
+    /// Persist the fresh effects of one applied block in a single atomic batch.
+    pub fn apply_ledger_effects(&self, effects: &[LedgerEffect]) -> Result<(), String> {
+        let mut batch = Batch::default();
+        let mut next_id = LedgerView::next_chain_id(self);
+        let mut wrote = false;
+        for effect in effects {
+            match effect {
+                LedgerEffect::Register { chain, fresh: true } => {
+                    let hash = hex::decode(&chain.registered_tx)
+                        .map_err(|error| format!("invalid registration hash: {error}"))?;
+                    batch.insert(
+                        Self::ledger_chain_key(chain.id),
+                        serde_json::to_vec(chain).map_err(|error| error.to_string())?,
+                    );
+                    batch.insert([b"reg:".as_slice(), &hash].concat(), &chain.id.to_be_bytes());
+                    next_id = next_id.max(chain.id.saturating_add(1));
+                    wrote = true;
+                }
+                LedgerEffect::Anchor {
+                    anchor,
+                    chain,
+                    fresh: true,
+                } => {
+                    let hash = hex::decode(&anchor.tx_hash)
+                        .map_err(|error| format!("invalid anchor hash: {error}"))?;
+                    batch.insert(
+                        Self::ledger_anchor_key(anchor.chain_id, anchor.sequence),
+                        serde_json::to_vec(anchor).map_err(|error| error.to_string())?,
+                    );
+                    batch.insert(
+                        [b"atx:".as_slice(), &hash].concat(),
+                        [anchor.chain_id.to_be_bytes().as_slice(), &anchor.sequence.to_be_bytes()]
+                            .concat(),
+                    );
+                    batch.insert(
+                        Self::ledger_chain_key(chain.id),
+                        serde_json::to_vec(chain).map_err(|error| error.to_string())?,
+                    );
+                    wrote = true;
+                }
+                // Replayed effects are already stored.
+                LedgerEffect::Register { fresh: false, .. }
+                | LedgerEffect::Anchor { fresh: false, .. } => {}
+            }
+        }
+        if !wrote {
+            return Ok(());
+        }
+        batch.insert(b"next_id".as_slice(), &next_id.to_be_bytes());
+        self.appchain_ledger
+            .apply_batch(batch)
+            .map_err(|error| error.to_string())?;
+        self.appchain_ledger
+            .flush()
+            .map_err(|error| error.to_string())?;
         Ok(())
     }
 
@@ -1180,6 +1309,7 @@ impl Storage {
         self.auth_sessions.clear()?;
         self.appchain_configs.clear()?;
         self.appchain_anchors.clear()?;
+        self.appchain_ledger.clear()?;
         self.supply_corrections.clear()?;
         self.move_modules.clear()?;
         self.move_resources.clear()?;
@@ -1216,6 +1346,7 @@ impl Clone for Storage {
             auth_sessions: self.auth_sessions.clone(),
             appchain_configs: self.appchain_configs.clone(),
             appchain_anchors: self.appchain_anchors.clone(),
+            appchain_ledger: self.appchain_ledger.clone(),
             supply_corrections: self.supply_corrections.clone(),
             move_modules: self.move_modules.clone(),
             move_resources: self.move_resources.clone(),
@@ -1569,5 +1700,54 @@ mod tests {
         );
         drop(storage);
         let _ = fs::remove_dir_all(&path);
+    }
+}
+
+impl LedgerView for Storage {
+    fn chain(&self, id: u32) -> Option<LedgerChain> {
+        // A corrupt record must not silently look like a missing chain to the
+        // consensus planner; surface it loudly instead.
+        self.ledger_chain(id)
+            .unwrap_or_else(|error| panic!("AppChain ledger is unreadable: {error}"))
+    }
+
+    fn next_chain_id(&self) -> u32 {
+        match self.appchain_ledger.get(b"next_id") {
+            Ok(Some(value)) if value.len() == 4 => {
+                u32::from_be_bytes(value.as_ref().try_into().expect("checked length"))
+            }
+            Ok(None) => 1,
+            Ok(Some(_)) => panic!("AppChain ledger next_id record is malformed"),
+            Err(error) => panic!("AppChain ledger is unreadable: {error}"),
+        }
+    }
+
+    fn registration_for_tx(&self, tx_hash: &[u8; 32]) -> Option<u32> {
+        match self
+            .appchain_ledger
+            .get([b"reg:".as_slice(), tx_hash].concat())
+        {
+            Ok(Some(value)) if value.len() == 4 => Some(u32::from_be_bytes(
+                value.as_ref().try_into().expect("checked length"),
+            )),
+            Ok(None) => None,
+            Ok(Some(_)) => panic!("AppChain ledger registration record is malformed"),
+            Err(error) => panic!("AppChain ledger is unreadable: {error}"),
+        }
+    }
+
+    fn anchor_for_tx(&self, tx_hash: &[u8; 32]) -> Option<(u32, u64)> {
+        match self
+            .appchain_ledger
+            .get([b"atx:".as_slice(), tx_hash].concat())
+        {
+            Ok(Some(value)) if value.len() == 12 => Some((
+                u32::from_be_bytes(value[0..4].try_into().expect("checked length")),
+                u64::from_be_bytes(value[4..12].try_into().expect("checked length")),
+            )),
+            Ok(None) => None,
+            Ok(Some(_)) => panic!("AppChain ledger anchor record is malformed"),
+            Err(error) => panic!("AppChain ledger is unreadable: {error}"),
+        }
     }
 }

@@ -916,6 +916,13 @@ pub enum TransactionPayload {
         expected_balance: u64,
         target_balance: u64,
     },
+    // Variants below are appended, never inserted: bincode encodes the variant
+    // index, so reordering would change how stored blocks decode.
+    /// Register an AppChain as an L1 object; the signer becomes its owner.
+    AppChainRegister { name: String },
+    /// Owner-signed state root for an AppChain. L1 records it; it does not
+    /// compute or judge the AppChain's state.
+    AppChainAnchor { chain_id: u32, state_root: [u8; 32] },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2271,16 +2278,23 @@ impl UltraBlockchain {
             && matches!(&tx.payload, TransactionPayload::ValidatorApproval { .. });
         let is_supply_correction = tx.version == Self::SUPPLY_CORRECTION_TRANSACTION_VERSION
             && supply_correction::is_supply_correction(&tx.payload);
+        let is_appchain_ledger = tx.version == appchain::ledger::APPCHAIN_TX_VERSION
+            && appchain::ledger::is_appchain_payload(&tx.payload);
 
         if tx.version != Self::LEGACY_TRANSACTION_VERSION
             && !is_payload_bound_validator_proposal
             && !is_payload_bound_validator_approval
             && !is_supply_correction
+            && !is_appchain_ledger
         {
             return Err(format!("Unsupported transaction version! {}", tx.version));
         }
         if supply_correction::is_supply_correction(&tx.payload) && !is_supply_correction {
             return Err("Sovereign supply correction requires transaction version 4".to_string());
+        }
+        if appchain::ledger::is_appchain_payload(&tx.payload) {
+            // Stateless shape: version, fixed recipient, zero amount, fixed gas, minimum fee.
+            appchain::ledger::validate_envelope(tx)?;
         }
         if tx.version == Self::LEGACY_TRANSACTION_VERSION && tx.chain_id != Self::L1_CHAIN_ID {
             return Err("Legacy version 1 transactions require L1 chain_id 0".to_string());
@@ -2364,6 +2378,20 @@ impl UltraBlockchain {
             | TransactionPayload::SovereignSupplyCorrection { .. } => {
                 // Governance transactions skip ZK-SNARKs (identity is verified via Dilithium).
             }
+            TransactionPayload::AppChainRegister { .. } => {
+                // AppChain ledger transactions are authorized by the Dilithium signature alone.
+                self.check_appchain_activation()?;
+            }
+            TransactionPayload::AppChainAnchor { chain_id, .. } => {
+                self.check_appchain_activation()?;
+                // Admission checks the persisted ledger: an anchor needs its chain to be
+                // registered in an earlier block, and only the owner may sign it.
+                let chain = appchain::ledger::LedgerView::chain(self.storage.as_ref(), *chain_id)
+                    .ok_or_else(|| format!("AppChain #{chain_id} is not registered"))?;
+                if chain.owner != tx.sender {
+                    return Err(format!("Only the owner of AppChain #{chain_id} may anchor it"));
+                }
+            }
         }
         // NAPOMENA: Nullifier se NE registruje ovde! `validate_transaction` se poziva
         // više puta za istu transakciju (pri dodavanju u mempool i ponovo pri
@@ -2441,6 +2469,15 @@ impl UltraBlockchain {
         Ok(())
     }
 
+    /// AppChain ledger transactions are accepted only from the agreed activation height on.
+    fn check_appchain_activation(&self) -> Result<(), String> {
+        let next_height = self.chain.len() as u64;
+        if !appchain::ledger::is_active_at(next_height) {
+            return Err("AppChain transactions are not active on this network yet".to_string());
+        }
+        Ok(())
+    }
+
     /// Verify transaction authorization without consulting mutable account
     /// balances. Block validation calls this for every inbound transaction so a
     /// remote block cannot bypass sovereign signature policy.
@@ -2515,16 +2552,23 @@ impl UltraBlockchain {
             && matches!(&tx.payload, TransactionPayload::ValidatorApproval { .. });
         let is_supply_correction = tx.version == Self::SUPPLY_CORRECTION_TRANSACTION_VERSION
             && supply_correction::is_supply_correction(&tx.payload);
+        let is_appchain_ledger = tx.version == appchain::ledger::APPCHAIN_TX_VERSION
+            && appchain::ledger::is_appchain_payload(&tx.payload);
 
         if tx.version != Self::LEGACY_TRANSACTION_VERSION
             && !is_payload_bound_validator_proposal
             && !is_payload_bound_validator_approval
             && !is_supply_correction
+            && !is_appchain_ledger
         {
             return Err(format!("Unsupported transaction version! {}", tx.version));
         }
         if supply_correction::is_supply_correction(&tx.payload) && !is_supply_correction {
             return Err("Sovereign supply correction requires transaction version 4".to_string());
+        }
+        if appchain::ledger::is_appchain_payload(&tx.payload) {
+            // Stateless shape: version, fixed recipient, zero amount, fixed gas, minimum fee.
+            appchain::ledger::validate_envelope(tx)?;
         }
         if tx.version == Self::LEGACY_TRANSACTION_VERSION && tx.chain_id != Self::L1_CHAIN_ID {
             return Err("Legacy version 1 transactions require L1 chain_id 0".to_string());
@@ -2719,6 +2763,8 @@ impl UltraBlockchain {
             if let TransactionPayload::ValidatorApproval { proposal_hash } = &tx.payload {
                 hasher.update(proposal_hash);
             }
+        } else if tx.version == appchain::ledger::APPCHAIN_TX_VERSION {
+            appchain::ledger::append_signing_payload(&mut hasher, tx);
         } else if tx.version == supply_correction::SUPPLY_CORRECTION_TRANSACTION_VERSION {
             if let TransactionPayload::SovereignSupplyCorrection {
                 correction_id,
@@ -2844,6 +2890,8 @@ impl UltraBlockchain {
             &tx.payload,
             TransactionPayload::MoveCall { .. }
                 | TransactionPayload::SovereignSupplyCorrection { .. }
+                | TransactionPayload::AppChainRegister { .. }
+                | TransactionPayload::AppChainAnchor { .. }
         ) {
             tree.insert(format!("{}:move", tx.sender).as_bytes(), &tx.get_hash());
         }
@@ -2874,6 +2922,13 @@ impl UltraBlockchain {
                 break;
             }
         }
+
+        // AppChain ledger transactions are admitted against the parent ledger, so
+        // a set of them can still conflict inside one block (fees beyond the
+        // sender's balance, or an anchor whose chain is not yet registered).
+        // Drop those here; they stay in the mempool for a later block. Keeping
+        // them would make re-execution fail and stop this node from mining.
+        valid_txs = self.filter_minable_appchain_transactions(valid_txs);
 
         if valid_txs.is_empty() {
             return Err("No valid transactions available for mining".to_string());
@@ -3645,7 +3700,45 @@ impl UltraBlockchain {
                 | TransactionPayload::ValidatorApproval { .. } => {
                     // Governance events handled in transition layer
                 }
+                TransactionPayload::AppChainRegister { .. }
+                | TransactionPayload::AppChainAnchor { .. } => {
+                    // Applied below in one planned pass, shared with update_state.
+                }
                 _ => unreachable!(),
+            }
+        }
+
+        // AppChain ledger: debit fees and bind registrations and anchors into
+        // the state root, exactly as update_state will.
+        let planned = appchain::ledger::plan_block(
+            self.storage.as_ref(),
+            block.index,
+            block.timestamp,
+            &block.transactions,
+        )?;
+        for item in &planned {
+            let current = match candidate_balances.get(&item.sender) {
+                Some(balance) => *balance,
+                None => self
+                    .candidate_account_balance(&candidate_trie, &move_vm, &item.sender)
+                    .unwrap_or_else(|| self.unadjusted_balance_with_vm(&move_vm, &item.sender)),
+            };
+            let remaining = current.checked_sub(item.fee).ok_or_else(|| {
+                format!(
+                    "AppChain transaction sender {} cannot pay its fee",
+                    item.sender
+                )
+            })?;
+            self.apply_candidate_account_balance(
+                &mut candidate_trie,
+                &mut move_vm,
+                &item.sender,
+                remaining,
+            )?;
+            candidate_balances.insert(item.sender.clone(), remaining);
+            for (key, value) in item.effect.trie_entries() {
+                let shard = self.storage.get_shard_id(key.as_bytes());
+                candidate_trie.insert(shard, key.as_bytes(), &value)?;
             }
         }
 
@@ -3754,6 +3847,97 @@ impl UltraBlockchain {
         Ok(())
     }
 
+    /// Keep only AppChain ledger transactions that this block can apply: the
+    /// planner accepts them in order, and each sender can pay every fee after
+    /// the block's transfers. Other transactions pass through untouched.
+    fn filter_minable_appchain_transactions(&self, transactions: Vec<Transaction>) -> Vec<Transaction> {
+        if !transactions
+            .iter()
+            .any(|tx| appchain::ledger::is_appchain_payload(&tx.payload))
+        {
+            return transactions;
+        }
+        let next_index = self.chain.len() as u64;
+        // Conservative budget: every transfer out of the sender in this block is
+        // assumed to succeed before the AppChain fees are charged.
+        let mut budget: HashMap<String, u64> = HashMap::new();
+        for tx in &transactions {
+            if appchain::ledger::is_appchain_payload(&tx.payload) {
+                budget
+                    .entry(tx.sender.clone())
+                    .or_insert_with(|| self.get_unadjusted_balance(&tx.sender));
+            }
+        }
+        for tx in &transactions {
+            if matches!(tx.payload, TransactionPayload::StandardTransfer) {
+                if let Some(balance) = budget.get_mut(&tx.sender) {
+                    *balance = balance.saturating_sub(tx.amount.saturating_add(tx.fee));
+                }
+            }
+        }
+
+        let mut kept: Vec<Transaction> = Vec::with_capacity(transactions.len());
+        for tx in transactions {
+            if !appchain::ledger::is_appchain_payload(&tx.payload) {
+                kept.push(tx);
+                continue;
+            }
+            let affordable = budget.get(&tx.sender).is_some_and(|balance| *balance >= tx.fee);
+            let mut candidate = kept.clone();
+            candidate.push(tx.clone());
+            let plannable =
+                appchain::ledger::plan_block(self.storage.as_ref(), next_index, 0, &candidate).is_ok();
+            if affordable && plannable {
+                if let Some(balance) = budget.get_mut(&tx.sender) {
+                    *balance -= tx.fee;
+                }
+                kept.push(tx);
+            }
+        }
+        kept
+    }
+
+    /// Apply a block's AppChain ledger effects to live state: fee debits, the
+    /// state-trie bindings, and the persisted ledger records.
+    fn apply_appchain_ledger(&mut self, block: &UltraBlock) {
+        let planned = match appchain::ledger::plan_block(
+            self.storage.as_ref(),
+            block.index,
+            block.timestamp,
+            &block.transactions,
+        ) {
+            Ok(planned) => planned,
+            Err(error) => {
+                // The block already passed re-execution with this same planner.
+                panic!("validated block {} has an unplannable AppChain ledger: {error}", block.index)
+            }
+        };
+        if planned.is_empty() {
+            return;
+        }
+        for item in &planned {
+            let balance = self.get_unadjusted_balance(&item.sender);
+            let remaining = balance
+                .checked_sub(item.fee)
+                .expect("validated AppChain fee must not underflow the sender balance");
+            let mut move_vm = self.move_vm.write();
+            self.apply_account_balance(&item.sender, remaining, &mut move_vm)
+                .expect("validated AppChain fee debit must persist");
+            drop(move_vm);
+            for (key, value) in item.effect.trie_entries() {
+                let shard = self.storage.get_shard_id(key.as_bytes());
+                self.state_trie
+                    .write()
+                    .insert(shard, key.as_bytes(), &value)
+                    .expect("validated AppChain state binding must persist");
+            }
+        }
+        let effects: Vec<_> = planned.into_iter().map(|item| item.effect).collect();
+        self.storage
+            .apply_ledger_effects(&effects)
+            .expect("validated AppChain ledger records must persist");
+    }
+
     // ============================================================
     // 8.6 AŽURIRANJE STANJA
     // ============================================================
@@ -3810,8 +3994,13 @@ impl UltraBlockchain {
                 | TransactionPayload::ValidatorApproval { .. } => {
                     // Handled at protocol addition layer
                 }
+                TransactionPayload::AppChainRegister { .. }
+                | TransactionPayload::AppChainAnchor { .. } => {
+                    // Applied below in one planned pass, shared with re-execution.
+                }
             }
         }
+        self.apply_appchain_ledger(block);
 
         // Dodaj block reward prvom validatoru
         if let Some(first_validator) = block.validator_set.first() {
@@ -4146,6 +4335,29 @@ impl UltraBlockchain {
         }
 
         all_txs
+    }
+
+    /// `get_unadjusted_balance` for callers that already hold the Move VM lock
+    /// (block re-execution holds it for writing; taking it again would deadlock).
+    fn unadjusted_balance_with_vm(&self, vm: &MoveVM, address: &str) -> u64 {
+        if let Some(legacy_balance) = self.state.read().get(address) {
+            return *legacy_balance;
+        }
+        if let Some(persisted_balance) = self.storage.get_state(address) {
+            return persisted_balance;
+        }
+        let clean_addr = address.strip_prefix("0x").unwrap_or(address);
+        let res_key = format!("{}:Coin", clean_addr);
+        if let Some(val) = vm.storage.move_resources.get(&res_key).ok().flatten() {
+            if let Ok(info) = bincode::deserialize::<crate::move_vm::MoveResourceInfo>(&val) {
+                if info.data.len() >= 8 {
+                    let mut balance = [0u8; 8];
+                    balance.copy_from_slice(&info.data[0..8]);
+                    return u64::from_le_bytes(balance);
+                }
+            }
+        }
+        0
     }
 
     fn get_unadjusted_balance(&self, address: &str) -> u64 {
@@ -5155,5 +5367,240 @@ mod signature_verification_tests {
             .expect("Unable to create new key output file");
         file.write_all(json.as_bytes()).unwrap();
         println!("✅ Sovereign keys saved to {}", output_path.display());
+    }
+}
+
+#[cfg(test)]
+mod appchain_ledger_tests {
+    //! End to end: AppChains as L1 objects. Signed register and anchor
+    //! transactions go through the real mempool, block building, re-execution
+    //! and state update, and a second node replays the blocks to the same
+    //! state root and the same ledger.
+    use super::*;
+    use crate::appchain::ledger::{
+        APPCHAIN_ANCHOR_FEE, APPCHAIN_REGISTER_FEE, APPCHAIN_TX_GAS_LIMIT, APPCHAIN_TX_GAS_PRICE,
+        APPCHAIN_TX_RECIPIENT, APPCHAIN_TX_VERSION,
+    };
+    use std::fs;
+    use std::path::Path;
+
+    const START_BALANCE: u64 = 1_000_000; // 1 $ULTRA
+
+    fn node_at(path: &str, balances: &[(&str, u64)]) -> UltraBlockchain {
+        let storage = Arc::new(Storage::new(path).expect("test storage should open"));
+        for (address, balance) in balances {
+            storage.save_state(address, *balance).expect("seed balance");
+        }
+        UltraBlockchain::with_storage(storage)
+    }
+
+    fn copy_dir(from: &Path, to: &Path) {
+        fs::create_dir_all(to).unwrap();
+        for entry in fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let target = to.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_dir(&entry.path(), &target);
+            } else {
+                fs::copy(entry.path(), target).unwrap();
+            }
+        }
+    }
+
+    fn signed(
+        chain: &UltraBlockchain,
+        wallet: &UltraWallet,
+        nonce: u64,
+        payload: TransactionPayload,
+    ) -> Transaction {
+        let fee = crate::appchain::ledger::required_fee(&payload).unwrap();
+        let mut nullifier = [0u8; 32];
+        nullifier[..8].copy_from_slice(&nonce.to_le_bytes());
+        nullifier[8..16].copy_from_slice(&wallet.address.as_bytes()[..8]);
+        let mut tx = Transaction {
+            sender: wallet.address.clone(),
+            sender_public_key: wallet.keypair.public_key.clone(),
+            recipient: APPCHAIN_TX_RECIPIENT.to_string(),
+            amount: 0,
+            signature: vec![],
+            zk_proof: vec![],
+            nullifier,
+            timestamp: Utc::now().timestamp() as u64,
+            fee,
+            nonce,
+            gas_limit: APPCHAIN_TX_GAS_LIMIT,
+            gas_price: APPCHAIN_TX_GAS_PRICE,
+            proof_type: ProofType::Ownership,
+            payload,
+            chain_id: UltraBlockchain::L1_CHAIN_ID,
+            version: APPCHAIN_TX_VERSION,
+        };
+        let message = chain.create_transaction_message(&tx);
+        tx.signature = wallet.keypair.sign(&message);
+        tx
+    }
+
+    #[test]
+    fn owner_registers_and_anchors_and_a_second_node_replays_to_the_same_state() {
+        let path_a = "test_db_appchain_ledger_a";
+        let path_b = "test_db_appchain_ledger_b";
+        let _ = fs::remove_dir_all(path_a);
+        let _ = fs::remove_dir_all(path_b);
+
+        let owner = UltraWallet::new();
+        let stranger = UltraWallet::new();
+        let balances = [
+            (owner.address.as_str(), START_BALANCE),
+            (stranger.address.as_str(), START_BALANCE),
+        ];
+        let mut node_a = node_at(path_a, &balances);
+        node_a.storage.flush().unwrap();
+        // Node B starts from the same genesis and balances, then only ever sees blocks.
+        copy_dir(Path::new(path_a), Path::new(path_b));
+        let mut node_b = UltraBlockchain::with_storage(Arc::new(Storage::new(path_b).unwrap()));
+        assert_eq!(node_a.chain[0].hash, node_b.chain[0].hash);
+
+        // Block 1: registration. The signer becomes the owner; ID 1 is assigned.
+        let register = signed(
+            &node_a,
+            &owner,
+            0,
+            TransactionPayload::AppChainRegister { name: "UltraNet Grid".into() },
+        );
+        node_a.add_transaction(register).expect("signed registration is admitted");
+        let block1 = node_a.mine_block().expect("block with registration");
+
+        let chain = node_a.storage.ledger_chain(1).unwrap().expect("chain #1 registered");
+        assert_eq!(chain.owner, owner.address);
+        assert_eq!(chain.name, "UltraNet Grid");
+        assert_eq!(chain.registered_block, block1.index);
+        assert_eq!(
+            node_a.get_unadjusted_balance(&owner.address),
+            START_BALANCE - APPCHAIN_REGISTER_FEE,
+            "the registration fee is debited from the owner"
+        );
+
+        // A stranger cannot anchor someone else's chain; admission refuses it.
+        let hijack = signed(
+            &node_a,
+            &stranger,
+            0,
+            TransactionPayload::AppChainAnchor { chain_id: 1, state_root: [0x66; 32] },
+        );
+        let error = node_a.add_transaction(hijack).unwrap_err();
+        assert!(error.contains("Only the owner"), "{error}");
+
+        // A signature does not survive a changed root.
+        let mut tampered = signed(
+            &node_a,
+            &owner,
+            1,
+            TransactionPayload::AppChainAnchor { chain_id: 1, state_root: [0x11; 32] },
+        );
+        tampered.payload = TransactionPayload::AppChainAnchor { chain_id: 1, state_root: [0x12; 32] };
+        assert!(node_a.add_transaction(tampered).is_err());
+
+        // Block 2: two owner-signed anchors get sequences 1 and 2.
+        for (nonce, byte) in [(1u64, 0xA1u8), (2, 0xA2)] {
+            let anchor = signed(
+                &node_a,
+                &owner,
+                nonce,
+                TransactionPayload::AppChainAnchor { chain_id: 1, state_root: [byte; 32] },
+            );
+            node_a.add_transaction(anchor).expect("owner anchor is admitted");
+        }
+        let block2 = node_a.mine_block().expect("block with anchors");
+
+        let anchors = node_a.storage.ledger_anchors(1, 1, 10).unwrap();
+        assert_eq!(anchors.len(), 2);
+        assert_eq!((anchors[0].sequence, anchors[1].sequence), (1, 2));
+        assert_eq!(anchors[1].state_root, "a2".repeat(32));
+        let chain = node_a.storage.ledger_chain(1).unwrap().unwrap();
+        assert_eq!(chain.anchor_count, 2);
+        assert_eq!(chain.latest_state_root.as_deref(), Some(&"a2".repeat(32)[..]));
+        assert_eq!(
+            node_a.get_unadjusted_balance(&owner.address),
+            START_BALANCE - APPCHAIN_REGISTER_FEE - 2 * APPCHAIN_ANCHOR_FEE
+        );
+        assert!(node_a.is_chain_valid());
+
+        // Node B re-executes both blocks, checks their state roots, and ends
+        // with the same ledger and balances.
+        node_b.add_remote_block(block1.clone(), vec![]).expect("node B accepts block 1");
+        node_b.add_remote_block(block2.clone(), vec![]).expect("node B accepts block 2");
+        assert_eq!(node_b.storage.ledger_chains().unwrap(), node_a.storage.ledger_chains().unwrap());
+        assert_eq!(
+            node_b.storage.ledger_anchors(1, 1, 10).unwrap(),
+            node_a.storage.ledger_anchors(1, 1, 10).unwrap()
+        );
+        assert_eq!(
+            node_b.get_unadjusted_balance(&owner.address),
+            node_a.get_unadjusted_balance(&owner.address)
+        );
+
+        drop(node_a);
+        drop(node_b);
+        let _ = fs::remove_dir_all(path_a);
+        let _ = fs::remove_dir_all(path_b);
+    }
+
+    #[test]
+    fn a_block_with_an_anchor_signed_by_a_non_owner_is_rejected_by_other_nodes() {
+        let path_a = "test_db_appchain_forged_a";
+        let path_b = "test_db_appchain_forged_b";
+        let _ = fs::remove_dir_all(path_a);
+        let _ = fs::remove_dir_all(path_b);
+
+        let owner = UltraWallet::new();
+        let stranger = UltraWallet::new();
+        let balances = [
+            (owner.address.as_str(), START_BALANCE),
+            (stranger.address.as_str(), START_BALANCE),
+        ];
+        let mut node_a = node_at(path_a, &balances);
+        node_a.storage.flush().unwrap();
+        copy_dir(Path::new(path_a), Path::new(path_b));
+        let mut node_b = UltraBlockchain::with_storage(Arc::new(Storage::new(path_b).unwrap()));
+
+        let register = signed(
+            &node_a,
+            &owner,
+            0,
+            TransactionPayload::AppChainRegister { name: "Grid".into() },
+        );
+        node_a.add_transaction(register).unwrap();
+        let block1 = node_a.mine_block().unwrap();
+        node_b.add_remote_block(block1, vec![]).unwrap();
+
+        // A dishonest producer puts a stranger's anchor straight into a block,
+        // bypassing its own mempool checks. Other nodes must refuse the block.
+        let forged = signed(
+            &node_a,
+            &stranger,
+            0,
+            TransactionPayload::AppChainAnchor { chain_id: 1, state_root: [0x66; 32] },
+        );
+        let prev = node_b.chain.last().unwrap().clone();
+        let mut forged_block = prev.clone();
+        forged_block.index = prev.index + 1;
+        forged_block.previous_hash = prev.hash;
+        forged_block.parent_hash = prev.hash;
+        forged_block.epoch = prev.epoch + 1;
+        forged_block.timestamp = prev.timestamp + 1;
+        forged_block.transactions = vec![forged];
+        // Re-execution is where every node applies the ledger rules; whatever
+        // state root the producer claimed, the block cannot be re-executed.
+        let error = node_b
+            .reexecute_block_for_validation(&forged_block, &prev)
+            .unwrap_err();
+        assert!(error.contains("Only the owner"), "{error}");
+        assert!(!node_b.validate_block(&forged_block, &prev));
+        assert!(node_b.storage.ledger_anchors(1, 1, 10).unwrap().is_empty());
+
+        drop(node_a);
+        drop(node_b);
+        let _ = fs::remove_dir_all(path_a);
+        let _ = fs::remove_dir_all(path_b);
     }
 }

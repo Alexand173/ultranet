@@ -1760,6 +1760,187 @@ async fn list_anchors(state: web::Data<AppState>) -> impl Responder {
 }
 
 // Propose new validator
+// ============================================================
+// APPCHAIN LEDGER — AppChains as L1 objects
+// ============================================================
+
+/// What the owner is signing. Externally tagged:
+/// `{"register": {"name": "UltraNet Grid"}}` or
+/// `{"anchor": {"chain_id": 1, "state_root": "<64 hex>"}}`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum AppChainOperation {
+    Register { name: String },
+    Anchor { chain_id: u32, state_root: String },
+}
+
+/// A wallet-signed AppChain ledger transaction. The client signs the version-5
+/// preimage (`UltraBlockchain::create_transaction_message_for`) over exactly
+/// these fields; recipient, amount, gas and proof type are fixed by the node.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppChainTxRequest {
+    pub sender: String,
+    pub sender_public_key: Vec<u8>,
+    pub nonce: u64,
+    pub timestamp: u64,
+    pub nullifier: Vec<u8>,
+    pub fee: u64,
+    pub signature: Vec<u8>,
+    pub version: u32,
+    pub operation: AppChainOperation,
+}
+
+pub fn appchain_request_to_transaction(req: &AppChainTxRequest) -> Result<Transaction, String> {
+    use crate::appchain::ledger;
+    let nullifier = parse_nullifier(&req.nullifier)?;
+    let payload = match &req.operation {
+        AppChainOperation::Register { name } => TransactionPayload::AppChainRegister {
+            name: name.clone(),
+        },
+        AppChainOperation::Anchor {
+            chain_id,
+            state_root,
+        } => {
+            let bytes = hex::decode(state_root.trim())
+                .map_err(|_| "state_root must be 64 hexadecimal characters".to_string())?;
+            let state_root: [u8; 32] = bytes
+                .try_into()
+                .map_err(|_| "state_root must be exactly 32 bytes".to_string())?;
+            TransactionPayload::AppChainAnchor {
+                chain_id: *chain_id,
+                state_root,
+            }
+        }
+    };
+    Ok(Transaction {
+        sender: req.sender.clone(),
+        sender_public_key: req.sender_public_key.clone(),
+        recipient: ledger::APPCHAIN_TX_RECIPIENT.to_string(),
+        amount: 0,
+        signature: req.signature.clone(),
+        zk_proof: vec![],
+        nullifier,
+        timestamp: req.timestamp,
+        fee: req.fee,
+        nonce: req.nonce,
+        gas_limit: ledger::APPCHAIN_TX_GAS_LIMIT,
+        gas_price: ledger::APPCHAIN_TX_GAS_PRICE,
+        proof_type: ProofType::Ownership,
+        payload,
+        chain_id: UltraBlockchain::L1_CHAIN_ID,
+        version: req.version,
+    })
+}
+
+pub async fn submit_appchain_tx(
+    state: web::Data<AppState>,
+    req: web::Json<AppChainTxRequest>,
+) -> impl Responder {
+    let tx = match appchain_request_to_transaction(&req) {
+        Ok(tx) => tx,
+        Err(message) => {
+            return HttpResponse::BadRequest().json(ApiResponse {
+                success: false,
+                message,
+                data: None,
+            })
+        }
+    };
+    let hash = hex::encode(tx.get_hash());
+    let blockchain = state.blockchain.read();
+    match blockchain.add_transaction(tx) {
+        Ok(_) => HttpResponse::Ok().json(ApiResponse {
+            success: true,
+            message: "AppChain transaction accepted as pending".to_string(),
+            data: Some(serde_json::json!({ "hash": hash, "status": "pending" })),
+        }),
+        Err(error) => HttpResponse::BadRequest().json(ApiResponse {
+            success: false,
+            message: format!("AppChain transaction rejected: {error}"),
+            data: None,
+        }),
+    }
+}
+
+fn appchain_ledger_terms() -> serde_json::Value {
+    use crate::appchain::ledger;
+    let height = ledger::activation_height();
+    serde_json::json!({
+        "version": ledger::APPCHAIN_TX_VERSION,
+        "recipient": ledger::APPCHAIN_TX_RECIPIENT,
+        "register_fee_base_units": ledger::APPCHAIN_REGISTER_FEE,
+        "anchor_fee_base_units": ledger::APPCHAIN_ANCHOR_FEE,
+        "gas_limit": ledger::APPCHAIN_TX_GAS_LIMIT,
+        "gas_price": ledger::APPCHAIN_TX_GAS_PRICE,
+        // null means this node does not accept AppChain transactions yet.
+        "activation_height": if height == u64::MAX { None } else { Some(height) },
+    })
+}
+
+pub async fn appchain_ledger(state: web::Data<AppState>) -> impl Responder {
+    let blockchain = state.blockchain.read();
+    match blockchain.storage.ledger_chains() {
+        Ok(chains) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true,
+            "terms": appchain_ledger_terms(),
+            "chains": chains,
+        })),
+        Err(error) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "message": error,
+        })),
+    }
+}
+
+pub async fn appchain_ledger_chain(state: web::Data<AppState>, path: web::Path<u32>) -> impl Responder {
+    let chain_id = path.into_inner();
+    let blockchain = state.blockchain.read();
+    match blockchain.storage.ledger_chain(chain_id) {
+        Ok(Some(chain)) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true,
+            "chain": chain,
+        })),
+        Ok(None) => HttpResponse::NotFound().json(serde_json::json!({
+            "success": false,
+            "message": format!("AppChain #{chain_id} is not registered"),
+        })),
+        Err(error) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "message": error,
+        })),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AnchorPageQuery {
+    pub from: Option<u64>,
+    pub limit: Option<usize>,
+}
+
+pub async fn appchain_ledger_anchors(
+    state: web::Data<AppState>,
+    path: web::Path<u32>,
+    query: web::Query<AnchorPageQuery>,
+) -> impl Responder {
+    let chain_id = path.into_inner();
+    let from = query.from.unwrap_or(1).max(1);
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let blockchain = state.blockchain.read();
+    match blockchain.storage.ledger_anchors(chain_id, from, limit) {
+        Ok(anchors) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true,
+            "chain_id": chain_id,
+            "from": from,
+            "anchors": anchors,
+        })),
+        Err(error) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "message": error,
+        })),
+    }
+}
+
 pub async fn propose_validator(
     state: web::Data<AppState>,
     req: web::Json<ValidatorProposalRequest>,
@@ -3660,6 +3841,13 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
             .route("/api/state/size", web::get().to(get_state_size))
             .route("/api/appchain/list", web::get().to(list_appchains))
             .route("/api/appchain/overview", web::get().to(appchain_overview))
+            .route("/api/appchain/tx", web::post().to(submit_appchain_tx))
+            .route("/api/appchain/ledger", web::get().to(appchain_ledger))
+            .route("/api/appchain/ledger/{chain_id}", web::get().to(appchain_ledger_chain))
+            .route(
+                "/api/appchain/ledger/{chain_id}/anchors",
+                web::get().to(appchain_ledger_anchors),
+            )
             .route("/api/appchain/anchors", web::get().to(list_anchors))
             .route(
                 "/api/transactions/latest",
