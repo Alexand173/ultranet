@@ -55,13 +55,15 @@ fn service() -> Arc<FaucetService> {
         bind: "127.0.0.1:0".parse().unwrap(),
         node_api_base_url: "http://127.0.0.1:8081".into(),
         faucet_address: address,
-        claim_amount_base_units: 1_000_000,
-        daily_debit_cap_base_units: 100_000_000,
+        claim_amount_base_units: 100_000,
+        daily_debit_cap_base_units: 10_000_000,
         min_balance_reserve_base_units: 200_000_000,
         address_cooldown_seconds: 86_400,
         max_queue_length: 100,
         max_submission_attempts: 5,
         confirmation_timeout_seconds: 900,
+        ip_claims_per_day: UltraNet::faucet::config::DEFAULT_IP_CLAIMS_PER_DAY,
+        subnet_claims_per_day: UltraNet::faucet::config::DEFAULT_SUBNET_CLAIMS_PER_DAY,
         // The promotional cap is exercised in faucet_service_test.rs. Here it must
         // not interfere with the API fixtures, so 0 (unlimited) is deliberate.
         max_claims: 0,
@@ -126,8 +128,8 @@ async fn public_claim_contract_is_strict_and_idempotent() {
     assert_eq!(response.status(), actix_web::http::StatusCode::ACCEPTED);
     let body: serde_json::Value = actix_web::test::read_body_json(response).await;
     assert!(body["data"]["claim_id"].is_string());
-    assert_eq!(body["data"]["amount_base_units"], 1_000_000);
-    assert_eq!(body["data"]["amount_ultra"], "1.000000");
+    assert_eq!(body["data"]["amount_base_units"], 100_000);
+    assert_eq!(body["data"]["amount_ultra"], "0.100000");
     assert!(body.get("signature").is_none());
     assert!(body.to_string().find("private_key").is_none());
     assert!(body.to_string().find("captcha_token").is_none());

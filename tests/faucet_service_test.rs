@@ -115,13 +115,15 @@ fn service_with_cap(mock: Arc<MockNode>, max_claims: u64) -> FaucetService {
         bind: "127.0.0.1:0".parse().unwrap(),
         node_api_base_url: "http://127.0.0.1:8081".into(),
         faucet_address: address,
-        claim_amount_base_units: 1_000_000,
-        daily_debit_cap_base_units: 100_000_000,
+        claim_amount_base_units: 100_000,
+        daily_debit_cap_base_units: 10_000_000,
         min_balance_reserve_base_units: 200_000_000,
         address_cooldown_seconds: 86_400,
         max_queue_length: 100,
         max_submission_attempts: 5,
         confirmation_timeout_seconds: 900,
+        ip_claims_per_day: UltraNet::faucet::config::DEFAULT_IP_CLAIMS_PER_DAY,
+        subnet_claims_per_day: UltraNet::faucet::config::DEFAULT_SUBNET_CLAIMS_PER_DAY,
         max_claims,
         enabled: true,
         captcha_provider: "turnstile".into(),
@@ -167,7 +169,8 @@ async fn worker_persists_and_confirms_one_signed_payout() {
         .await
         .unwrap();
     assert_eq!(result, AdmissionResult::Created);
-    assert_eq!(bundle.claim.source_debit_base_units, 1_010_000);
+    // 0.1 (100,000) plus the 1 % minimum fee (1,000).
+    assert_eq!(bundle.claim.source_debit_base_units, 101_000);
 
     // The mock's address must match the service signer address for the worker preflight.
     let signer_address = service.signer.address().to_string();

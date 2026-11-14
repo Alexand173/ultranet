@@ -205,22 +205,31 @@ impl FaucetService {
             }
         }
 
+        // A configured limit of 0 removes that scope. Mobile subscribers share carrier CGNAT
+        // addresses and offices share one address, so a tight per-IP maximum rejects real
+        // first-time claimants. The per-destination cooldown already prevents duplicate claims
+        // and the global daily debit cap bounds a coordinated drain, so these limits only have to
+        // blunt casual abuse.
         let mut abuse_controls = Vec::new();
-        if let Some(digest) = client_digest(&self.abuse_key, client_identity) {
-            abuse_controls.push(AbuseControl {
-                scope: IP_SCOPE,
-                identity_digest: digest,
-                window_seconds: 86_400,
-                maximum: 3,
-            });
+        if self.config.ip_claims_per_day > 0 {
+            if let Some(digest) = client_digest(&self.abuse_key, client_identity) {
+                abuse_controls.push(AbuseControl {
+                    scope: IP_SCOPE,
+                    identity_digest: digest,
+                    window_seconds: 86_400,
+                    maximum: self.config.ip_claims_per_day,
+                });
+            }
         }
-        if let Some(digest) = subnet_digest(&self.abuse_key, client_identity) {
-            abuse_controls.push(AbuseControl {
-                scope: SUBNET_SCOPE,
-                identity_digest: digest,
-                window_seconds: 86_400,
-                maximum: 25,
-            });
+        if self.config.subnet_claims_per_day > 0 {
+            if let Some(digest) = subnet_digest(&self.abuse_key, client_identity) {
+                abuse_controls.push(AbuseControl {
+                    scope: SUBNET_SCOPE,
+                    identity_digest: digest,
+                    window_seconds: 86_400,
+                    maximum: self.config.subnet_claims_per_day,
+                });
+            }
         }
         let fee = UltraBlockchain::minimum_transfer_fee(self.config.claim_amount_base_units);
         let claim_id = random_claim_id();

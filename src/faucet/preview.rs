@@ -2,7 +2,7 @@ use crate::{
     faucet::{
         api,
         captcha::StaticCaptchaVerifier,
-        config::FaucetConfig,
+        config::{self, FaucetConfig},
         models::{
             NodeAccountData, NodeFeeEstimateData, NodeTransactionData, SignedTransferRequest,
         },
@@ -216,13 +216,15 @@ pub async fn run(bind: SocketAddr) -> Result<(), String> {
         bind,
         node_api_base_url: "http://127.0.0.1:8081".into(),
         faucet_address: faucet_address.clone(),
-        claim_amount_base_units: 1_000_000,
-        daily_debit_cap_base_units: 100_000_000,
+        claim_amount_base_units: config::DEFAULT_CLAIM_AMOUNT_BASE_UNITS,
+        daily_debit_cap_base_units: config::DEFAULT_DAILY_DEBIT_CAP_BASE_UNITS,
         min_balance_reserve_base_units: 200_000_000,
         address_cooldown_seconds: 86_400,
         max_queue_length: 100,
         max_submission_attempts: 5,
         confirmation_timeout_seconds: 900,
+        ip_claims_per_day: config::DEFAULT_IP_CLAIMS_PER_DAY,
+        subnet_claims_per_day: config::DEFAULT_SUBNET_CLAIMS_PER_DAY,
         // The preview server is a local harness, not the promotion, so it stays uncapped.
         max_claims: 0,
         enabled: true,

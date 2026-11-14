@@ -12,17 +12,31 @@ pub const DEFAULT_NODE_API_BASE_URL: &str = "http://127.0.0.1:8081";
 /// to it would point a fresh deployment at funds it can never spend.
 pub const DEFAULT_FAUCET_ADDRESS: &str =
     "fe0b9a9227ebb2bb40b408c5b10b0155a2591fdf97ce43580a1ab873271af1f8";
-pub const DEFAULT_CLAIM_AMOUNT_BASE_UNITS: u64 = 1_000_000;
-pub const DEFAULT_DAILY_DEBIT_CAP_BASE_UNITS: u64 = 100_000_000;
+/// One tenth of a coin. The promotion is an onboarding taste, not a balance: at 0.1 the float funds
+/// roughly ten times as many first-time users as 1.0 did, and each fake claim is worth a tenth as
+/// much to a bot. 0.1 still covers a real payment, because a 0.05 transfer costs 0.0005 in fees.
+pub const DEFAULT_CLAIM_AMOUNT_BASE_UNITS: u64 = 100_000;
+/// Ten coins a day, about 99 claims at the current claim size. It keeps the old daily pace, so a
+/// bot that gets past the CAPTCHA cannot drain the float in one night.
+pub const DEFAULT_DAILY_DEBIT_CAP_BASE_UNITS: u64 = 10_000_000;
 pub const DEFAULT_MIN_BALANCE_RESERVE_BASE_UNITS: u64 = 200_000_000;
 pub const DEFAULT_ADDRESS_COOLDOWN_SECONDS: u64 = 86_400;
 pub const DEFAULT_MAX_QUEUE_LENGTH: usize = 100;
 pub const DEFAULT_MAX_SUBMISSION_ATTEMPTS: u32 = 5;
 pub const DEFAULT_CONFIRMATION_TIMEOUT_SECONDS: u64 = 900;
+/// Claims allowed per source address in a rolling day. `0` removes the limit for this scope.
+///
+/// A mobile audience shares IP addresses: carrier CGNAT and office networks put many subscribers
+/// behind one address, so the previous maximum of 3 rejected real first-time claimants while the
+/// per-destination cooldown already prevented duplicate claims. The global daily debit cap is the
+/// backstop against a coordinated drain, so this limit only has to blunt casual abuse.
+pub const DEFAULT_IP_CLAIMS_PER_DAY: u32 = 25;
+/// Claims allowed per `/24` subnet in a rolling day. `0` removes the limit for this scope.
+pub const DEFAULT_SUBNET_CLAIMS_PER_DAY: u32 = 250;
 /// Promotional cap: the faucet closes intake once this many claims have confirmed on chain.
 /// `0` disables the cap.
-pub const DEFAULT_MAX_CLAIMS: u64 = 1_000;
-pub const POLICY_VERSION: &str = "mainnet-beta-v1";
+pub const DEFAULT_MAX_CLAIMS: u64 = 10_000;
+pub const POLICY_VERSION: &str = "mainnet-beta-v2";
 
 #[derive(Debug, Clone)]
 pub struct FaucetConfig {
@@ -36,6 +50,8 @@ pub struct FaucetConfig {
     pub max_queue_length: usize,
     pub max_submission_attempts: u32,
     pub confirmation_timeout_seconds: u64,
+    pub ip_claims_per_day: u32,
+    pub subnet_claims_per_day: u32,
     /// Successfully confirmed claims after which intake closes. `0` means unlimited.
     pub max_claims: u64,
     pub enabled: bool,
@@ -94,6 +110,11 @@ impl FaucetConfig {
             confirmation_timeout_seconds: parse_u64(
                 "FAUCET_CONFIRMATION_TIMEOUT_SECONDS",
                 DEFAULT_CONFIRMATION_TIMEOUT_SECONDS,
+            )?,
+            ip_claims_per_day: parse_u32("FAUCET_IP_CLAIMS_PER_DAY", DEFAULT_IP_CLAIMS_PER_DAY)?,
+            subnet_claims_per_day: parse_u32(
+                "FAUCET_SUBNET_CLAIMS_PER_DAY",
+                DEFAULT_SUBNET_CLAIMS_PER_DAY,
             )?,
             max_claims: parse_u64("FAUCET_MAX_CLAIMS", DEFAULT_MAX_CLAIMS)?,
             enabled: parse_bool("FAUCET_ENABLED", false)?,
@@ -199,6 +220,8 @@ impl FaucetConfig {
             max_queue_length: DEFAULT_MAX_QUEUE_LENGTH,
             max_submission_attempts: DEFAULT_MAX_SUBMISSION_ATTEMPTS,
             confirmation_timeout_seconds: DEFAULT_CONFIRMATION_TIMEOUT_SECONDS,
+            ip_claims_per_day: DEFAULT_IP_CLAIMS_PER_DAY,
+            subnet_claims_per_day: DEFAULT_SUBNET_CLAIMS_PER_DAY,
             max_claims: DEFAULT_MAX_CLAIMS,
             enabled: true,
             captcha_provider: "turnstile".into(),
@@ -321,6 +344,25 @@ mod tests {
     fn defaults_are_safe_for_local_loopback() {
         let config = FaucetConfig::for_tests("faucet-test.db".into(), "a".repeat(64));
         assert!(config.clone().validate().is_ok());
+    }
+
+    #[test]
+    fn default_claim_is_a_tenth_of_a_coin_and_the_daily_cap_still_clears_one_claim() {
+        let config = FaucetConfig::for_tests("faucet-test.db".into(), "a".repeat(64));
+        assert_eq!(config.claim_amount_base_units, 100_000);
+        assert_eq!(config.max_claims, 10_000);
+        // 0.1 plus the 1 % minimum fee, against a 10 $ULTRA day.
+        let minimum_fee = UltraBlockchain::minimum_transfer_fee(config.claim_amount_base_units);
+        assert_eq!(minimum_fee, 1_000);
+        assert!(config.daily_debit_cap_base_units >= config.claim_amount_base_units + minimum_fee);
+    }
+
+    #[test]
+    fn abuse_limits_are_relaxed_enough_for_shared_mobile_addresses() {
+        let config = FaucetConfig::for_tests("faucet-test.db".into(), "a".repeat(64));
+        // The old 3-per-IP maximum rejected legitimate claimants behind carrier CGNAT.
+        assert!(config.ip_claims_per_day > 3);
+        assert!(config.subnet_claims_per_day > config.ip_claims_per_day);
     }
 
     #[test]
