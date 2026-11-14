@@ -48,6 +48,8 @@ import cc.ultranet.ultraverse.ui.contacts.RecipientSuggestions
 import cc.ultranet.ultraverse.ui.contacts.SavedRecipientChip
 import cc.ultranet.ultraverse.ui.contacts.contactLabel
 import cc.ultranet.ultraverse.ui.contacts.recipientIsContactQuery
+import cc.ultranet.ultraverse.ui.faucet.FaucetClaimCard
+import cc.ultranet.ultraverse.ui.faucet.FaucetClaimState
 import cc.ultranet.ultraverse.ui.theme.UltraVerseColors
 import cc.ultranet.ultraverse.ui.tool.ToolFact
 import cc.ultranet.ultraverse.ui.tool.ToolInlineMessage
@@ -102,6 +104,8 @@ internal fun PayScreen(
     onConfirm: () -> Unit,
     onReset: () -> Unit,
     onRefresh: () -> Unit,
+    faucetAmount: String,
+    onClaimFaucet: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
     var reviewOpen by remember { mutableStateOf(false) }
@@ -190,6 +194,8 @@ internal fun PayScreen(
                 } else {
                     null
                 },
+                faucetAmount = faucetAmount,
+                onClaimFaucet = onClaimFaucet,
             )
         }
 
@@ -262,6 +268,8 @@ private fun FormBody(
     onPaste: () -> Unit,
     onScan: () -> Unit,
     onContacts: (() -> Unit)?,
+    faucetAmount: String,
+    onClaimFaucet: () -> Unit,
 ) {
     val recipient = state.recipientInput
     val normalized = normalizedRecipient(recipient)
@@ -341,6 +349,19 @@ private fun FormBody(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             testTag = "pay-amount",
         )
+
+        // A confirmed zero balance is the one case where the offer belongs inside the form: it
+        // replaces a fee quote that can only fail with a way to fix it.
+        if (available == 0L) {
+            Spacer(Modifier.height(14.dp))
+            FaucetClaimCard(
+                state = FaucetClaimState.EmptyBalance,
+                amountLabel = faucetAmount,
+                onCreateWallet = {},
+                onUnlockWallet = {},
+                onClaim = onClaimFaucet,
+            )
+        }
 
         Spacer(Modifier.height(18.dp))
         ToolSectionLabel("COST")

@@ -75,6 +75,8 @@ import cc.ultranet.ultraverse.ui.contacts.LocalContactBook
 import cc.ultranet.ultraverse.ui.contacts.RecipientSuggestions
 import cc.ultranet.ultraverse.ui.contacts.SavedRecipientChip
 import cc.ultranet.ultraverse.ui.contacts.contactLabel
+import cc.ultranet.ultraverse.ui.faucet.FaucetClaimCard
+import cc.ultranet.ultraverse.ui.faucet.FaucetClaimState
 import cc.ultranet.ultraverse.ui.home.BalanceSparkline
 import cc.ultranet.ultraverse.ui.theme.UltraVerseColors
 import cc.ultranet.ultraverse.ui.tool.shortAddress
@@ -111,6 +113,8 @@ internal fun WalletFlowScreen(
     onRetry: () -> Unit,
     onCheckStatus: () -> Unit,
     onLock: () -> Unit,
+    faucetAmount: String,
+    onClaimFaucet: () -> Unit,
 ) {
     val context = LocalContext.current
     val window = (context as? Activity)?.window
@@ -171,6 +175,8 @@ internal fun WalletFlowScreen(
                     },
                     onCheckStatus = onCheckStatus,
                     onRetry = onRetry,
+                    faucetAmount = faucetAmount,
+                    onClaimFaucet = onClaimFaucet,
                 )
                 WalletRoute.Create -> SetupScreen(
                     mode = SetupMode.Create,
@@ -242,6 +248,8 @@ private fun PortfolioScreen(
     onSend: () -> Unit,
     onCheckStatus: () -> Unit,
     onRetry: () -> Unit,
+    faucetAmount: String,
+    onClaimFaucet: () -> Unit,
 ) {
     if (!state.initialized) {
         Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.Center) {
@@ -359,6 +367,19 @@ private fun PortfolioScreen(
                         else Text("Refresh")
                     }
                 }
+            }
+        }
+        // A confirmed zero balance is the one state where the offer is useful here; an unreadable
+        // balance is not zero, and a funded account has nothing to claim.
+        if (state.account?.balanceBaseUnits == 0L) {
+            item {
+                FaucetClaimCard(
+                    state = FaucetClaimState.EmptyBalance,
+                    amountLabel = faucetAmount,
+                    onCreateWallet = {},
+                    onUnlockWallet = {},
+                    onClaim = onClaimFaucet,
+                )
             }
         }
         item {

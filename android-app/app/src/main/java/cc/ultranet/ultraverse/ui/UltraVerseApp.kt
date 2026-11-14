@@ -57,6 +57,9 @@ import cc.ultranet.ultraverse.ui.appchains.AppChainsScreen
 import cc.ultranet.ultraverse.ui.contacts.ContactsScreen
 import cc.ultranet.ultraverse.ui.contacts.LocalContactBook
 import cc.ultranet.ultraverse.ui.home.AvailabilityLegend
+import cc.ultranet.ultraverse.ui.faucet.FaucetClaimCard
+import cc.ultranet.ultraverse.ui.faucet.FaucetClaimSheet
+import cc.ultranet.ultraverse.ui.faucet.faucetClaimState
 import cc.ultranet.ultraverse.ui.home.ServiceGroupSection
 import cc.ultranet.ultraverse.ui.home.WalletHero
 import cc.ultranet.ultraverse.ui.navigation.BottomNavigation
@@ -72,9 +75,12 @@ import cc.ultranet.ultraverse.ui.wallet.WalletRoute
 import cc.ultranet.ultraverse.ui.pay.PayScreen
 import cc.ultranet.ultraverse.wallet.ContactBook
 import cc.ultranet.ultraverse.wallet.ContactStore
+import cc.ultranet.ultraverse.wallet.FaucetApi
+import cc.ultranet.ultraverse.wallet.FaucetStatus
 import cc.ultranet.ultraverse.wallet.WalletController
 import cc.ultranet.ultraverse.wallet.WalletUiState
 import cc.ultranet.ultraverse.wallet.availableAfterPending
+import cc.ultranet.ultraverse.wallet.faucetAmountLabel
 import kotlinx.coroutines.launch
 
 /** Top-level native destinations. Every supported catalog entry maps to one of these. */
@@ -97,6 +103,11 @@ internal fun UltraVerseApp(
     // Pay opened from a contact returns to Contacts on Back; opened from its tile, to the catalog.
     var payReturn by remember { mutableStateOf(HomeSection.Apps) }
     var section by remember { mutableStateOf(HomeSection.Apps) }
+    // The faucet offer. The amount comes from the faucet status, so a policy change does not need an
+    // app release; until it loads the copy falls back to the documented amount.
+    var faucetStatus by remember { mutableStateOf<FaucetStatus?>(null) }
+    var faucetSheetOpen by remember { mutableStateOf(false) }
+    val faucetAmount = faucetAmountLabel(faucetStatus)
     var route by remember { mutableStateOf(WalletRoute.Apps) }
     // Set when Portfolio is opened from a tool screen, so Back returns to that tool instead of home.
     var portfolioReturn by remember { mutableStateOf<HomeSection?>(null) }
@@ -104,6 +115,7 @@ internal fun UltraVerseApp(
     val currentSection by rememberUpdatedState(section)
 
     LaunchedEffect(controller) { controller.initialize() }
+    LaunchedEffect(Unit) { faucetStatus = FaucetApi.status() }
     // Any accepted outgoing transfer — from Pay or from Send — moves a saved recipient up the list.
     val lastTransaction = controller.state.lastTransaction
     LaunchedEffect(lastTransaction?.hash) {
@@ -186,6 +198,8 @@ internal fun UltraVerseApp(
                 onOpenPortfolio = { portfolioReturn = null; openWallet() },
                 onRefreshBalance = { scope.launch { controller.refreshAccount() } },
                 onOpenService = openService,
+                faucetAmount = faucetAmount,
+                onClaimFaucet = { faucetSheetOpen = true },
             )
 
             HomeSection.Wallet -> WalletFlowScreen(
@@ -230,6 +244,8 @@ internal fun UltraVerseApp(
                     controller.lock()
                     route = WalletRoute.Portfolio
                 },
+                faucetAmount = faucetAmount,
+                onClaimFaucet = { faucetSheetOpen = true },
             )
 
             HomeSection.Pay -> PayScreen(
@@ -253,6 +269,8 @@ internal fun UltraVerseApp(
                 // exactly what keeps this screen from offering a second payment over an unknown one.
                 onReset = { runCatching { controller.startNewTransfer() } },
                 onRefresh = { scope.launch { controller.refreshAccount() } },
+                faucetAmount = faucetAmount,
+                onClaimFaucet = { faucetSheetOpen = true },
             )
 
             HomeSection.Contacts -> ContactsScreen(
@@ -293,6 +311,35 @@ internal fun UltraVerseApp(
                 onOpenValidator = { section = HomeSection.Validator },
             )
         }
+
+        // The claim page needs a destination address, so it is only reachable once a wallet exists.
+        val claimAddress = controller.state.storedWallet?.address
+        if (faucetSheetOpen && claimAddress != null) {
+            FaucetClaimSheet(
+                address = claimAddress,
+                amountLabel = faucetAmount,
+                onDismiss = { faucetSheetOpen = false },
+                onAccepted = {
+                    faucetSheetOpen = false
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            "Claim accepted. It confirms when a block includes it.",
+                        )
+                    }
+                },
+                onConfirmed = { amount ->
+                    faucetSheetOpen = false
+                    scope.launch {
+                        controller.refreshAccount()
+                        snackbarHostState.showSnackbar("You received $amount \$ULTRA.")
+                    }
+                },
+                onFailed = { reason ->
+                    faucetSheetOpen = false
+                    scope.launch { snackbarHostState.showSnackbar(reason) }
+                },
+            )
+        }
         }
     }
 }
@@ -310,6 +357,8 @@ private fun AppsDirectory(
     onOpenPortfolio: () -> Unit,
     onRefreshBalance: () -> Unit,
     onOpenService: (ServiceEntry) -> Unit,
+    faucetAmount: String,
+    onClaimFaucet: () -> Unit,
 ) {
     LazyColumn(
         state = listState,
@@ -333,19 +382,40 @@ private fun AppsDirectory(
                         appearance = appearance,
                         onAppearanceChange = onAppearanceChange,
                     )
-                    HomeHeader.Hero -> WalletHero(
-                        walletExists = walletState.storedWallet != null,
-                        unlocked = walletState.unlocked,
-                        accountBalanceBaseUnits = walletState.account?.balanceBaseUnits,
-                        availableBaseUnits = walletState.availableAfterPending(),
-                        balanceHistory = walletState.balanceHistory,
-                        isRefreshing = walletState.isRefreshing,
-                        onCreateWallet = onCreateWallet,
-                        onRestoreWallet = onRestoreWallet,
-                        onOpenWallet = onOpenWallet,
-                        onOpenPortfolio = onOpenPortfolio,
-                        onRefresh = onRefreshBalance,
-                    )
+                    HomeHeader.Hero -> Column(modifier = Modifier.fillMaxWidth()) {
+                        WalletHero(
+                            walletExists = walletState.storedWallet != null,
+                            unlocked = walletState.unlocked,
+                            accountBalanceBaseUnits = walletState.account?.balanceBaseUnits,
+                            availableBaseUnits = walletState.availableAfterPending(),
+                            balanceHistory = walletState.balanceHistory,
+                            isRefreshing = walletState.isRefreshing,
+                            onCreateWallet = onCreateWallet,
+                            onRestoreWallet = onRestoreWallet,
+                            onOpenWallet = onOpenWallet,
+                            onOpenPortfolio = onOpenPortfolio,
+                            onRefresh = onRefreshBalance,
+                        )
+                        // Directly below the wallet card: the offer is the reason to finish setting
+                        // up, so it has to sit where the wallet state is being read.
+                        val claimState = faucetClaimState(
+                            walletExists = walletState.storedWallet != null,
+                            unlocked = walletState.unlocked,
+                            balanceBaseUnits = walletState.account?.balanceBaseUnits,
+                        )
+                        if (claimState != null) {
+                            FaucetClaimCard(
+                                state = claimState,
+                                amountLabel = faucetAmount,
+                                onCreateWallet = onCreateWallet,
+                                onUnlockWallet = onOpenWallet,
+                                onClaim = onClaimFaucet,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                            )
+                        }
+                    }
                     HomeHeader.Legend -> AvailabilityLegend(
                         modifier = Modifier
                             .fillMaxWidth()
