@@ -372,6 +372,13 @@ internal class WalletController(
         signAppChain(AppChainOperation.Anchor(chainId, stateRootHex.trim().lowercase()))
 
     /**
+     * Hands an AppChain to another address. Signed by the current owner and irreversible: the old
+     * owner loses the right to anchor immediately, so the screen has to say so plainly.
+     */
+    suspend fun transferAppChainOwnership(chainId: Int, newOwnerHex: String): AppChainOutcome =
+        signAppChain(AppChainOperation.TransferOwner(chainId, newOwnerHex.trim().lowercase()))
+
+    /**
      * The one place an AppChain transaction is signed and submitted. It deliberately does not touch
      * `unresolvedTransfer`: an AppChain transaction carries no amount, so a failed submission cannot
      * strand value the way an interrupted transfer can — it only costs a nonce and a retry.

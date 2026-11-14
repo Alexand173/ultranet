@@ -15,6 +15,9 @@ import java.security.SecureRandom
 internal sealed interface AppChainOperation {
     data class Register(val name: String) : AppChainOperation
     data class Anchor(val chainId: Int, val stateRootHex: String) : AppChainOperation
+
+    /** Hand the chain to another address. The new owner's address is inside the signed bytes. */
+    data class TransferOwner(val chainId: Int, val newOwnerHex: String) : AppChainOperation
 }
 
 /**
@@ -63,6 +66,7 @@ internal object AppChainSigner {
     const val RECIPIENT = "appchain"
     const val REGISTER_FEE_BASE_UNITS = 10_000L
     const val ANCHOR_FEE_BASE_UNITS = 1_000L
+    const val TRANSFER_FEE_BASE_UNITS = 1_000L
     const val GAS_LIMIT = 100_000L
     const val GAS_PRICE = 1L
     const val NAME_MAX_LENGTH = 64
@@ -77,6 +81,7 @@ internal object AppChainSigner {
     fun requiredFee(operation: AppChainOperation): Long = when (operation) {
         is AppChainOperation.Register -> REGISTER_FEE_BASE_UNITS
         is AppChainOperation.Anchor -> ANCHOR_FEE_BASE_UNITS
+        is AppChainOperation.TransferOwner -> TRANSFER_FEE_BASE_UNITS
     }
 
     /** Mirrors the node's name rule so a rejected name never costs a signature round trip. */
@@ -86,6 +91,17 @@ internal object AppChainSigner {
         name.trim() != name -> "A name cannot start or end with a space."
         !name.all(::isNameCharacter) -> "Use letters, numbers, spaces, hyphens or underscores."
         else -> null
+    }
+
+    /** Mirrors the node's rule for a new owner, so a bad address never costs a signature. */
+    fun validateNewOwner(address: String, currentOwner: String): String? {
+        val trimmed = address.trim()
+        return when {
+            trimmed.isEmpty() -> "Enter the address that will own this chain."
+            !ADDRESS_PATTERN.matches(trimmed) -> "Use a 64-character lowercase hexadecimal address."
+            trimmed == currentOwner -> "That address already owns this chain."
+            else -> null
+        }
     }
 
     /** Validates a 64-hex state root and returns its 32 bytes. */
@@ -136,6 +152,14 @@ internal object AppChainSigner {
                 preimage.write(leInt(operation.chainId))
                 preimage.write(stateRootBytes(operation.stateRootHex))
             }
+
+            is AppChainOperation.TransferOwner -> {
+                val newOwner = operation.newOwnerHex.trim().toByteArray(StandardCharsets.UTF_8)
+                preimage.write(TRANSFER_TAG)
+                preimage.write(leInt(operation.chainId))
+                preimage.write(leLong(newOwner.size.toLong()))
+                preimage.write(newOwner)
+            }
         }
         val bytes = preimage.toByteArray()
         return try {
@@ -165,6 +189,11 @@ internal object AppChainSigner {
 
             is AppChainOperation.Anchor ->
                 require(operation.chainId > 0) { "Choose the AppChain to anchor." }
+
+            is AppChainOperation.TransferOwner -> {
+                require(operation.chainId > 0) { "Choose the AppChain to hand over." }
+                validateNewOwner(operation.newOwnerHex, sender)?.let { throw IllegalArgumentException(it) }
+            }
         }
         // Validate the root before any key material is used.
         if (operation is AppChainOperation.Anchor) stateRootBytes(operation.stateRootHex)
@@ -217,4 +246,5 @@ internal object AppChainSigner {
 
     private val REGISTER_TAG = "AppChainRegister".toByteArray(StandardCharsets.UTF_8)
     private val ANCHOR_TAG = "AppChainAnchor".toByteArray(StandardCharsets.UTF_8)
+    private val TRANSFER_TAG = "AppChainTransferOwner".toByteArray(StandardCharsets.UTF_8)
 }

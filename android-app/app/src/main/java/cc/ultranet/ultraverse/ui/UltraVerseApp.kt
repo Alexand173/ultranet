@@ -326,6 +326,7 @@ internal fun UltraVerseApp(
                 onOpenWallet = { openWallet() },
                 onRegister = { name -> controller.registerAppChain(name) },
                 onAnchor = { chainId, root -> controller.anchorAppChain(chainId, root) },
+                onTransfer = { chainId, newOwner -> controller.transferAppChainOwnership(chainId, newOwner) },
             )
 
             HomeSection.Validator -> ValidatorScreen(

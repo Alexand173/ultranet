@@ -24,6 +24,7 @@ class AppChainSignerTest {
 
     /** The owner address the node fixture is built for. */
     private val owner = "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e"
+    private val newOwner = "2859eb671f8e03129932efd184f4707352a9770e61fc5e6b8215911c8bd377ed"
 
     private fun hex(bytes: ByteArray): String = buildString {
         bytes.forEach { append("%02x".format(it)) }
@@ -69,6 +70,53 @@ class AppChainSignerTest {
             "f1c64d0830b020aa34c0add54ae7815f61cbe0007e2b6795e844bbbfadd43a72",
             hex(digest),
         )
+    }
+
+    @Test
+    fun transferDigestMatchesTheNode() {
+        val digest = AppChainSigner.buildDigest(
+            sender = owner,
+            fee = AppChainSigner.TRANSFER_FEE_BASE_UNITS,
+            nonce = 2,
+            timestamp = 1_800_000_000,
+            nullifier = ByteArray(32) { 0x11 },
+            operation = AppChainOperation.TransferOwner(chainId = 1, newOwnerHex = newOwner),
+        )
+        assertEquals(
+            "702b1dd8dcdf04061511aea85a9d049843b3e2e531cca690b9176d50b8bcf9ab",
+            hex(digest),
+        )
+    }
+
+    @Test
+    fun aTransferNeedsAnotherUsableAddress() {
+        assertNull(AppChainSigner.validateNewOwner(newOwner, owner))
+        assertNotNull(AppChainSigner.validateNewOwner("", owner))
+        assertNotNull(AppChainSigner.validateNewOwner("nope", owner))
+        assertNotNull(AppChainSigner.validateNewOwner(owner, owner))
+
+        val seed = ByteArray(32) { 9 }
+        val address = hex(NativeDilithium.sha3_256(NativeDilithium.publicKey(seed)))
+        // Handing the chain to the wallet that already owns it is refused before signing.
+        expectFailure<IllegalArgumentException> {
+            AppChainSigner.sign(
+                seed = seed,
+                sender = address,
+                nonce = 0,
+                timestamp = 1_800_000_000,
+                operation = AppChainOperation.TransferOwner(chainId = 1, newOwnerHex = address),
+            )
+        }
+        // So is a transfer that names no chain.
+        expectFailure<IllegalArgumentException> {
+            AppChainSigner.sign(
+                seed = seed,
+                sender = address,
+                nonce = 0,
+                timestamp = 1_800_000_000,
+                operation = AppChainOperation.TransferOwner(chainId = 0, newOwnerHex = newOwner),
+            )
+        }
     }
 
     @Test

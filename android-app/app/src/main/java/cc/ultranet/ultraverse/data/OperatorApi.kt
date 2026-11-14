@@ -70,6 +70,14 @@ internal class UltraNetOperatorApi(
                         .put("chain_id", signed.chainId)
                         .put("state_root", signed.stateRootHex.trim().lowercase()),
                 )
+
+            is AppChainOperation.TransferOwner ->
+                operation.put(
+                    "transfer_owner",
+                    JSONObject()
+                        .put("chain_id", signed.chainId)
+                        .put("new_owner", signed.newOwnerHex.trim().lowercase()),
+                )
         }
         val body = JSONObject()
             .put("sender", tx.sender)
@@ -204,6 +212,7 @@ internal class UltraNetOperatorApi(
                     ?: AppChainSigner.REGISTER_FEE_BASE_UNITS,
                 anchorFeeBaseUnits = terms?.optionalLong("anchor_fee_base_units")
                     ?: AppChainSigner.ANCHOR_FEE_BASE_UNITS,
+                transferFeeBaseUnits = terms?.optionalLong("transfer_fee_base_units"),
                 // Absent or null means the node refuses AppChain transactions: the operator has not
                 // set an activation height yet. That is a fact the screen must show, not hide.
                 activationHeight = terms?.optionalLong("activation_height"),

@@ -21,6 +21,7 @@ internal data class AppChainTerms(
     val recipient: String,
     val registerFeeBaseUnits: Long,
     val anchorFeeBaseUnits: Long,
+    val transferFeeBaseUnits: Long?,
     /** Null means this node refuses AppChain transactions: the activation height is not set. */
     val activationHeight: Long?,
 )

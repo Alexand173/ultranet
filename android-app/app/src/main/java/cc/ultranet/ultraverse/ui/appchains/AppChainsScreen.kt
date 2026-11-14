@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
@@ -68,6 +69,7 @@ internal fun AppChainsScreen(
     onOpenWallet: () -> Unit,
     onRegister: suspend (String) -> AppChainOutcome,
     onAnchor: suspend (Int, String) -> AppChainOutcome,
+    onTransfer: suspend (Int, String) -> AppChainOutcome,
 ) {
     val api = remember { UltraNetOperatorApi() }
     val scope = rememberCoroutineScope()
@@ -78,6 +80,7 @@ internal fun AppChainsScreen(
     var selectedId by remember { mutableStateOf<Int?>(null) }
     var registering by remember { mutableStateOf(false) }
     var anchorTarget by remember { mutableStateOf<AppChainLedgerChain?>(null) }
+    var transferTarget by remember { mutableStateOf<AppChainLedgerChain?>(null) }
     var receipt by remember { mutableStateOf<AppChainOutcome.Accepted?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
 
@@ -109,6 +112,7 @@ internal fun AppChainsScreen(
             onBack = { selectedId = null },
             onOpenWallet = onOpenWallet,
             onAnchor = { anchorTarget = current },
+            onTransfer = { transferTarget = current },
             api = api,
         )
     } else {
@@ -155,6 +159,29 @@ internal fun AppChainsScreen(
                     is AppChainOutcome.Accepted -> {
                         receipt = outcome
                         notice = null
+                        load()
+                    }
+
+                    is AppChainOutcome.Failed -> notice = outcome.message
+                }
+            },
+        )
+    }
+
+    transferTarget?.let { chain ->
+        TransferSheet(
+            chain = chain,
+            feeBaseUnits = ledger?.terms?.transferFeeBaseUnits,
+            onDismiss = { transferTarget = null },
+            onSubmit = { newOwner ->
+                val outcome = onTransfer(chain.id, newOwner)
+                transferTarget = null
+                when (outcome) {
+                    is AppChainOutcome.Accepted -> {
+                        receipt = outcome
+                        notice = null
+                        // The chain is somebody else's now: go back rather than show a stale owner.
+                        selectedId = null
                         load()
                     }
 
@@ -379,6 +406,7 @@ private fun ChainDetail(
     onBack: () -> Unit,
     onOpenWallet: () -> Unit,
     onAnchor: () -> Unit,
+    onTransfer: () -> Unit,
     api: UltraNetOperatorApi,
 ) {
     val owns = walletAddress != null && walletAddress == chain.owner
@@ -476,6 +504,9 @@ private fun ChainDetail(
                         label = "Anchor state root — ${formatUltra(anchorFeeBaseUnits)} \$ULTRA",
                         onClick = onAnchor,
                     )
+                    TextButton(onClick = onTransfer, modifier = Modifier.fillMaxWidth()) {
+                        Text("Transfer ownership", color = UltraVerseColors.muted, fontSize = 12.sp)
+                    }
                 }
             }
         }
@@ -645,6 +676,74 @@ private fun AnchorSheet(
                                 busy = false
                             }
                         }
+                },
+            )
+        }
+    }
+}
+
+/**
+ * Handing a chain over. The address is inside the signed bytes, so the sheet states the
+ * consequence rather than asking the owner to trust that it happened: after this lands, the
+ * current wallet cannot anchor the chain again, and there is no undo.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TransferSheet(
+    chain: AppChainLedgerChain,
+    feeBaseUnits: Long?,
+    onDismiss: () -> Unit,
+    onSubmit: suspend (String) -> Unit,
+) {
+    var owner by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = UltraVerseColors.surface,
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+            Text("Transfer ${chain.name}", color = UltraVerseColors.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "The new owner's address is part of what you sign. Once the block lands, only that " +
+                    "address may anchor this chain, and this wallet loses the right immediately. " +
+                    "There is no undo, so check the address before signing.",
+                color = UltraVerseColors.muted,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+            )
+            Spacer(Modifier.height(14.dp))
+            ToolTextField(
+                label = "New owner address",
+                value = owner,
+                onValueChange = { owner = it; error = null },
+                placeholder = "64 hexadecimal characters",
+                isError = error != null,
+                supporting = error ?: "The wallet that will own this chain from the next block.",
+            )
+            Spacer(Modifier.height(12.dp))
+            ToolFact("Chain", "#${chain.id} — ${chain.name}")
+            ToolFact("Current owner", shortAddress(chain.owner))
+            ToolFact("Transfer fee", feeBaseUnits?.let { "${formatUltra(it)} \$ULTRA" } ?: "—")
+            Spacer(Modifier.height(14.dp))
+            ToolPrimaryAction(
+                label = "Sign & transfer",
+                busy = busy,
+                onClick = {
+                    val message = AppChainSigner.validateNewOwner(owner, chain.owner)
+                    if (message != null) {
+                        error = message
+                        return@ToolPrimaryAction
+                    }
+                    busy = true
+                    scope.launch {
+                        onSubmit(owner.trim())
+                        busy = false
+                    }
                 },
             )
         }
