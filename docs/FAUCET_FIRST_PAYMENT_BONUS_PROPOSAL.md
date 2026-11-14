@@ -116,10 +116,19 @@ and the existing `service_state` kill switch stops both.
 Phase 0 is worth doing first: if almost nobody makes a payment after claiming, the bonus is premature
 regardless of how well it resists farming.
 
-## 9. Open decisions
+## 9. Decisions
 
-1. Bonus amount: equal to the claim (0.1) or half (0.05)?
-2. Minimum qualifying payment: 0.05, or lower so small payments count?
-3. Window: 14 days, or shorter so the signal stays close to the claim?
-4. Budget: same float, or a separate top-up with a 5 $ULTRA daily bonus cap?
-5. Should R7 (cycle detection) block the bonus or only flag it for review in phase 1?
+These are the recommended values, chosen so the bonus rewards a genuine first payment without
+competing with the claim budget.
+
+| # | Decision | Value | Why |
+|---|---|---|---|
+| D1 | Bonus amount | **0.1 $ULTRA** (`100,000`), equal to one claim | the same number the user already saw; a half-bonus reads as an error, not a reward |
+| D2 | Minimum qualifying payment | **0.05 $ULTRA** (`50,000`) | it is half the grant, so the user actually spends something they would notice; a 0.05 payment costs 0.0005 in fees |
+| D3 | Window | **14 days** from the claim, and the bonus must be requested within **7 days** of the payment | long enough for a user to find someone to pay, short enough that the signal stays tied to onboarding |
+| D4 | Budget | **Separate**: `5.000000` $ULTRA a day (≈49 bonuses) plus a 2,000-bonus global cap, recorded in its own window | paying bonuses from the claim budget would halve reach from 9,998 to ~4,900; a smaller bonus cap also means a farming incident cannot outrun claim intake |
+| D5 | Cycle detection (R7) | **Block** the direct two-party case (A pays B and B pays A, both bonus-eligible); **flag** longer rings for operator review in phase 1 | blocking the trivial ring is cheap and certain; automatic rejection of long rings would produce false negatives on legitimate reciprocal payments between people who actually know each other |
+
+With D4 in place, the claim promotion keeps its full 9,998-call runway and the bonus is bounded
+independently. Phase 0 (manual payment of qualifying bonuses) should still come first: if almost nobody
+pays after claiming, none of this is worth automating.
