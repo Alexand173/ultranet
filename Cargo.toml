@@ -116,6 +116,9 @@ move-stdlib = { git = "https://github.com/aptos-labs/aptos-core", package = "mov
 move-vm-types = { git = "https://github.com/aptos-labs/aptos-core", package = "move-vm-types" }
 move-table-extension = { git = "https://github.com/aptos-labs/aptos-core", package = "move-table-extension" }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+base64 = "0.21"
 
 # ✅ FHE (Fully Homomorphic Encryption) - Zama TFHE-rs
 [target.'cfg(unix)'.dependencies]
