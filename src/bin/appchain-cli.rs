@@ -29,7 +29,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use pqcrypto_dilithium::dilithium5;
-use pqcrypto_traits::sign::{DetachedSignature as _, PublicKey as _, SecretKey as _};
+use pqcrypto_traits::sign::{DetachedSignature as _, SecretKey as _};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
