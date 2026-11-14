@@ -3,6 +3,7 @@ package cc.ultranet.ultraverse.ui.faucet
 import android.annotation.SuppressLint
 import android.os.Handler
 import android.os.Looper
+import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -147,6 +148,9 @@ internal fun FaucetClaimSheet(
                     WebView(context).apply {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
+                        // Turnstile's challenge runs in a cross-origin frame; without third-party
+                        // cookies the widget intermittently fails to complete inside a WebView.
+                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         settings.setSupportMultipleWindows(false)
                         settings.allowFileAccess = false
                         settings.allowContentAccess = false
