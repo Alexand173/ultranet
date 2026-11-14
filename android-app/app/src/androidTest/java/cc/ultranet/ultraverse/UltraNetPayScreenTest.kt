@@ -4,6 +4,7 @@ import android.util.Base64
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -14,6 +15,8 @@ import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import cc.ultranet.ultraverse.wallet.ContactBook
+import cc.ultranet.ultraverse.wallet.ContactStore
 import cc.ultranet.ultraverse.wallet.EncryptedWalletStore
 import cc.ultranet.ultraverse.wallet.StoredWallet
 import cc.ultranet.ultraverse.wallet.WALLET_VERSION
@@ -45,6 +48,8 @@ class UltraNetPayScreenTest {
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
     private val password = "correct horse battery"
     private val store by lazy { EncryptedWalletStore(context) }
+    private val contacts by lazy { ContactStore(context) }
+    private val momAddress = "3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c"
     private var scenario: ActivityScenario<MainActivity>? = null
 
     @Before
@@ -82,26 +87,12 @@ class UltraNetPayScreenTest {
     fun removeTheSeededWallet() {
         scenario?.close()
         store.delete()
+        contacts.clear()
     }
 
     @Test
     fun payFormNeedsBothAParsableAddressAndAmountBeforeItWillQuote() {
-        scenario = ActivityScenario.launch(MainActivity::class.java)
-        compose.waitUntil(60_000) { textExists("Wallet locked") }
-        compose.onNodeWithText("Open wallet").performClick()
-        compose.waitUntil(60_000) { textExists("Unlock local wallet") }
-        compose.onNodeWithTag("wallet-unlock-password").performTextInput(password)
-        compose.onNodeWithText("Unlock wallet").performClick()
-        compose.waitUntil(240_000) { textExists("Account balance") }
-
-        // The Apps tab lands on the first service group, which holds the Pay tile.
-        compose.onNodeWithContentDescription("Apps. Scrolls to the grouped services.", substring = true)
-            .performClick()
-        compose.waitUntil(30_000) { homeExists() }
-        compose.onNodeWithTag("ultraverse-home").performScrollToIndex(3)
-        compose.onNodeWithContentDescription("UltraNet Pay. Supported path.", substring = true).performClick()
-
-        compose.waitUntil(30_000) { textExists("Recipient address") }
+        openPayUnlocked()
         compose.onNodeWithText("Send \$ULTRA to one address").assertIsDisplayed()
         compose.onNodeWithText("Paste").assertIsDisplayed()
         compose.onNodeWithText("Scan QR").assertIsDisplayed()
@@ -120,6 +111,53 @@ class UltraNetPayScreenTest {
         compose.onNodeWithText("Get the network fee").assertIsEnabled()
         compose.onNodeWithText("Confirm and send").assertDoesNotExist()
     }
+
+    @Test
+    fun typingAContactNameFillsTheExactSavedAddress() {
+        contacts.clear()
+        check(ContactBook(contacts).add("Mom", momAddress) == null)
+        openPayUnlocked()
+
+        // Letters where an address belongs are a contact lookup, not a malformed address.
+        compose.onNodeWithTag("pay-recipient").performTextInput("mo")
+        compose.waitUntil(5_000) { tagExists("recipient-suggestions") }
+        compose.onNodeWithText("Choose the contact below.").assertIsDisplayed()
+        compose.onNodeWithText("Get the network fee").assertIsNotEnabled()
+
+        compose.onNodeWithText("Mom").performClick()
+        // The field now holds the hex the transfer will sign, and the chip says whose it is.
+        compose.waitUntil(5_000) { tagExists("saved-recipient-chip") }
+        compose.onNodeWithTag("pay-recipient").assertTextContains(momAddress)
+        compose.onNodeWithTag("saved-recipient-chip").assertTextContains("To: Mom", substring = true)
+        compose.onNodeWithTag("recipient-suggestions").assertDoesNotExist()
+
+        compose.onNodeWithTag("pay-amount").performTextInput("1")
+        compose.onNodeWithText("Get the network fee").assertIsEnabled()
+    }
+
+    private fun openPayUnlocked() {
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+        compose.waitUntil(60_000) { textExists("Wallet locked") }
+        compose.onNodeWithText("Open wallet").performClick()
+        compose.waitUntil(60_000) { textExists("Unlock local wallet") }
+        compose.onNodeWithTag("wallet-unlock-password").performTextInput(password)
+        compose.onNodeWithText("Unlock wallet").performClick()
+        compose.waitUntil(240_000) { textExists("Account balance") }
+
+        // The Apps tab lands on the first service group, which holds the Pay tile.
+        compose.onNodeWithContentDescription("Apps. Scrolls to the grouped services.", substring = true)
+            .performClick()
+        compose.waitUntil(30_000) { homeExists() }
+        compose.onNodeWithTag("ultraverse-home").performScrollToIndex(3)
+        compose.onNodeWithContentDescription("UltraNet Pay. Supported path.", substring = true).performClick()
+
+        compose.waitUntil(30_000) { textExists("Recipient address") }
+    }
+
+    private fun tagExists(tag: String): Boolean = runCatching {
+        compose.onNodeWithTag(tag).assertExists()
+        true
+    }.getOrDefault(false)
 
     private fun homeExists(): Boolean = runCatching {
         compose.onNodeWithTag("ultraverse-home").assertExists()

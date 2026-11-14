@@ -33,6 +33,8 @@ class GroupedHomeScreenTest {
             .assertIsDisplayed()
         compose.onNodeWithContentDescription("UltraNet Pay. Supported path.", substring = true)
             .assertIsDisplayed()
+        compose.onNodeWithContentDescription("Contacts. Supported path.", substring = true)
+            .assertIsDisplayed()
 
         home.performScrollToIndex(5)
         compose.onNodeWithText("Build & participate").assertIsDisplayed()
@@ -48,13 +50,18 @@ class GroupedHomeScreenTest {
     }
 
     @Test
-    fun catalogContainsFiveSupportedAndElevenUnavailableServices() {
+    fun catalogContainsSixSupportedAndTenUnavailableServices() {
         assertEquals(4, ServiceCatalog.groups.size)
         assertEquals(listOf(3, 5, 6, 2), ServiceCatalog.groups.map { it.services.size })
         assertEquals(16, ServiceCatalog.groups.sumOf { it.services.size })
-        // UltraNet Pay joined the supported set: a payment screen is a native destination now.
-        assertEquals(5, ServiceCatalog.supportedCount)
-        assertEquals(11, ServiceCatalog.unavailableCount)
+        // Contacts replaced the Name Service concept: a local address book, no on-chain names.
+        assertEquals(6, ServiceCatalog.supportedCount)
+        assertEquals(10, ServiceCatalog.unavailableCount)
+        val payments = ServiceCatalog.groups.first { it.id == "payments-addresses" }
+        assertEquals(
+            listOf(ServiceCatalog.WALLET_ID, ServiceCatalog.PAY_ID, ServiceCatalog.CONTACTS_ID),
+            payments.services.map { it.id },
+        )
         // Mining lives inside Build & participate, next to the validator application tile.
         val buildGroup = ServiceCatalog.groups.first { it.id == "build-participate" }
         assertEquals(

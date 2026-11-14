@@ -25,6 +25,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Refresh
@@ -68,6 +69,12 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import cc.ultranet.ultraverse.ui.contacts.ContactEditorSheet
+import cc.ultranet.ultraverse.ui.contacts.ContactPickerSheet
+import cc.ultranet.ultraverse.ui.contacts.LocalContactBook
+import cc.ultranet.ultraverse.ui.contacts.RecipientSuggestions
+import cc.ultranet.ultraverse.ui.contacts.SavedRecipientChip
+import cc.ultranet.ultraverse.ui.contacts.contactLabel
 import cc.ultranet.ultraverse.ui.home.BalanceSparkline
 import cc.ultranet.ultraverse.ui.theme.UltraVerseColors
 import cc.ultranet.ultraverse.ui.tool.shortAddress
@@ -624,6 +631,11 @@ private fun StatementRow(
     onToggle: () -> Unit,
 ) {
     val outgoing = record.sender == ownAddress
+    val counterparty = if (outgoing) record.recipient else record.sender
+    val counterpartyLabel = contactLabel(counterparty)
+    val book = LocalContactBook.current
+    val canSaveContact = book != null && book.findByAddress(counterparty) == null
+    var saveContactOpen by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -631,7 +643,7 @@ private fun StatementRow(
             .semantics {
                 contentDescription = buildString {
                     append(if (outgoing) "Sent to " else "Received from ")
-                    append(shortAddress(if (outgoing) record.recipient else record.sender))
+                    append(counterpartyLabel)
                     append(", ")
                     append(if (outgoing) "minus " else "plus ")
                     append(formatUltra(record.amountBaseUnits))
@@ -646,8 +658,7 @@ private fun StatementRow(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                 Text(
-                    text = (if (outgoing) "Sent to " else "Received from ") +
-                        shortAddress(if (outgoing) record.recipient else record.sender),
+                    text = (if (outgoing) "Sent to " else "Received from ") + counterpartyLabel,
                     color = UltraVerseColors.ink,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
@@ -673,10 +684,21 @@ private fun StatementRow(
             Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 ReviewLine("Network fee", formatUltra(record.feeBaseUnits))
                 ReviewLine("Nonce", record.nonce.toString())
-                ReviewLine("Counterparty", if (outgoing) record.recipient else record.sender)
+                ReviewLine("Counterparty", counterparty)
                 ReviewLine("Transaction hash", record.hash)
+                // Saving is always the user's choice: an incoming transfer never becomes a contact on
+                // its own, because look-alike "address poisoning" transfers exist to be copied.
+                if (canSaveContact) {
+                    TextButton(onClick = { saveContactOpen = true }, modifier = Modifier.heightIn(min = 40.dp)) {
+                        Icon(Icons.Outlined.Contacts, contentDescription = null, tint = UltraVerseColors.cyan, modifier = Modifier.size(16.dp))
+                        Text("Save contact", modifier = Modifier.padding(start = 6.dp), color = UltraVerseColors.cyan, style = MaterialTheme.typography.labelMedium)
+                    }
+                }
             }
         }
+    }
+    if (saveContactOpen) {
+        ContactEditorSheet(prefillAddress = counterparty, onDismiss = { saveContactOpen = false })
     }
     HorizontalDivider(color = UltraVerseColors.outline.copy(alpha = 0.4f))
 }
@@ -910,6 +932,14 @@ private fun TransferScreen(
 ) {
     val recipient = state.recipientInput
     val amount = state.amountInput
+    val book = LocalContactBook.current
+    var pickerOpen by remember { mutableStateOf(false) }
+    if (pickerOpen) {
+        ContactPickerSheet(
+            onDismiss = { pickerOpen = false },
+            onPick = { onRecipientChange(it.address); pickerOpen = false },
+        )
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
@@ -926,6 +956,14 @@ private fun TransferScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
                 colors = walletTextFieldColors(),
             )
+            if (book != null) {
+                TextButton(onClick = { pickerOpen = true }, modifier = Modifier.heightIn(min = 44.dp)) {
+                    Icon(Icons.Outlined.Contacts, contentDescription = null, tint = UltraVerseColors.cyan, modifier = Modifier.size(17.dp))
+                    Text("Choose from contacts", modifier = Modifier.padding(start = 6.dp), color = UltraVerseColors.cyan)
+                }
+            }
+            RecipientSuggestions(recipientInput = recipient, onPick = { onRecipientChange(it.address) })
+            SavedRecipientChip(recipientInput = recipient, modifier = Modifier.padding(top = 6.dp))
             OutlinedTextField(
                 value = amount,
                 onValueChange = { onAmountChange(it.filter { char -> char.isDigit() || char == '.' }.take(24)) },
@@ -958,6 +996,7 @@ private fun TransferReviewScreen(state: WalletUiState, onConfirm: () -> Unit, on
                     OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Back to transfer") }
                 } else {
                     Text("Check these details carefully.", color = UltraVerseColors.muted)
+                    LocalContactBook.current?.findByAddress(estimate.recipient)?.let { ReviewLine("To", it.name) }
                     ReviewLine("Recipient", estimate.recipient)
                     ReviewLine("Amount", "${formatUltra(estimate.amountBaseUnits)} $ULTRA_SYMBOL")
                     ReviewLine("Network fee", "${formatUltra(estimate.feeBaseUnits)} $ULTRA_SYMBOL")

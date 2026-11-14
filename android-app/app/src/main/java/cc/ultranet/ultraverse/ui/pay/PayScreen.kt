@@ -17,6 +17,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -40,6 +41,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import cc.ultranet.ultraverse.ui.contacts.ContactEditorSheet
+import cc.ultranet.ultraverse.ui.contacts.ContactPickerSheet
+import cc.ultranet.ultraverse.ui.contacts.LocalContactBook
+import cc.ultranet.ultraverse.ui.contacts.RecipientSuggestions
+import cc.ultranet.ultraverse.ui.contacts.SavedRecipientChip
+import cc.ultranet.ultraverse.ui.contacts.contactLabel
+import cc.ultranet.ultraverse.ui.contacts.recipientIsContactQuery
 import cc.ultranet.ultraverse.ui.theme.UltraVerseColors
 import cc.ultranet.ultraverse.ui.tool.ToolFact
 import cc.ultranet.ultraverse.ui.tool.ToolInlineMessage
@@ -48,7 +56,6 @@ import cc.ultranet.ultraverse.ui.tool.ToolSectionLabel
 import cc.ultranet.ultraverse.ui.tool.ToolTextField
 import cc.ultranet.ultraverse.ui.tool.ToolTopBar
 import cc.ultranet.ultraverse.ui.tool.formatUltraValue
-import cc.ultranet.ultraverse.ui.tool.shortAddress
 import cc.ultranet.ultraverse.ui.wallet.ToolBalanceAction
 import cc.ultranet.ultraverse.wallet.TransactionRecord
 import cc.ultranet.ultraverse.wallet.TransactionStatus
@@ -85,6 +92,9 @@ internal fun PayScreen(
     state: WalletUiState,
     onBack: () -> Unit,
     onOpenWallet: () -> Unit,
+    /** A recipient chosen elsewhere (a contact's Pay action), applied once after the draft resets. */
+    initialRecipient: String? = null,
+    onInitialRecipientConsumed: () -> Unit = {},
     onOpenPortfolio: () -> Unit,
     onRecipientChange: (String) -> Unit,
     onAmountChange: (String) -> Unit,
@@ -96,7 +106,10 @@ internal fun PayScreen(
     val clipboard = LocalClipboardManager.current
     var reviewOpen by remember { mutableStateOf(false) }
     var scannerOpen by remember { mutableStateOf(false) }
+    var pickerOpen by remember { mutableStateOf(false) }
+    var saveContactFor by remember { mutableStateOf<String?>(null) }
     var fieldNote by remember { mutableStateOf<String?>(null) }
+    val contactBook = LocalContactBook.current
 
     val record = state.lastTransaction
     val block = when {
@@ -110,6 +123,11 @@ internal fun PayScreen(
     // present itself as this screen's receipt. The reset is refused while a transfer is unresolved.
     LaunchedEffect(Unit) {
         onReset()
+        initialRecipient?.let { address ->
+            // Only applied when the reset succeeded; an unresolved transfer keeps the form closed anyway.
+            if (state.unresolvedTransfer == null) onRecipientChange(address)
+            onInitialRecipientConsumed()
+        }
         onRefresh()
     }
 
@@ -135,6 +153,11 @@ internal fun PayScreen(
                     fieldNote = "Transaction hash copied."
                 },
                 copyNote = fieldNote,
+                onSaveContact = if (contactBook != null && contactBook.findByAddress(record.recipient) == null) {
+                    { saveContactFor = record.recipient }
+                } else {
+                    null
+                },
             )
 
             block != null -> BlockedBody(block = block, state = state, modifier = Modifier.weight(1f))
@@ -162,6 +185,11 @@ internal fun PayScreen(
                     }
                 },
                 onScan = { scannerOpen = true },
+                onContacts = if (contactBook != null) {
+                    { pickerOpen = true }
+                } else {
+                    null
+                },
             )
         }
 
@@ -196,6 +224,25 @@ internal fun PayScreen(
         )
     }
 
+    if (pickerOpen) {
+        ContactPickerSheet(
+            onDismiss = { pickerOpen = false },
+            onPick = { contact ->
+                onRecipientChange(contact.address)
+                fieldNote = null
+                pickerOpen = false
+            },
+        )
+    }
+
+    saveContactFor?.let { address ->
+        ContactEditorSheet(
+            prefillAddress = address,
+            onDismiss = { saveContactFor = null },
+            onSaved = { fieldNote = "Saved as ${it.name}." },
+        )
+    }
+
     if (reviewOpen && state.feeEstimate != null) {
         PayConfirmSheet(
             state = state,
@@ -214,10 +261,13 @@ private fun FormBody(
     onAmountChange: (String) -> Unit,
     onPaste: () -> Unit,
     onScan: () -> Unit,
+    onContacts: (() -> Unit)?,
 ) {
     val recipient = state.recipientInput
     val normalized = normalizedRecipient(recipient)
-    val recipientRejected = recipient.isNotBlank() && !PAY_ADDRESS_PATTERN.matches(normalized)
+    // Letters that match a saved name are a contact lookup, not a malformed address.
+    val contactQuery = recipientIsContactQuery(recipient)
+    val recipientRejected = recipient.isNotBlank() && !PAY_ADDRESS_PATTERN.matches(normalized) && !contactQuery
     val amountRejected = state.amountInput.isNotBlank() && !PAY_AMOUNT_PATTERN.matches(state.amountInput)
     val available = state.availableAfterPending()
     val estimate = state.feeEstimate
@@ -233,9 +283,10 @@ private fun FormBody(
             label = "Recipient address",
             value = recipient,
             onValueChange = onRecipientChange,
-            placeholder = "64 hexadecimal characters",
+            placeholder = if (onContacts != null) "Address, or a contact's name" else "64 hexadecimal characters",
             supporting = when {
                 recipientRejected -> "An address is 64 hexadecimal characters, no spaces."
+                contactQuery -> "Choose the contact below."
                 else -> null
             },
             isError = recipientRejected,
@@ -255,7 +306,20 @@ private fun FormBody(
                 Icon(Icons.Outlined.QrCodeScanner, contentDescription = null, modifier = Modifier.size(17.dp))
                 Text("Scan QR", modifier = Modifier.padding(start = 7.dp), fontSize = 13.sp)
             }
+            if (onContacts != null) {
+                OutlinedButton(onClick = onContacts, modifier = Modifier.weight(1f).height(44.dp)) {
+                    Icon(Icons.Outlined.Contacts, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Text("Contacts", modifier = Modifier.padding(start = 7.dp), fontSize = 13.sp, maxLines = 1)
+                }
+            }
         }
+
+        RecipientSuggestions(
+            recipientInput = recipient,
+            onPick = { onRecipientChange(it.address) },
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        SavedRecipientChip(recipientInput = recipient, modifier = Modifier.padding(top = 8.dp))
 
         note?.let {
             Spacer(Modifier.height(10.dp))
@@ -374,7 +438,7 @@ private fun BlockedBody(block: PayBlock, state: WalletUiState, modifier: Modifie
                             .background(UltraVerseColors.surface, RoundedCornerShape(16.dp))
                             .padding(horizontal = 14.dp, vertical = 10.dp),
                     ) {
-                        ToolFact("Recipient", shortAddress(pending.recipient))
+                        ToolFact("Recipient", contactLabel(pending.recipient))
                         ToolFact("Amount", "${formatUltraValue(pending.amount)} $ULTRA_SYMBOL")
                         ToolFact("Nonce", pending.nonce.toString())
                     }
@@ -391,6 +455,7 @@ private fun SentBody(
     modifier: Modifier,
     onCopyHash: () -> Unit,
     copyNote: String?,
+    onSaveContact: (() -> Unit)?,
 ) {
     val confirmed = record.status == TransactionStatus.Confirmed
     Column(
@@ -455,10 +520,18 @@ private fun SentBody(
                 Text("Copy hash", color = UltraVerseColors.cyan, fontSize = 12.sp)
             }
             Spacer(Modifier.height(2.dp))
-            ToolFact("To", shortAddress(record.recipient))
+            ToolFact("To", contactLabel(record.recipient))
             ToolFact("Network fee", "${formatUltraValue(record.feeBaseUnits)} $ULTRA_SYMBOL")
             ToolFact("Nonce", record.nonce.toString())
             ToolFact("Status", if (confirmed) "Confirmed" else "Pending")
+        }
+
+        if (onSaveContact != null) {
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(onClick = onSaveContact, modifier = Modifier.fillMaxWidth().height(44.dp)) {
+                Icon(Icons.Outlined.Contacts, contentDescription = null, modifier = Modifier.size(17.dp))
+                Text("Save as contact", modifier = Modifier.padding(start = 7.dp), fontSize = 13.sp)
+            }
         }
 
         copyNote?.let {
@@ -570,7 +643,7 @@ private fun PayConfirmSheet(
                 fontWeight = FontWeight.Bold,
             )
             Spacer(Modifier.height(10.dp))
-            ToolFact("To", shortAddress(estimate.recipient))
+            ToolFact("To", contactLabel(estimate.recipient))
             ToolFact("Recipient", estimate.recipient)
             ToolFact("Network fee", "${formatUltraValue(estimate.feeBaseUnits)} $ULTRA_SYMBOL")
             ToolFact(

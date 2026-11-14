@@ -4,7 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
-import androidx.compose.material.icons.outlined.Badge
+import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.CurrencyExchange
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Image
@@ -43,6 +43,7 @@ internal data class ServiceGroup(
 internal object ServiceCatalog {
     const val WALLET_ID = "wallet"
     const val PAY_ID = "ultranet-pay"
+    const val CONTACTS_ID = "contacts"
     const val APPCHAINS_ID = "appchains"
     const val VALIDATOR_ID = "validator"
     const val MINING_ID = "validate-transactions"
@@ -68,7 +69,14 @@ internal object ServiceCatalog {
                     detail = "One address, one amount, one tap",
                     actionLabel = "Open Pay",
                 ),
-                concept("name-service", "Name Service", Icons.Outlined.Badge),
+                ServiceEntry(
+                    id = CONTACTS_ID,
+                    name = "Contacts",
+                    availability = Availability.Supported,
+                    icon = Icons.Outlined.Contacts,
+                    detail = "Send by name, not hex",
+                    actionLabel = "Open contacts",
+                ),
             ),
         ),
         ServiceGroup(

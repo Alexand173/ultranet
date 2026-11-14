@@ -54,6 +54,8 @@ import cc.ultranet.ultraverse.R
 import cc.ultranet.ultraverse.data.ServiceCatalog
 import cc.ultranet.ultraverse.data.ServiceEntry
 import cc.ultranet.ultraverse.ui.appchains.AppChainsScreen
+import cc.ultranet.ultraverse.ui.contacts.ContactsScreen
+import cc.ultranet.ultraverse.ui.contacts.LocalContactBook
 import cc.ultranet.ultraverse.ui.home.AvailabilityLegend
 import cc.ultranet.ultraverse.ui.home.ServiceGroupSection
 import cc.ultranet.ultraverse.ui.home.WalletHero
@@ -68,13 +70,15 @@ import cc.ultranet.ultraverse.ui.wallet.WalletBalanceHeaderState
 import cc.ultranet.ultraverse.ui.wallet.WalletFlowScreen
 import cc.ultranet.ultraverse.ui.wallet.WalletRoute
 import cc.ultranet.ultraverse.ui.pay.PayScreen
+import cc.ultranet.ultraverse.wallet.ContactBook
+import cc.ultranet.ultraverse.wallet.ContactStore
 import cc.ultranet.ultraverse.wallet.WalletController
 import cc.ultranet.ultraverse.wallet.WalletUiState
 import cc.ultranet.ultraverse.wallet.availableAfterPending
 import kotlinx.coroutines.launch
 
 /** Top-level native destinations. Every supported catalog entry maps to one of these. */
-private enum class HomeSection { Apps, Wallet, Pay, AppChains, Validator, Mining }
+private enum class HomeSection { Apps, Wallet, Pay, Contacts, AppChains, Validator, Mining }
 
 @Composable
 internal fun UltraVerseApp(
@@ -87,6 +91,11 @@ internal fun UltraVerseApp(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val controller = remember { WalletController(context.applicationContext) }
+    val contactBook = remember { ContactBook(ContactStore(context.applicationContext)) }
+    // An address handed to Pay from a contact; Pay consumes it after resetting its draft.
+    var payRecipient by remember { mutableStateOf<String?>(null) }
+    // Pay opened from a contact returns to Contacts on Back; opened from its tile, to the catalog.
+    var payReturn by remember { mutableStateOf(HomeSection.Apps) }
     var section by remember { mutableStateOf(HomeSection.Apps) }
     var route by remember { mutableStateOf(WalletRoute.Apps) }
     // Set when Portfolio is opened from a tool screen, so Back returns to that tool instead of home.
@@ -95,6 +104,12 @@ internal fun UltraVerseApp(
     val currentSection by rememberUpdatedState(section)
 
     LaunchedEffect(controller) { controller.initialize() }
+    // Any accepted outgoing transfer — from Pay or from Send — moves a saved recipient up the list.
+    val lastTransaction = controller.state.lastTransaction
+    LaunchedEffect(lastTransaction?.hash) {
+        val record = lastTransaction ?: return@LaunchedEffect
+        if (record.sender == controller.state.storedWallet?.address) contactBook.markUsed(record.recipient)
+    }
     DisposableEffect(lifecycleOwner, controller) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
@@ -117,7 +132,8 @@ internal fun UltraVerseApp(
     val openService: (ServiceEntry) -> Unit = { service ->
         when (service.id) {
             ServiceCatalog.WALLET_ID -> openWallet()
-            ServiceCatalog.PAY_ID -> section = HomeSection.Pay
+            ServiceCatalog.PAY_ID -> { payReturn = HomeSection.Apps; section = HomeSection.Pay }
+            ServiceCatalog.CONTACTS_ID -> section = HomeSection.Contacts
             ServiceCatalog.APPCHAINS_ID -> section = HomeSection.AppChains
             ServiceCatalog.VALIDATOR_ID -> section = HomeSection.Validator
             ServiceCatalog.MINING_ID -> section = HomeSection.Mining
@@ -155,6 +171,7 @@ internal fun UltraVerseApp(
                 section = HomeSection.Wallet
                 route = WalletRoute.Portfolio
             },
+            LocalContactBook provides contactBook,
         ) {
         when (section) {
             HomeSection.Apps -> AppsDirectory(
@@ -217,7 +234,9 @@ internal fun UltraVerseApp(
 
             HomeSection.Pay -> PayScreen(
                 state = controller.state,
-                onBack = { section = HomeSection.Apps },
+                initialRecipient = payRecipient,
+                onInitialRecipientConsumed = { payRecipient = null },
+                onBack = { section = payReturn },
                 onOpenWallet = { openWallet() },
                 onOpenPortfolio = { portfolioReturn = null; openWallet() },
                 onRecipientChange = controller::updateRecipient,
@@ -234,6 +253,15 @@ internal fun UltraVerseApp(
                 // exactly what keeps this screen from offering a second payment over an unknown one.
                 onReset = { runCatching { controller.startNewTransfer() } },
                 onRefresh = { scope.launch { controller.refreshAccount() } },
+            )
+
+            HomeSection.Contacts -> ContactsScreen(
+                onBack = { section = HomeSection.Apps },
+                onPay = { address ->
+                    payRecipient = address
+                    payReturn = HomeSection.Contacts
+                    section = HomeSection.Pay
+                },
             )
 
             HomeSection.AppChains -> AppChainsScreen(
