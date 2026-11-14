@@ -60,6 +60,12 @@ was told they had already claimed. The 24-hour destination cooldown already prev
 and the daily debit cap bounds a coordinated drain, so the source limits were raised to `25` and `250`
 and are now configurable. Setting either to `0` removes that scope.
 
+Configurable limits take effect only when the running binary reads them. The production build dated
+2026-10-31 hard-codes `3` per IP and `25` per subnet and does not contain the variable names, so
+**production still enforces 3 and 25** until the next faucet binary is deployed. Setting the variables
+now is preparation, not an active change; verify with
+`strings /opt/ultranet-faucet/ultranet-faucet | grep FAUCET_IP_CLAIMS_PER_DAY` after the swap.
+
 The deployed faucet address held `0` base units when first inspected on 2026-10-26 and could not pay a
 claim until a float arrived. It has been funded and paying since 2026-10-31: on 2026-11-08 it holds
 `1,209,981,001` base units (`1,209.981001` $ULTRA) at nonce `2`. The nonce shows two draws from this
