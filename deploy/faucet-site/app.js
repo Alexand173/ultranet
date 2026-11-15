@@ -207,14 +207,23 @@
     throw new Error("Secure randomness is unavailable.");
   }
 
+  // A receipt always states the amount the server answered with, never the figure the page
+  // happened to be showing: the claim is the record of what was paid.
+  function claimAmountLabel(claim) {
+    const paid = formatAmount(claim && claim.amount_ultra);
+    return paid || claimLabel;
+  }
+
+  function paintReceipt(claim) {
+    if (receiptAmount) receiptAmount.textContent = claimAmountLabel(claim);
+    receiptId.textContent = claim.claim_id;
+  }
+
   function showReceipt(claim) {
     phase = "accepted";
     form.hidden = true;
     receipt.hidden = false;
-    // The claim's own amount wins: it is what the node was asked to pay.
-    const paid = formatAmount(claim.amount_ultra);
-    if (receiptAmount && paid) receiptAmount.textContent = paid;
-    receiptId.textContent = claim.claim_id;
+    paintReceipt(claim);
     receiptState.textContent = "Waiting for a block to confirm it.";
     pendingRule.className = "pending-rule";
     setStatus("Claim accepted. Payout follows once a block includes it.", "success");
@@ -336,8 +345,8 @@
       if (claim.status === "confirmed") {
         form.hidden = true;
         receipt.hidden = false;
-        receiptId.textContent = claim.claim_id;
-        settleReceipt(`Confirmed on chain. The ${claimLabel} $ULTRA is in your wallet.`, "success", "done");
+        paintReceipt(claim);
+        settleReceipt(`Confirmed on chain. The ${claimAmountLabel(claim)} $ULTRA is in your wallet.`, "success", "done");
         phase = "accepted";
         updateControls();
         return;
