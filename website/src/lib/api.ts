@@ -294,6 +294,30 @@ export async function fetchNetworkStats(signal?: AbortSignal): Promise<LiveNetwo
   return normalizeNetworkStats(payload);
 }
 
+interface ApprovalRecordPayload {
+  activated_validator?: { is_active?: boolean };
+}
+
+interface ApprovalsPayload {
+  success?: boolean;
+  approvals?: ApprovalRecordPayload[];
+}
+
+/**
+ * Validators admitted by 2-of-3 approval, which is also what makes them reward-eligible.
+ *
+ * `/api/stats` reports `validator_count`, but that counts *records*: genesis writes five
+ * placeholder entries that produce blocks and are never paid. Presenting that figure as the
+ * number of validators overstates the network, so the count comes from the approval journal
+ * instead — a record exists only once an applicant has actually been activated. Returns `null`
+ * when the journal is unreachable, which callers render as "Unavailable" rather than as zero.
+ */
+export async function fetchActiveValidatorCount(signal?: AbortSignal): Promise<number | null> {
+  const payload = await fetchJson<ApprovalsPayload>("/api/governance/approvals?limit=200", { signal });
+  if (!Array.isArray(payload.approvals)) return null;
+  return payload.approvals.filter((record) => record?.activated_validator?.is_active === true).length;
+}
+
 export async function fetchLatestTransactions(signal?: AbortSignal): Promise<LatestTransaction[]> {
   const payload = await fetchJson<TransactionsPayload>("/api/transactions/latest", { signal });
   return normalizeTransactions(payload);

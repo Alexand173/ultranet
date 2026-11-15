@@ -39,6 +39,8 @@
   const receipt = document.getElementById("receipt");
   const receiptId = document.getElementById("receipt-id");
   const receiptState = document.getElementById("receipt-state");
+  const headerAmount = document.querySelector(".rate .amount");
+  const receiptAmount = document.getElementById("receipt-amount");
   const pendingRule = receipt.querySelector(".pending-rule");
 
   let widgetId = null;
@@ -59,6 +61,14 @@
 
   function normalizeAddress(value) {
     return value.trim().replace(/^0[xX]/, "").toLowerCase();
+  }
+
+  // The node reports six decimals ("0.500000", "0.100000"). The page states amounts the way a
+  // person writes them ("0.5", "0.1"), so trailing zeros are trimmed in one place only.
+  function formatAmount(value) {
+    const text = String(value === null || value === undefined ? "" : value).trim();
+    if (!/^\d+(\.\d+)?$/.test(text)) return text;
+    return text.replace(/0+$/, "").replace(/\.$/, "");
   }
 
   function paintRule(value) {
@@ -201,6 +211,9 @@
     phase = "accepted";
     form.hidden = true;
     receipt.hidden = false;
+    // The claim's own amount wins: it is what the node was asked to pay.
+    const paid = formatAmount(claim.amount_ultra);
+    if (receiptAmount && paid) receiptAmount.textContent = paid;
     receiptId.textContent = claim.claim_id;
     receiptState.textContent = "Waiting for a block to confirm it.";
     pendingRule.className = "pending-rule";
@@ -366,7 +379,11 @@
       const payload = await response.json().catch(() => null);
       const amount = payload && payload.data && payload.data.claim_amount_ultra;
       if (typeof amount === "string" && amount.length > 0) {
-        claimLabel = amount.replace(/0+$/, "").replace(/\.$/, "");
+        claimLabel = formatAmount(amount);
+        // Heading, button and receipt are all derived here, so a policy change cannot leave
+        // one of them advertising the old figure.
+        if (headerAmount) headerAmount.textContent = claimLabel;
+        if (receiptAmount) receiptAmount.textContent = claimLabel;
         updateControls();
       }
     } catch {

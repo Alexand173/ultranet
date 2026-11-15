@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchNetworkStats, type LiveNetworkStats } from "@/lib/api";
+import { fetchActiveValidatorCount, fetchNetworkStats, type LiveNetworkStats } from "@/lib/api";
 import TerminalFrame from "./TerminalFrame";
 
 interface GaugeConfig {
@@ -13,7 +13,7 @@ interface GaugeConfig {
 const GAUGES: GaugeConfig[] = [
   { key: "tps", label: "TPS", suffix: "" },
   { key: "provingTimeMs", label: "PROVING", suffix: "ms" },
-  { key: "validatorCount", label: "VALIDATOR_RECORDS", suffix: "" },
+  { key: "validatorCount", label: "VALIDATORS", suffix: "" },
   { key: "mempoolSize", label: "MEMPOOL", suffix: "" },
 ];
 
@@ -53,6 +53,9 @@ export default function ShardedStateTerminal({ className }: { className?: string
     updatedAt: null,
   });
 
+  // Admission comes from the approval journal, not `validator_count`, which counts records.
+  const [activeValidators, setActiveValidators] = useState<number | null>(null);
+
   useEffect(() => {
     let mounted = true;
     let controller: AbortController | null = null;
@@ -61,8 +64,14 @@ export default function ShardedStateTerminal({ className }: { className?: string
       controller?.abort();
       controller = new AbortController();
       try {
-        const nextStats = await fetchNetworkStats(controller.signal);
-        if (mounted) setStats(nextStats);
+        const [nextStats, nextActive] = await Promise.all([
+          fetchNetworkStats(controller.signal),
+          fetchActiveValidatorCount(controller.signal).catch(() => null),
+        ]);
+        if (mounted) {
+          setStats(nextStats);
+          setActiveValidators(nextActive);
+        }
       } catch {
         if (mounted) setStats((current) => ({ ...current, status: "unavailable", updatedAt: null }));
       }
@@ -86,7 +95,14 @@ export default function ShardedStateTerminal({ className }: { className?: string
     >
       <div className="flex h-full flex-col">
         <div className="grid flex-1 grid-cols-2 gap-x-1">
-          {GAUGES.map((gauge) => <RadialGauge key={gauge.key} label={gauge.label} value={stats[gauge.key]} suffix={gauge.suffix} />)}
+          {GAUGES.map((gauge) => (
+            <RadialGauge
+              key={gauge.key}
+              label={gauge.label}
+              value={gauge.key === "validatorCount" ? activeValidators : stats[gauge.key]}
+              suffix={gauge.suffix}
+            />
+          ))}
         </div>
         <p className="border-t border-platinum/5 px-6 py-3 text-xs font-mono uppercase tracking-widest text-platinum-muted">
           Unavailable means the current public API does not expose that measurement.
