@@ -1402,6 +1402,12 @@ pub struct ManifestResponse {
     pub base_reward: u64,
     pub base_reward_base_units: u64,
     pub base_reward_ultra: String,
+    /// Maximum $ULTRA that can ever exist, in base units: allocation + every era of emission.
+    pub max_supply_base_units: u64,
+    pub max_supply_ultra: u64,
+    pub max_supply_display: String,
+    /// Every era of emission summed, in base units. `max_supply - allocation` must equal this.
+    pub total_emission_base_units: u64,
     pub consensus_protocol: String,
     pub verified_latency: String,
 }
@@ -1423,10 +1429,17 @@ async fn get_manifest() -> impl Responder {
         multi_sig_threshold: format!("{}-of-3", UltraBlockchain::SOVEREIGN_THRESHOLD),
         signature_scheme: "Dilithium-5 (Lattice-based)".to_string(),
         signature_size: 4627,
-        halving_interval: 31_557_600,
+        halving_interval: UltraBlockchain::HALVING_INTERVAL_BLOCKS,
         base_reward: UltraBlockchain::GENESIS_REWARD,
         base_reward_base_units: UltraBlockchain::GENESIS_REWARD,
         base_reward_ultra: UltraBlockchain::format_base_units(UltraBlockchain::GENESIS_REWARD),
+        max_supply_base_units: UltraBlockchain::MAX_SUPPLY_BASE_UNITS,
+        max_supply_ultra: UltraBlockchain::max_supply_ultra(),
+        max_supply_display: format!(
+            "{} $ULTRA",
+            UltraBlockchain::format_base_units(UltraBlockchain::MAX_SUPPLY_BASE_UNITS)
+        ),
+        total_emission_base_units: UltraBlockchain::total_emission_base_units(),
         consensus_protocol: "Bullshark / Mysticeti DAG".to_string(),
         verified_latency: "27.79µs / vertex".to_string(),
     };

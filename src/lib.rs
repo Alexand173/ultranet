@@ -1392,14 +1392,51 @@ impl UltraBlockchain {
     pub const ULTRA_BASE_UNITS_PER_ULTRA: u64 = 1_000_000;
     /// Human-readable name for one integer protocol unit.
     pub const ULTRA_BASE_UNIT_NAME: &str = "microULTRA";
-    /// Existing block reward value in protocol base units, preserved for
-    /// compatibility. It is not multiplied by the denomination factor here.
-    pub const GENESIS_REWARD: u64 = 50;
+    /// Base block reward: **0.5 `$ULTRA`** (500,000 base units) per block, halved every
+    /// [`Self::HALVING_INTERVAL_BLOCKS`]. Era 0 pays 4,320 `$ULTRA` a day at the 10 s target, which is
+    /// what makes the network's security budget real rather than nominal: at the previous value of 50
+    /// the entire emission came to 3,061 `$ULTRA`, or 0.3 % of the genesis allocation.
+    ///
+    /// The reward is halved by `AIGovernor::predict_optimal_reward`, which takes this value as an
+    /// argument — it is not read from `genesis.json`, and a test pins that the argument is honoured.
+    pub const GENESIS_REWARD: u64 = 500_000;
+    /// Blocks between halvings: ten years at the 10 s block target. Canonical definition lives in
+    /// `ai_governor`, next to the code that uses it.
+    pub const HALVING_INTERVAL_BLOCKS: u64 = crate::ai_governor::HALVING_INTERVAL_BLOCKS;
+    /// **Maximum `$ULTRA` that can ever exist**, in base units: the genesis allocation
+    /// (`GENESIS_ALLOCATION_BASE_UNITS`, defined below) plus every era of emission
+    /// (31,557,379.0968). Allocation + emission = 32,557,379.0968 `$ULTRA`.
+    pub const MAX_SUPPLY_BASE_UNITS: u64 = 32_557_379_096_800;
     /// Intended human-readable one-time sovereign genesis allocation.
     pub const GENESIS_ALLOCATION_ULTRA: u64 = 1_000_000;
     /// Intended genesis allocation represented in protocol base units.
     pub const GENESIS_ALLOCATION_BASE_UNITS: u64 =
         Self::GENESIS_ALLOCATION_ULTRA * Self::ULTRA_BASE_UNITS_PER_ULTRA;
+
+    /// Total emission across every era, computed from [`Self::GENESIS_REWARD`] and
+    /// [`Self::HALVING_INTERVAL_BLOCKS`] rather than hardcoded.
+    ///
+    /// [`Self::MAX_SUPPLY_BASE_UNITS`] must always equal [`Self::GENESIS_ALLOCATION_BASE_UNITS`] plus
+    /// this; the test `the_declared_cap_matches_the_schedule` fails the moment either number drifts,
+    /// which is the point of pinning it. `GET /api/manifest` reports both.
+    pub fn total_emission_base_units() -> u64 {
+        let mut total = 0u64;
+        let mut era = 0u64;
+        while era < 64 {
+            let reward = Self::GENESIS_REWARD >> era;
+            if reward == 0 {
+                break;
+            }
+            total = total.saturating_add(reward.saturating_mul(Self::HALVING_INTERVAL_BLOCKS));
+            era += 1;
+        }
+        total
+    }
+
+    /// The supply cap in whole `$ULTRA`, for display and for tests that read in whole coins.
+    pub fn max_supply_ultra() -> u64 {
+        Self::MAX_SUPPLY_BASE_UNITS / Self::ULTRA_BASE_UNITS_PER_ULTRA
+    }
 
     /// Convert a whole-token amount to integer protocol base units without
     /// allowing a `u64` overflow.
@@ -5282,7 +5319,7 @@ mod signature_verification_tests {
             shard_roots: vec![[0; 32]; 16],
             aggregated_signature: None,
             validator_set: vec![],
-            block_reward: 50,
+            block_reward: UltraBlockchain::GENESIS_REWARD,
             size: 0,
             gas_used: 0,
             gas_limit: 10_000_000,
@@ -5620,5 +5657,60 @@ mod appchain_ledger_tests {
         drop(node_b);
         let _ = fs::remove_dir_all(path_a);
         let _ = fs::remove_dir_all(path_b);
+    }
+}
+
+/// The emission schedule is a constitution, not a parameter: these tests fail the moment the reward,
+/// the halving interval or the declared cap drift apart from each other.
+#[cfg(test)]
+mod emission_schedule_tests {
+    use super::*;
+
+    #[test]
+    fn the_declared_cap_matches_the_schedule() {
+        let emission = UltraBlockchain::total_emission_base_units();
+        assert_eq!(
+            emission, 31_557_379_096_800,
+            "emission drifted from the ratified schedule (0.5 $ULTRA/block, halving every 31,557,600 blocks)"
+        );
+        assert_eq!(
+            UltraBlockchain::GENESIS_ALLOCATION_BASE_UNITS + emission,
+            UltraBlockchain::MAX_SUPPLY_BASE_UNITS,
+            "the cap must be exactly allocation + emission"
+        );
+        assert_eq!(UltraBlockchain::max_supply_ultra(), 32_557_379);
+    }
+
+    #[test]
+    fn era_zero_pays_half_a_coin_per_block() {
+        // 0.5 $ULTRA in base units, and what that is worth per day at 8,640 blocks.
+        assert_eq!(UltraBlockchain::GENESIS_REWARD, 500_000);
+        assert_eq!(UltraBlockchain::GENESIS_REWARD * 8_640, 4_320_000_000); // 4,320 $ULTRA
+        // Halving down to nothing at era 19 is what makes the cap finite rather than open-ended.
+        assert_eq!(UltraBlockchain::GENESIS_REWARD >> 19, 0);
+        assert_ne!(UltraBlockchain::GENESIS_REWARD >> 18, 0);
+    }
+
+    #[test]
+    fn the_sovereign_holds_about_three_percent_of_the_cap() {
+        let share = UltraBlockchain::GENESIS_ALLOCATION_BASE_UNITS as f64 * 100.0
+            / UltraBlockchain::MAX_SUPPLY_BASE_UNITS as f64;
+        assert!(share > 3.0 && share < 3.2, "sovereign share is {share}%");
+    }
+
+    #[test]
+    fn the_reward_comes_from_the_constructor_not_a_literal() {
+        // Same schedule, taken from the constants the node actually uses.
+        let governor = crate::ai_governor::AIGovernor::new();
+        let interval = UltraBlockchain::HALVING_INTERVAL_BLOCKS;
+        assert_eq!(
+            governor.predict_optimal_reward(UltraBlockchain::GENESIS_REWARD, 0),
+            UltraBlockchain::GENESIS_REWARD
+        );
+        assert_eq!(
+            governor.predict_optimal_reward(UltraBlockchain::GENESIS_REWARD, interval),
+            UltraBlockchain::GENESIS_REWARD / 2
+        );
+        assert_eq!(governor.predict_optimal_reward(UltraBlockchain::GENESIS_REWARD, interval * 19), 0);
     }
 }

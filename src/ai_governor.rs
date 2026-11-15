@@ -7,6 +7,41 @@
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
+/// Blocks between halvings: ten years at the 10 s block target
+/// (10 × 365.25 days × 86,400 s ÷ 10 s = 31,557,600). This is the single definition of that
+/// number; the reward schedule, the supply cap and `genesis.json` all derive from it.
+pub const HALVING_INTERVAL_BLOCKS: u64 = 31_557_600;
+
+#[cfg(test)]
+mod emission_tests {
+    use super::*;
+
+    fn reward(base: u64, blocks: u64) -> u64 {
+        AIGovernor::new().predict_optimal_reward(base, blocks)
+    }
+
+    /// The regression that matters: the base must come from the argument.
+    #[test]
+    fn the_reward_uses_the_base_it_is_given() {
+        assert_eq!(reward(500_000, 0), 500_000);
+        assert_eq!(reward(1_000_000, 0), 1_000_000, "the argument must not be ignored");
+        assert_eq!(reward(500_000, HALVING_INTERVAL_BLOCKS), 250_000);
+        assert_eq!(reward(500_000, HALVING_INTERVAL_BLOCKS * 2), 125_000);
+        // 500,000 >> 19 is 0, so the schedule ends in era 19.
+        assert_eq!(reward(500_000, HALVING_INTERVAL_BLOCKS * 19), 0);
+        // The old hardcoded schedule would have produced 50 here, not 500,000.
+        assert_ne!(reward(500_000, 0), 50);
+    }
+
+    /// A halving interval of 31,557,600 blocks is exactly ten years at 10 s blocks.
+    #[test]
+    fn one_halving_interval_is_ten_years() {
+        let seconds = HALVING_INTERVAL_BLOCKS * 10;
+        let years = seconds as f64 / (365.25 * 86_400.0);
+        assert!((years - 10.0).abs() < 1e-9, "{years} years");
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainMetrics {
     pub avg_block_time: f64,
@@ -89,14 +124,16 @@ impl AIGovernor {
     }
 
     /// Dynamic AI-driven emission (100-year target)
-    pub fn predict_optimal_reward(&self, _current: u64, total_blocks: u64) -> u64 {
-        // AI Inflation Control: 10-Year Halving Cycle
-        // Blocks per 10 years (10s blocks): 10 * 365.25 * 24 * 3600 / 10 = 31,557,600
-        let halving_interval = 31_557_600;
-        let era = total_blocks / halving_interval;
+    ///
+    /// `current` is the base block reward the caller wants halved — `UltraBlockchain::GENESIS_REWARD`.
+    /// This function used to ignore it and halve a literal `50`, which meant the constant and
+    /// `genesis.json` were decorative: changing the emission anywhere had no effect on the chain. The
+    /// base must come from the caller; `the_reward_uses_the_base_it_is_given` pins that.
+    pub fn predict_optimal_reward(&self, current: u64, total_blocks: u64) -> u64 {
+        let era = total_blocks / HALVING_INTERVAL_BLOCKS;
 
-        // Base reward starts at 50 and halves every era
-        let base_reward = if era >= 64 { 0 } else { 50 >> era };
+        // Halve the caller's base, never a literal.
+        let base_reward = if era >= 64 { 0 } else { current >> era };
 
         if self.history.is_empty() {
             return base_reward as u64;

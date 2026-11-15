@@ -46,12 +46,17 @@
     ]
   },
   "economics": {
-    "base_block_reward_base_units": 50,
-    "base_block_reward_display": "0.000050 $ULTRA",
+    "base_block_reward_base_units": 500000,
+    "base_block_reward_display": "0.500000 $ULTRA",
     "halving_interval_blocks": 31557600,
     "target_block_time_seconds": 10,
     "initial_difficulty": 4,
-    "max_gas_per_block": 10000000
+    "max_gas_per_block": 10000000,
+    "max_supply_base_units": 32557379096800,
+    "max_supply_ultra": 32557379,
+    "max_supply_display": "32,557,379.096800 $ULTRA",
+    "total_emission_base_units": 31557379096800,
+    "emission_policy": "0.5 $ULTRA per block, halved every 31557600 blocks (ten years at 10s). Emission is the only mint; the cap is allocation + all eras. See docs/ECONOMIC_ARCHITECTURE_V2.md"
   },
   "execution": {
     "smart_contract_vm": "Move",

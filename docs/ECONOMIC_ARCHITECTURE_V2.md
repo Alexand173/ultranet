@@ -30,14 +30,14 @@ questions. v2 fixes the relationship between them once:
 
 ## 2. The supply truth
 
-> **Read §2.3 first.** This section and §2.1–2.2 describe the schedule *as coded* (a 3,061 `$ULTRA`
-> emission). That schedule does not match the owner's objective, so R1 is reopened in §2.3 with four
-> candidate schedules of ~30,000,000 emission. Everything below remains accurate about the code, and
-> becomes history once a candidate is ratified.
+> **R1 is ratified (see §2.2–2.3).** The code now pays 0.5 `$ULTRA` per block and the cap is
+> 32,557,379.0968. §2.1 still derives the *previous* 3,061 figure on purpose: that derivation is the
+> arithmetic proof that settled the review, and deleting it would invite the same challenge again.
 
 `genesis.json` allocates **1,000,000 `$ULTRA`** (`1,000,000,000,000` base units) to the sovereign
-address, and the only mechanism that creates more is the emission schedule. There is **no declared cap
-in the code** — the cap is arithmetic, and it needs writing down.
+address, and the only mechanism that creates more is the emission schedule. The cap used to be
+undefined; as of 2026-11-15 it is declared in code as `MAX_SUPPLY_BASE_UNITS` and pinned by a test, so
+it can no longer drift silently.
 
 `1 $ULTRA = 1,000,000 base units` (`microULTRA`, 6 decimals). Every price below is an integer count of
 those units.
@@ -54,7 +54,10 @@ those units.
 | Era-0 inflation against allocation | **0.0158 % / year** | 157.68 ÷ 1,000,000 |
 | Supply today (live, block 13) | 1,000,000.000650 `$ULTRA` | 13 × 50 base units emitted |
 
-### 2.1 How the cap is derived, and why it cannot be larger
+### 2.1 How the *previous* cap was derived, and why it could not be larger
+
+*(Historical: this derives the 3,061 figure of the schedule that was in the code before the 2026-11-15
+ratification. The method is what matters — the ratified numbers are in §2.2.)*
 
 This was challenged in review with the figure `6,074.3449125`. The challenge counts the halving series
 twice, and this paragraph is here so the question is settled with arithmetic rather than opinion.
@@ -86,49 +89,50 @@ by a test instead of described in prose.
 The `× 0.8` density multiplier (`ai_governor.rs:111`) only reduces further, so 1,003,061.0872 is an
 **upper bound on supply**, reached only if the multiplier never triggers.
 
-### 2.2 The 100-year figure, established
+### 2.2 The 100-year figure — for the schedule now in the code
 
-One halving interval is 31,557,600 blocks = **exactly 10.0000 years** at the 10 s target, so a century is
-ten intervals — more than the schedule needs.
+**Ratified schedule (2026-11-15): 0.5 `$ULTRA` per block, halved every 31,557,600 blocks.** One
+halving interval is exactly 10.0000 years at the 10 s target, so a century is ten intervals and the
+integer sequence (`500,000 >> era`) needs nineteen of them to reach zero.
 
-| Era | Years | Reward/block | Emitted | Cumulative |
-|---|---|---:|---:|---:|
-| 0 | 0–10 | 50 | 1,577.8800 | 1,577.8800 |
-| 1 | 10–20 | 25 | 788.9400 | 2,366.8200 |
-| 2 | 20–30 | 12 | 378.6912 | 2,745.5112 |
-| 3 | 30–40 | 6 | 189.3456 | 2,934.8568 |
-| 4 | 40–50 | 3 | 94.6728 | 3,029.5296 |
-| 5 | 50–60 | 1 | 31.5576 | **3,061.0872** |
-| 6–9 | 60–100 | 0 | **0.0000** | 3,061.0872 |
-
-**Emission over 100 years: 3,061.0872 `$ULTRA`.** That is not "of which" anything — it is the complete
-schedule, identical to all-time emission, because the last coin is minted in year 60 and years 61–100
-mint nothing at all.
+| Era | Years | Reward/block | Per day | Era emission | Cumulative |
+|---|---|---:|---:|---:|---:|
+| 0 | 0–10 | 500,000 | 4,320.00 | 15,778,800.00 | 15,778,800.00 |
+| 1 | 10–20 | 250,000 | 2,160.00 | 7,889,400.00 | 23,668,200.00 |
+| 2 | 20–30 | 125,000 | 1,080.00 | 3,944,700.00 | 27,612,900.00 |
+| 3 | 30–40 | 62,500 | 540.00 | 1,972,350.00 | 29,585,250.00 |
+| 4 | 40–50 | 31,250 | 270.00 | 986,175.00 | 30,571,425.00 |
+| 5 | 50–60 | 15,625 | 135.00 | 493,087.50 | 31,064,512.50 |
+| 6 | 60–70 | 7,812 | 67.50 | 246,527.97 | 31,311,040.47 |
+| 7 | 70–80 | 3,906 | 33.75 | 123,263.99 | 31,434,304.46 |
+| 8 | 80–90 | 1,953 | 16.87 | 61,631.99 | 31,495,936.45 |
+| 9 | 90–100 | 976 | 8.43 | 30,800.22 | **31,526,736.67** |
+| 10–18 | 100–190 | 488 → 1 | — | 30,642.43 | **31,557,379.10** |
 
 | Quantity | Value |
 |---|---:|
-| Emission, years 1–100 | **3,061.0872 `$ULTRA`** |
-| Emission, years 61–100 | 0.0000 |
-| Emission, all time | 3,061.0872 (same number) |
-| Total supply at year 100 | **1,003,061.0872** |
-| Emission as a share of the genesis allocation | **0.3061 %** |
-| Lower bound if the density multiplier is always active | 2,448.8698 |
+| Emission, first 100 years | **31,526,736.6672** |
+| Emission, all time (eras 0–18) | **31,557,379.0968** |
+| **Maximum supply** | **32,557,379.0968** |
+| Emission ÷ genesis allocation | **3,155.8 %** (31.6×) |
+| Sovereign share of supply | **3.07 %** |
+| Pinned in code | `MAX_SUPPLY_BASE_UNITS = 32_557_379_096_800` |
 
-**The one sensitivity that can change the century figure: block time.** Total emission is fixed in
-*blocks*, not in years, so block time changes only *when* the schedule finishes:
+**Block-time invariance, unchanged from before:** emission is fixed in *blocks*, so block time changes
+*when* coins arrive, never how many. At any block time of **16.67 s or less**, the whole schedule fits
+inside 100 years. At 20 s a century captures five eras (30,571,425.00); at 30 s, three plus part of a
+fourth (28,269,900.00) — the same coins, later.
 
-| Block time | One era | Schedule completes | Emission in first 100 years |
-|---:|---:|---:|---:|
-| 2 s | 2.0 yr | year 12 | 3,061.0872 |
-| 5 s | 5.0 yr | year 30 | 3,061.0872 |
-| **10 s** | **10.0 yr** | **year 60** | **3,061.0872** |
-| 20 s | 20.0 yr | year 120 | 3,029.5296 (era 5 unfinished) |
-| 30 s | 30.0 yr | year 180 | 2,934.8568 (era 4 unfinished) |
+**The units rule that this cost us once:** with 6 decimals, 0.5 `$ULTRA` is **500,000 base units**. A
+suggestion of "5,000,000 base units (0.5 `$ULTRA`)" was 5 `$ULTRA`/block, a **315,557,379** emission —
+ten times the intent. `the_declared_cap_matches_the_schedule` now fails on any such drift.
 
-So: at any block time of **16.67 s or less**, the 100-year emission is exactly 3,061.0872. Beyond that
-the century figure drops — but only because the same coins arrive later, never because fewer exist.
+### 2.3 R1 reopened, then ratified — the coded schedule did not meet the objective
 
-### 2.3 R1 REOPENED — the coded schedule does not meet the 100-year objective
+**Outcome (2026-11-15):** schedule **A** was chosen and is implemented — `GENESIS_REWARD = 500_000`,
+halving every `HALVING_INTERVAL_BLOCKS`, deployed by **reset at block 0** (§2.4). The four candidates
+and the evidence that produced the decision are kept below, because the reasoning is worth more than
+the conclusion.
 
 The owner's intent is a Bitcoin-shaped security budget: the network is paid for by emission for a
 century, and the genesis allocation is a *small* share of supply. The coded schedule does the opposite,
@@ -504,9 +508,9 @@ Sign each line, or change it here first. This is the only approval mechanism.
 
 | ID | Parameter | Proposed value | Ratify |
 |---|---|---|---|
-| R1 | Maximum supply, forever | **REOPENED — §2.3**, candidates ~30.0M–32.5M; recommend A (~32.5M) | ☐ |
-| R1b | Emission schedule | **REOPENED — §2.3**, recommend A: 0.5 `$ULTRA`/block, halve every 31,557,600 blocks | ☐ |
-| R1c | Deployment route for R1 (§2.4) | **reset** at block 13 (recommended) or height gate | ☐ |
+| R1 | Maximum supply, forever | **RATIFIED 2026-11-15:** 32,557,379.0968 (`MAX_SUPPLY_BASE_UNITS = 32_557_379_096_800`) | ☑ |
+| R1b | Emission schedule | **RATIFIED 2026-11-15:** 0.5 `$ULTRA`/block, halve every 31,557,600 blocks (`GENESIS_REWARD = 500_000`) | ☑ |
+| R1c | Deployment route for R1 (§2.4) | **RATIFIED 2026-11-15:** reset at block 0 | ☑ |
 | V-1 | Fee split | by weight, remainder to producer | ☐ |
 | V-2 | Placeholder validators | cannot earn fees or rewards | ☐ |
 | V-3 | Validator bond (phase 4) | 1,000 `$ULTRA`, forfeited on third slash | ☐ |
@@ -552,6 +556,7 @@ updated in the same commit.
 | Rev | Date | Change | Why |
 |---|---|---|---|
 | v2.0 | 2026-11-15 | First issue: R1–R6, 14 ratification rows | Establish one economic rule before code |
+| v2.2 | 2026-11-15 | R1 ratified: 0.5 `$ULTRA`/block, cap 32,557,379.0968, deployed by reset. §2.2 rewritten for the chosen schedule | The coded 3,061 emission was 0.3% of the allocation — the inverse of the intended Bitcoin-shaped distribution. Implemented in `GENESIS_REWARD`, `MAX_SUPPLY_BASE_UNITS` and `genesis.json` |
 | v2.1 | 2026-11-15 | Added §2.1 (cap derivation and its upper bound) and §4.3 (per-AppChain anchor pricing), rows R3b and R3c | Review questioned the emission total and claimed per-chain anchor pricing already worked. §2.1 shows 97 is the *sum* of era rewards, not era 0's reward, so 3,061.0872 stands and 6,074.34 exceeds the geometric ceiling. §4.3 shows the per-chain field lives only in the retired prototype and that floor-plus-choice pricing collects *less* than the flat fee. |
 
 Both challenges are recorded rather than quietly absorbed: a document that cannot show why it survived a
