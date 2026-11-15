@@ -4,10 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, LoaderCircle, RotateCcw } from "lucide-react";
 import { fetchAuthSession, logout, type AuthSession } from "@/lib/auth";
-import { anchorAppChain, AppChainRequestError, createAppChain, fetchAppChainOverview } from "@/lib/appchains";
-import type { AppChainAction, AppChainOverview, CreateAppChainInput } from "@/lib/appchains.types";
+import { anchorAppChain, AppChainRequestError, fetchAppChainOverview } from "@/lib/appchains";
+import type { AppChainAction, AppChainOverview } from "@/lib/appchains.types";
 import AppChainOverviewView from "@/components/appchains/AppChainOverview";
-import RegisterAppChainModal, { type RegistrationState } from "@/components/appchains/RegisterAppChainModal";
 import OperatorHeader from "@/components/operator/OperatorHeader";
 
 export type AppChainsSessionState = "checking" | "authenticated" | "unauthenticated" | "expired" | "unavailable";
@@ -35,9 +34,6 @@ export default function AppChainsConsole() {
   const [overview, setOverview] = useState<AppChainOverview | null>(null);
   const [overviewError, setOverviewError] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [registrationOpen, setRegistrationOpen] = useState(false);
-  const [registrationState, setRegistrationState] = useState<RegistrationState>("idle");
-  const [registrationError, setRegistrationError] = useState("");
   const [notice, setNotice] = useState("");
   const [anchorActions, setAnchorActions] = useState<Record<number, AppChainAction>>({});
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -112,22 +108,6 @@ export default function AppChainsConsole() {
     }
   };
 
-  const handleCreate = async (input: CreateAppChainInput) => {
-    setRegistrationState("submitting");
-    setRegistrationError("");
-    try {
-      const result = await createAppChain(input);
-      setRegistrationState("idle");
-      setRegistrationOpen(false);
-      setNotice(result.message);
-      await refreshOverview();
-    } catch (error) {
-      if (error instanceof AppChainRequestError && error.status === 401) setSessionState("expired");
-      setRegistrationState("error");
-      setRegistrationError(error instanceof Error ? error.message : "Unable to create the AppChain.");
-    }
-  };
-
   const updateAnchorAction = (chainId: number, update: (current: AppChainAction) => AppChainAction) => {
     setAnchorActions((current) => ({ ...current, [chainId]: update(current[chainId] ?? idleAction()) }));
   };
@@ -157,10 +137,9 @@ export default function AppChainsConsole() {
       <div className="relative mx-auto max-w-7xl space-y-7 pt-2">
         <OperatorHeader session={session} isLoggingOut={isLoggingOut} onLogout={() => void handleLogout()} />
         {notice && <div className="border border-emerald-300/25 bg-emerald-300/[0.06] px-4 py-3 font-mono text-xs text-emerald-100/80" role="status" aria-live="polite">{notice}</div>}
-        <AppChainOverviewView overview={overview} isLoading={!overview && isRefreshing} isRefreshing={isRefreshing} error={overviewError} onRefresh={() => void refreshOverview()} onRegister={() => { setRegistrationError(""); setRegistrationState("idle"); setRegistrationOpen(true); }} actions={anchorActions} onArm={handleAnchorArm} onCancel={handleAnchorCancel} onConfirm={(chainId) => void handleAnchorConfirm(chainId)} />
+        <AppChainOverviewView overview={overview} isLoading={!overview && isRefreshing} isRefreshing={isRefreshing} error={overviewError} onRefresh={() => void refreshOverview()} actions={anchorActions} onArm={handleAnchorArm} onCancel={handleAnchorCancel} onConfirm={(chainId) => void handleAnchorConfirm(chainId)} />
         <footer className="flex flex-col gap-2 border-t border-platinum/10 pt-5 font-mono text-[10px] uppercase tracking-[0.16em] text-platinum-muted sm:flex-row sm:items-center sm:justify-between"><span>AppChain_Surface // Read_Live_State // Write_With_Confirmation</span><span>Server proof + real L1 treasury debit</span></footer>
       </div>
-      <RegisterAppChainModal open={registrationOpen} state={registrationState} error={registrationError} onClose={() => { if (registrationState !== "submitting") setRegistrationOpen(false); }} onSubmit={handleCreate} />
     </main>
   );
 }

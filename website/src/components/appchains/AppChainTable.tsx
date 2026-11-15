@@ -64,12 +64,16 @@ export default function AppChainTable({ chains, actions, onArm, onCancel, onConf
                     </div>
                   </th>
                   <td className="max-w-48 px-4 py-5 font-mono text-xs text-platinum/65"><span className="block truncate" title={chain.owner}>{ownerDisplay(chain)}</span></td>
-                  <td className="max-w-48 px-4 py-5"><TreasuryAddress address={chain.accountAddress} compact /></td>
+                  <td className="max-w-48 px-4 py-5">
+                    {chain.source === "ledger"
+                      ? <span className="font-mono text-[10px] leading-5 text-platinum/45">Owner wallet</span>
+                      : <TreasuryAddress address={chain.accountAddress} compact />}
+                  </td>
                   <td className="px-4 py-5"><span className="inline-flex items-center gap-1.5 font-mono text-xs text-cyan-glow/75"><Hash className="h-3.5 w-3.5" aria-hidden="true" />{chain.id}</span></td>
                   <td className="px-4 py-5"><span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums text-platinum/75"><Layers3 className="h-3.5 w-3.5 text-cyan-glow/50" aria-hidden="true" />{valueOrUnavailable(chain.anchorCount)}</span></td>
-                  <td className="whitespace-nowrap px-4 py-5"><span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums text-platinum/75"><CircleDollarSign className="h-3.5 w-3.5 text-cyan-glow/50" aria-hidden="true" />{formatUltraAmount(chain.balanceBaseUnits)} <span className="text-[10px] text-cyan-glow">$ULTRA</span></span></td>
+                  <td className="whitespace-nowrap px-4 py-5">{chain.source === "ledger" ? <span className="font-mono text-[10px] leading-5 text-platinum/45">No treasury</span> : <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums text-platinum/75"><CircleDollarSign className="h-3.5 w-3.5 text-cyan-glow/50" aria-hidden="true" />{formatUltraAmount(chain.balanceBaseUnits)} <span className="text-[10px] text-cyan-glow">$ULTRA</span></span>}</td>
                   <td className="whitespace-nowrap px-4 py-5 font-mono text-xs tabular-nums text-platinum/55">{formatUltraAmount(chain.anchorSpendBaseUnits)} $ULTRA</td>
-                  <td className="px-5 py-4 text-right"><div className="flex justify-end"><AnchorNowControl chainId={chain.id} availability={chain.anchorAvailability} anchorFeeBaseUnits={chain.anchorFeeBaseUnits} balanceBaseUnits={chain.balanceBaseUnits} controlId={`desktop-${chain.id}`} action={action} onArm={() => onArm(chain.id)} onCancel={() => onCancel(chain.id)} onConfirm={() => onConfirm(chain.id)} /></div></td>
+                  <td className="px-5 py-4 text-right"><div className="flex justify-end">{chain.source === "ledger" ? <span title="Anchors are submitted by the owner signing a version-5 transaction. The node holds no key for this chain." className="inline-flex min-h-10 items-center border border-cyan-glow/20 bg-cyan-glow/[0.04] px-3 font-mono text-[10px] uppercase tracking-[0.12em] text-cyan-glow/70">OWNER_SIGNED</span> : <AnchorNowControl chainId={chain.id} availability={chain.anchorAvailability} anchorFeeBaseUnits={chain.anchorFeeBaseUnits} balanceBaseUnits={chain.balanceBaseUnits} controlId={`desktop-${chain.id}`} action={action} onArm={() => onArm(chain.id)} onCancel={() => onCancel(chain.id)} onConfirm={() => onConfirm(chain.id)} />}</div></td>
                 </tr>
               );
             })}

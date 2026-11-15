@@ -6,9 +6,8 @@ import type {
   AppChainAnchorAvailability,
   AppChainOverview,
   AppChainOwnerKind,
+  AppChainSource,
   AppChainSummary,
-  CreateAppChainInput,
-  CreateAppChainResult,
 } from "@/lib/appchains.types";
 
 interface RawAppChainView {
@@ -25,6 +24,9 @@ interface RawAppChainView {
   latest_state_root?: unknown;
   anchor_availability?: unknown;
   proof_scheme?: unknown;
+  source?: unknown;
+  registered_tx?: unknown;
+  registered_block?: unknown;
 }
 
 interface RawOverviewPayload {
@@ -38,13 +40,6 @@ interface RawOverviewPayload {
   proof_scheme?: unknown;
   updated_at?: unknown;
   message?: unknown;
-}
-
-interface RawCreatePayload {
-  success?: unknown;
-  message?: unknown;
-  chain_id?: unknown;
-  chain?: unknown;
 }
 
 interface RawAnchorPayload {
@@ -109,6 +104,14 @@ function readAnchorAvailability(value: unknown): AppChainAnchorAvailability {
     : "not-implemented";
 }
 
+// A node that predates the ledger view only ever reported registry chains, so that is the honest
+// default when the field is absent.
+function readSource(value: unknown): AppChainSource {
+  return value === "ledger" || value === "ledger+registry" || value === "registry"
+    ? value
+    : "registry";
+}
+
 function normalizeChain(value: unknown): AppChainSummary | null {
   if (!isRecord(value)) return null;
   const chain = value as RawAppChainView;
@@ -134,6 +137,7 @@ function normalizeChain(value: unknown): AppChainSummary | null {
     latestStateRoot: typeof chain.latest_state_root === "string" ? chain.latest_state_root : null,
     anchorAvailability: readAnchorAvailability(chain.anchor_availability),
     proofScheme: readString(chain.proof_scheme, "Unknown server proof scheme"),
+    source: readSource(chain.source),
   };
 }
 
@@ -184,31 +188,6 @@ export async function fetchAppChainOverview(signal?: AbortSignal): Promise<AppCh
     headers: { Accept: "application/json" },
   });
   return normalizeOverview(await readResponse<RawOverviewPayload>(response, "Unable to read AppChain overview."));
-}
-
-export async function createAppChain(input: CreateAppChainInput): Promise<CreateAppChainResult> {
-  let response: Response;
-  try {
-    response = await authenticatedFetch("/api/appchain/create", {
-      method: "POST",
-      body: JSON.stringify({ name: input.name.trim(), owner: input.owner.trim() }),
-      headers: { "Content-Type": "application/json" },
-    });
-  } catch {
-    throw new AppChainRequestError("Unable to reach the UltraNet node.", 0);
-  }
-
-  const payload = await readResponse<RawCreatePayload>(response, "Unable to create the AppChain.");
-  const chainId = readInteger(payload.chain_id);
-  if (payload.success === false || chainId === null) {
-    throw new AppChainRequestError(readString(payload.message, "The node rejected AppChain creation."), response.status);
-  }
-
-  return {
-    chainId,
-    message: readString(payload.message, "AppChain created successfully."),
-    chain: normalizeChain(payload.chain),
-  };
 }
 
 async function submitAnchor(path: string, rejectionMessage: string): Promise<AnchorAppChainResult> {

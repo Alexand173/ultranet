@@ -2,6 +2,11 @@ export type AppChainsLoadState = "loading" | "ready" | "empty" | "unavailable";
 export type AppChainActionState = "idle" | "confirming" | "submitting" | "success" | "rejected" | "unavailable";
 export type AppChainAnchorAvailability = "not-implemented" | "test-only" | "production";
 export type AppChainOwnerKind = "address" | "alias" | "unknown";
+/**
+ * Which store on the node knows this chain. `ledger` means its owner signed a version-5 L1
+ * transaction: it has no treasury of its own and the node holds no key to anchor it.
+ */
+export type AppChainSource = "ledger" | "registry" | "ledger+registry";
 
 export interface AppChainSummary {
   id: number;
@@ -18,6 +23,7 @@ export interface AppChainSummary {
   latestStateRoot: string | null;
   anchorAvailability: AppChainAnchorAvailability;
   proofScheme: string;
+  source: AppChainSource;
 }
 
 export interface AppChainOverview {
@@ -27,17 +33,6 @@ export interface AppChainOverview {
   anchorAvailability: AppChainAnchorAvailability;
   proofScheme: string;
   updatedAt: number | null;
-}
-
-export interface CreateAppChainInput {
-  name: string;
-  owner: string;
-}
-
-export interface CreateAppChainResult {
-  chainId: number;
-  message: string;
-  chain: AppChainSummary | null;
 }
 
 export interface AnchorAppChainResult {
