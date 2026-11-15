@@ -99,7 +99,12 @@ fn value(args: &[String], index: &mut usize) -> Result<String, String> {
 
 async fn run() -> Result<(), String> {
     let options = parse_options(&env::args().skip(1).collect::<Vec<_>>())?;
-    let client = reqwest::Client::new();
+    // An operator is standing in front of this, and the runbook's step 9 runs on a reset chain: an
+    // unreachable node must fail in seconds with a readable error, not hang the shell.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|error| format!("unable to build the HTTP client: {error}"))?;
 
     let keypair = validator_identity::load_keypair(&options.db_path)?;
     let address = keypair.address();
