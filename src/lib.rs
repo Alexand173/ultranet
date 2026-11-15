@@ -404,6 +404,66 @@ pub fn split_by_weight(total: u64, shares: &[(String, u64)]) -> Vec<(String, u64
     payouts
 }
 
+/// Who is entitled to a block's reward and fees, from a lookup over validator records.
+///
+/// Active, weight-bearing and `reward_eligible` only: the genesis placeholders produce blocks but
+/// are not paid. The live path, block re-execution and restart replay all call this, so the three
+/// cannot disagree about who was paid.
+pub fn payout_shares_for(
+    validator_set: &[Vec<u8>],
+    lookup: &dyn Fn(&[u8]) -> Option<bls_aggregation::ValidatorInfo>,
+) -> Vec<(String, u64)> {
+    validator_set
+        .iter()
+        .filter_map(|public_key| {
+            let info = lookup(public_key)?;
+            if !info.is_active || !info.reward_eligible || info.weight == 0 {
+                return None;
+            }
+            Some((validator_payout_address(public_key), info.weight))
+        })
+        .collect()
+}
+
+/// Every account a block credits: the reward and the fees, each split by weight, summed per address.
+///
+/// An empty result means nobody is entitled, and callers must treat that as "not created", never as
+/// "send it somewhere else". A `BTreeMap` because the result is written to state and must be ordered.
+pub fn payout_credits(
+    block_reward: u64,
+    total_fees: u64,
+    shares: &[(String, u64)],
+) -> std::collections::BTreeMap<String, u64> {
+    let mut credits: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    for (address, amount) in split_by_weight(block_reward, shares)
+        .into_iter()
+        .chain(split_by_weight(total_fees, shares))
+    {
+        let slot = credits.entry(address).or_insert(0);
+        *slot = slot.saturating_add(amount);
+    }
+    credits
+}
+
+/// The validators a chain's approval journal activated, keyed by the approval transaction's hash.
+///
+/// Restart replay uses this to know that a validator was paid from the block carrying its approval
+/// onwards, and not for the blocks before it. Reading the final registry for every historical block
+/// would credit blocks that actually paid nobody.
+pub fn approval_keys_by_tx(
+    records: &[ValidatorApprovalRecord],
+) -> std::collections::HashMap<[u8; 32], Vec<u8>> {
+    records
+        .iter()
+        .map(|record| {
+            (
+                record.approval_transaction.get_hash(),
+                record.activated_validator.public_key.clone(),
+            )
+        })
+        .collect()
+}
+
 pub mod bls_aggregation {
     use super::*;
     use bls_signatures::{PublicKey, Serialize, Signature};
@@ -1935,6 +1995,32 @@ impl UltraBlockchain {
         let mut last_epoch: u64 = 0;
         let mut last_total_difficulty: u128 = 4;
 
+        // Who may be paid, block by block. The live path activates a validator when its approval is
+        // admitted, before the block carrying it is mined, so that block is the first one the validator
+        // is paid for. Reading the final registry for every historical block instead would credit
+        // blocks that actually paid nobody — the placeholders-only stretch at the start of a chain.
+        let chain_tx_hashes: std::collections::HashSet<[u8; 32]> = chain
+            .iter()
+            .flat_map(|block| block.transactions.iter())
+            .map(|tx| tx.get_hash())
+            .collect();
+        let approval_keys = approval_keys_by_tx(&approval_records);
+        let mut eligible_validators: HashMap<Vec<u8>, bls_aggregation::ValidatorInfo> = HashMap::new();
+        // A validator that is eligible but whose approval is not in this chain was already active
+        // before block 1 — a seeded, migrated or journal-recovered set — and is payable from the first
+        // block, exactly as it was.
+        for info in validator_instance.validators.values() {
+            if !info.reward_eligible || !info.is_active {
+                continue;
+            }
+            let approved_in_chain = approval_keys
+                .iter()
+                .any(|(tx_hash, key)| key == &info.public_key && chain_tx_hashes.contains(tx_hash));
+            if !approved_in_chain {
+                eligible_validators.insert(info.public_key.clone(), info.clone());
+            }
+        }
+
         for block in &chain {
             for tx in &block.transactions {
                 if let TransactionPayload::SovereignSupplyCorrection {
@@ -2002,10 +2088,37 @@ impl UltraBlockchain {
                 *current_nonce = (*current_nonce).max(next_nonce);
                 total_tx_count += 1;
             }
-            if let Some(first_validator) = block.validator_set.first() {
-                let validator_address = hex::encode(first_validator);
-                let reward_balance = rebuilt_state.entry(validator_address.clone()).or_insert(0);
-                *reward_balance = reward_balance.saturating_add(block.block_reward);
+            // The approval transaction in this block makes its validator payable from here on.
+            for tx in &block.transactions {
+                if let Some(public_key) = approval_keys.get(&tx.get_hash()) {
+                    if let Some(info) = validator_instance.get_validator_info(public_key) {
+                        if info.is_active && info.reward_eligible && info.weight > 0 {
+                            eligible_validators.insert(public_key.clone(), info.clone());
+                        }
+                    }
+                }
+            }
+
+            // Reward and fees for this block, by exactly the rule the block was applied under. This
+            // used to credit `hex(first_validator)` — the raw public key, which is not an address — with
+            // the whole reward and to drop the fees entirely, so every restart re-created an unspendable
+            // account and lost what validators had actually been paid.
+            //
+            // Genesis is excluded: it carries a reward field, but no block was mined and `update_state`
+            // was never applied to it, so paying it here would credit a block that paid nobody.
+            let shares = if block.index == 0 {
+                Vec::new()
+            } else {
+                payout_shares_for(&block.validator_set, &|public_key| {
+                    eligible_validators.get(public_key).cloned()
+                })
+            };
+            let replay_fees: u64 = block.transactions.iter().map(|tx| tx.fee).sum();
+            for (validator_address, amount) in
+                payout_credits(block.block_reward, replay_fees, &shares)
+            {
+                let balance = rebuilt_state.entry(validator_address.clone()).or_insert(0);
+                *balance = balance.saturating_add(amount);
 
                 // ✅ AŽURIRAJ MPT TRIE (samo ako je potreban rebuild)
                 if trie_needs_rebuild {
@@ -2014,7 +2127,7 @@ impl UltraBlockchain {
                     let _ = state_trie_instance.write().insert(
                         v_shard,
                         v_key.as_bytes(),
-                        &reward_balance.to_le_bytes(),
+                        &balance.to_le_bytes(),
                     );
                 }
             }
@@ -3638,17 +3751,9 @@ impl UltraBlockchain {
     /// and no unit is ever credited to an address that cannot spend it.
     fn validator_payout_shares(&self, block: &UltraBlock) -> Vec<(String, u64)> {
         let registry = self.validator.read();
-        block
-            .validator_set
-            .iter()
-            .filter_map(|public_key| {
-                let info = registry.get_validator_info(public_key)?;
-                if !info.is_active || !info.reward_eligible || info.weight == 0 {
-                    return None;
-                }
-                Some((validator_payout_address(public_key), info.weight))
-            })
-            .collect()
+        payout_shares_for(&block.validator_set, &|public_key| {
+            registry.get_validator_info(public_key).cloned()
+        })
     }
 
     fn reexecute_block_for_validation(
@@ -3880,15 +3985,8 @@ impl UltraBlockchain {
 
         // Block reward and fees: by weight, to the address each validator controls.
         let total_fees: u64 = block.transactions.iter().map(|tx| tx.fee).sum();
-        let payout_shares = self.validator_payout_shares(block);
-        let mut credits: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-        for (address, amount) in split_by_weight(block.block_reward, &payout_shares)
-            .into_iter()
-            .chain(split_by_weight(total_fees, &payout_shares))
-        {
-            let slot = credits.entry(address).or_insert(0);
-            *slot = slot.saturating_add(amount);
-        }
+        let shares = self.validator_payout_shares(block);
+        let credits = payout_credits(block.block_reward, total_fees, &shares);
         if credits.is_empty() && (block.block_reward > 0 || total_fees > 0) {
             println!(
                 "⚠️ Block {} has no reward-eligible validator: {} base units of reward and {} of fees were not created",
@@ -4134,19 +4232,12 @@ impl UltraBlockchain {
         }
         self.apply_appchain_ledger(block);
 
-        // Dodaj block reward prvom validatoru
-        // Block reward and fees: by weight, to the address each validator controls. The live path and
-        // the re-execution path share one helper, so a replayed block reproduces the same credits.
+        // Block reward and fees: by weight, to the address each validator controls. The live path,
+        // block re-execution and restart replay share `payout_credits`, so a replayed block produces
+        // the same credits as the block did when it was applied.
         let total_fees: u64 = block.transactions.iter().map(|tx| tx.fee).sum();
-        let payout_shares = self.validator_payout_shares(block);
-        let mut credits: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-        for (address, amount) in split_by_weight(block.block_reward, &payout_shares)
-            .into_iter()
-            .chain(split_by_weight(total_fees, &payout_shares))
-        {
-            let slot = credits.entry(address).or_insert(0);
-            *slot = slot.saturating_add(amount);
-        }
+        let shares = self.validator_payout_shares(block);
+        let credits = payout_credits(block.block_reward, total_fees, &shares);
         if credits.is_empty() && (block.block_reward > 0 || total_fees > 0) {
             println!(
                 "⚠️ Block {} has no reward-eligible validator: {} base units of reward and {} of fees were not created",
@@ -5879,5 +5970,317 @@ mod validator_payout_tests {
             "last_epoch":0,"stake":5000,"rewards":0,"slash_count":0}"#;
         let info: ValidatorInfo = serde_json::from_str(json).expect("parses");
         assert!(!info.reward_eligible);
+    }
+}
+
+/// What a block credits, and to whom. These pin the three properties the payout rewrite exists for:
+/// nothing is created when nobody is eligible, the parts sum to the whole, and replay knows which
+/// block a validator became payable in.
+#[cfg(test)]
+mod payout_accounting_tests {
+    use super::*;
+
+    fn record(
+        public_key: Vec<u8>,
+        weight: u64,
+        reward_eligible: bool,
+    ) -> bls_aggregation::ValidatorInfo {
+        bls_aggregation::ValidatorInfo {
+            public_key,
+            weight,
+            reward_eligible,
+            is_active: true,
+            joined_at: 0,
+            last_epoch: 0,
+            stake: weight.saturating_mul(1_000),
+            rewards: 0,
+            slash_count: 0,
+        }
+    }
+
+    fn shares_for(
+        registry: &[bls_aggregation::ValidatorInfo],
+        set: &[Vec<u8>],
+    ) -> Vec<(String, u64)> {
+        payout_shares_for(set, &|key| {
+            registry.iter().find(|entry| entry.public_key == key).cloned()
+        })
+    }
+
+    #[test]
+    fn credits_sum_to_the_whole_with_the_remainder_kept() {
+        let registry: Vec<_> = (1u8..=3).map(|i| record(vec![i; 48], 3, true)).collect();
+        let set: Vec<Vec<u8>> = registry.iter().map(|v| v.public_key.clone()).collect();
+        let shares = shares_for(&registry, &set);
+        assert_eq!(shares.len(), 3);
+
+        let credits = payout_credits(1_001, 7, &shares);
+        let total: u64 = credits.values().sum();
+        assert_eq!(total, 1_008, "reward plus fees, not a unit less");
+
+        // 1001 across three equal weights is 333 each and leaves 2; 7 leaves 1. Both remainders go to
+        // the first on a tie, so it ends with 335 + 3.
+        let first = validator_payout_address(&registry[0].public_key);
+        assert_eq!(credits[&first], 338);
+        assert_eq!(credits.len(), 3, "one account per validator, not per part");
+    }
+
+    #[test]
+    fn nobody_eligible_creates_nothing() {
+        let registry = vec![record(vec![9; 48], 100, false)];
+        let set = vec![vec![9; 48]];
+        assert!(
+            shares_for(&registry, &set).is_empty(),
+            "a genesis placeholder produces blocks and is not paid"
+        );
+        assert!(
+            payout_credits(500_000, 1_000, &[]).is_empty(),
+            "the reward is not redirected anywhere when nobody may receive it"
+        );
+    }
+
+    #[test]
+    fn zero_weight_and_unknown_keys_are_not_paid() {
+        let registry = vec![record(vec![1; 48], 0, true), record(vec![2; 48], 4, true)];
+        let set = vec![vec![1; 48], vec![2; 48], vec![3; 48]];
+        let shares = shares_for(&registry, &set);
+        assert_eq!(shares.len(), 1, "zero weight and an unknown key are both skipped");
+        assert_eq!(shares[0].1, 4);
+        assert_eq!(
+            shares[0].0,
+            validator_payout_address(&[2u8; 48][..]),
+            "paid at the hash of the key, never the key"
+        );
+    }
+
+    #[test]
+    fn replay_finds_a_validator_by_its_approval_transaction() {
+        let key = vec![0xABu8; 48];
+        let approval = Transaction {
+            sender: "3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c".to_string(),
+            sender_public_key: vec![],
+            recipient: "0x0".to_string(),
+            amount: 0,
+            signature: vec![],
+            zk_proof: vec![],
+            nullifier: [7u8; 32],
+            timestamp: 1_800_000_000,
+            fee: 0,
+            nonce: 1,
+            gas_limit: 100_000,
+            gas_price: 1,
+            proof_type: ProofType::Ownership,
+            payload: TransactionPayload::StandardTransfer,
+            chain_id: 0,
+            version: 3,
+        };
+        let approval_hash = approval.get_hash();
+        let journal = vec![ValidatorApprovalRecord {
+            proposal_hash: [0u8; 32],
+            approval_transaction: approval,
+            proposal: ValidatorJoinProposalData {
+                public_key: key.clone(),
+                metadata: "validator".to_string(),
+                proposer: "3b8ef38a".to_string(),
+                timestamp: 1_800_000_000,
+            },
+            activated_validator: record(key.clone(), 1, true),
+            recorded_at: 1_800_000_001,
+        }];
+
+        let by_tx = approval_keys_by_tx(&journal);
+        assert_eq!(
+            by_tx.get(&approval_hash),
+            Some(&key),
+            "replay must credit the validator from the block that carried this approval, not before"
+        );
+    }
+}
+
+/// The restart drill. A reset is a first start on an empty database and a restart is a replay of every
+/// block, so this is the property the whole runbook rests on: opening the node a second time must leave
+/// every balance exactly as the blocks left it, and must never re-create the account at the raw key.
+#[cfg(test)]
+mod restart_replay_tests {
+    use super::*;
+    use crate::appchain::ledger::{
+        required_fee, APPCHAIN_TX_GAS_LIMIT, APPCHAIN_TX_GAS_PRICE, APPCHAIN_TX_RECIPIENT,
+        APPCHAIN_TX_VERSION,
+    };
+    use std::fs;
+
+    fn eligible(key: &[u8]) -> bls_aggregation::ValidatorInfo {
+        bls_aggregation::ValidatorInfo {
+            public_key: key.to_vec(),
+            weight: 1,
+            reward_eligible: true,
+            is_active: true,
+            joined_at: 0,
+            last_epoch: 0,
+            stake: 1_000,
+            rewards: 0,
+            slash_count: 0,
+        }
+    }
+
+    /// A fee-paying transaction that needs no ZK proof, so the block carries revenue as well as reward.
+    fn registration(wallet: &UltraWallet, nonce: u64) -> Transaction {
+        let payload = TransactionPayload::AppChainRegister {
+            name: "UltraNet Grid".to_string(),
+        };
+        let mut nullifier = [0u8; 32];
+        nullifier[..8].copy_from_slice(&nonce.to_le_bytes());
+        nullifier[8..16].copy_from_slice(&wallet.address.as_bytes()[..8]);
+        let mut tx = Transaction {
+            sender: wallet.address.clone(),
+            sender_public_key: wallet.keypair.public_key.clone(),
+            recipient: APPCHAIN_TX_RECIPIENT.to_string(),
+            amount: 0,
+            signature: Vec::new(),
+            zk_proof: Vec::new(),
+            nullifier,
+            timestamp: Utc::now().timestamp() as u64,
+            fee: required_fee(&payload).unwrap(),
+            nonce,
+            gas_limit: APPCHAIN_TX_GAS_LIMIT,
+            gas_price: APPCHAIN_TX_GAS_PRICE,
+            proof_type: ProofType::Ownership,
+            payload,
+            chain_id: UltraBlockchain::L1_CHAIN_ID,
+            version: APPCHAIN_TX_VERSION,
+        };
+        let message = UltraBlockchain::create_transaction_message_for(&tx);
+        tx.signature = wallet.keypair.sign(&message);
+        tx
+    }
+
+    #[test]
+    fn a_restart_reproduces_the_payouts_without_creating_the_phantom_account() {
+        let path = "test_db_restart_replay_payout";
+        let _ = fs::remove_dir_all(path);
+        let key = vec![0x5Au8; 48];
+        let payout = validator_payout_address(&key);
+        let raw_key_account = hex::encode(&key);
+        let payer = UltraWallet::new();
+
+        {
+            let storage = Arc::new(Storage::new(path).expect("test storage should open"));
+            let mut registry: HashMap<Vec<u8>, bls_aggregation::ValidatorInfo> = HashMap::new();
+            registry.insert(key.clone(), eligible(&key));
+            storage
+                .replace_validators(&registry)
+                .expect("seed one eligible validator");
+            storage
+                .save_state(&payer.address, 1_000_000)
+                .expect("fund the payer");
+            storage.flush().expect("flush the seeded state");
+        }
+
+        let (mined_reward, mined_fees, payout_after_mining, payer_after, raw_key_after_mining);
+        {
+            let mut node = UltraBlockchain::with_storage(Arc::new(Storage::new(path).unwrap()));
+            node.add_transaction(registration(&payer, 0))
+                .expect("a signed registration is admitted");
+            let block = node.mine_block().expect("a block can be produced");
+
+            mined_reward = block.block_reward;
+            mined_fees = block.get_total_fees();
+            payout_after_mining = node.get_unadjusted_balance(&payout);
+            payer_after = node.get_unadjusted_balance(&payer.address);
+            raw_key_after_mining = node.get_unadjusted_balance(&raw_key_account);
+
+            assert!(mined_fees > 0, "the block carries a fee");
+            assert_eq!(
+                payout_after_mining,
+                mined_reward + mined_fees,
+                "the only eligible validator receives the whole reward and the fees"
+            );
+            assert_eq!(
+                raw_key_after_mining, 0,
+                "nothing is credited at the raw public key, which no wallet can spend"
+            );
+            node.storage.flush().expect("flush the mined block");
+        }
+
+        // Restart: same database, replay every block.
+        let reopened = UltraBlockchain::with_storage(Arc::new(Storage::new(path).unwrap()));
+        assert_eq!(
+            reopened.chain.len() as u64,
+            2,
+            "genesis and one mined block are on disk"
+        );
+        assert_eq!(
+            reopened.get_unadjusted_balance(&payout),
+            payout_after_mining,
+            "replay reproduced the payout the block actually made"
+        );
+        // The payer's balance is not asserted here: replay restores only the sovereign's opening
+        // balance and defaults every other account to 1_000 before applying transactions, so a payer
+        // comes back wrong. That is `restart_restores_every_balance` below, ignored, and it is what
+        // the reset runbook's P1 gate must be certified against.
+        let _ = payer_after;
+        assert_eq!(
+            reopened.get_unadjusted_balance(&raw_key_account),
+            0,
+            "replay must not re-create the unspendable account the old code wrote on every start"
+        );
+
+        let _ = fs::remove_dir_all(path);
+    }
+
+    /// The P1 gate in `docs/runbooks/chain-reset-2026-11-15.md`.
+    ///
+    /// It fails today, for a reason older than the payout rewrite: the replay seeds only
+    /// `SOVEREIGN_ADDR` from the parent chain's genesis roots and starts every other account at
+    /// `or_insert(1000)`, so a restart replaces real balances with 1_000 minus fees. Remove this
+    /// `ignore` when that is fixed — until then the reset runbook's first gate cannot be certified.
+    #[test]
+    #[ignore = "blocked by finding J: restart replay does not restore non-sovereign balances"]
+    fn restart_restores_every_balance() {
+        let path = "test_db_restart_full_balances";
+        let _ = fs::remove_dir_all(path);
+        let key = vec![0x5Bu8; 48];
+        let payer = UltraWallet::new();
+        let payee = UltraWallet::new();
+
+        {
+            let storage = Arc::new(Storage::new(path).expect("test storage should open"));
+            let mut registry: HashMap<Vec<u8>, bls_aggregation::ValidatorInfo> = HashMap::new();
+            registry.insert(key.clone(), eligible(&key));
+            storage.replace_validators(&registry).expect("seed validator");
+            storage.save_state(&payer.address, 1_000_000).expect("fund payer");
+            storage.flush().expect("flush");
+        }
+
+        let (payer_before, payee_before, payout_before);
+        {
+            let mut node = UltraBlockchain::with_storage(Arc::new(Storage::new(path).unwrap()));
+            node.add_transaction(registration(&payer, 0))
+                .expect("registration is admitted");
+            node.mine_block().expect("a block can be produced");
+            payer_before = node.get_unadjusted_balance(&payer.address);
+            payee_before = node.get_unadjusted_balance(&payee.address);
+            payout_before = node.get_unadjusted_balance(&validator_payout_address(&key));
+            node.storage.flush().expect("flush");
+        }
+
+        let reopened = UltraBlockchain::with_storage(Arc::new(Storage::new(path).unwrap()));
+        assert_eq!(
+            reopened.get_unadjusted_balance(&payer.address),
+            payer_before,
+            "a restart must not change the payer's balance"
+        );
+        assert_eq!(
+            reopened.get_unadjusted_balance(&payee.address),
+            payee_before,
+            "a restart must not change an untouched account"
+        );
+        assert_eq!(
+            reopened.get_unadjusted_balance(&validator_payout_address(&key)),
+            payout_before,
+            "a restart must not change what the validator was paid"
+        );
+
+        let _ = fs::remove_dir_all(path);
     }
 }
