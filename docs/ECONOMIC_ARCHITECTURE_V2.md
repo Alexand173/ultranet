@@ -30,6 +30,11 @@ questions. v2 fixes the relationship between them once:
 
 ## 2. The supply truth
 
+> **Read §2.3 first.** This section and §2.1–2.2 describe the schedule *as coded* (a 3,061 `$ULTRA`
+> emission). That schedule does not match the owner's objective, so R1 is reopened in §2.3 with four
+> candidate schedules of ~30,000,000 emission. Everything below remains accurate about the code, and
+> becomes history once a candidate is ratified.
+
 `genesis.json` allocates **1,000,000 `$ULTRA`** (`1,000,000,000,000` base units) to the sovereign
 address, and the only mechanism that creates more is the emission schedule. There is **no declared cap
 in the code** — the cap is arithmetic, and it needs writing down.
@@ -123,10 +128,70 @@ mint nothing at all.
 So: at any block time of **16.67 s or less**, the 100-year emission is exactly 3,061.0872. Beyond that
 the century figure drops — but only because the same coins arrive later, never because fewer exist.
 
-**Ratify R1:** keep the schedule as written, and declare the cap **1,003,061.0872 `$ULTRA`** as a
-protocol constant with a test that pins it. Emission is the *only* mint in the system, forever. The
-`× 0.8` transaction-density multiplier in `ai_governor.rs:111` may only ever *reduce* emission, never
-raise it above 50 per block.
+### 2.3 R1 REOPENED — the coded schedule does not meet the 100-year objective
+
+The owner's intent is a Bitcoin-shaped security budget: the network is paid for by emission for a
+century, and the genesis allocation is a *small* share of supply. The coded schedule does the opposite,
+and every earlier number in this document describes the coded schedule honestly rather than the intended
+one. Stated plainly:
+
+| | Coded (`GENESIS_REWARD = 50`) | Intended |
+|---|---:|---:|
+| Emission, all time | **3,061.09** | ≥ 30,000,000 |
+| Emission ÷ genesis allocation | **0.31 %** | ~30× |
+| Supply | 1,003,061 | ~31,000,000+ |
+| Sovereign share of supply | **99.70 %** | ~3 % |
+| Validator revenue, 6 validators, year 1 | 26.28/yr each | ~250,000/yr each |
+
+Bitcoin's shape is the inverse: 20.99M of a 21M cap is emission, and the genesis is negligible. A
+network whose emission is 0.3 % of its allocation has no security budget — it has a pre-mine with a
+rounding error attached.
+
+Four candidate schedules, all computed with the integer rules the code actually uses (`R >> era` for
+halving, or `× 0.8` per decade for the smooth variant):
+
+| | **A · Bitcoin-shaped** | **B · exact 30M** | **C · 20-yr epochs** | **D · smooth −20 %/decade** |
+|---|---:|---:|---:|---:|
+| Reward/block | **0.500000** | 0.476000 | 0.238000 | 0.190000 |
+| Halving cadence | 10 yr | 10 yr | 20 yr | −20 % per decade |
+| Emission, first 100 yr | **31,526,736.67** | 30,013,423.52 | 29,103,996.60 | 26,760,592.34 |
+| Emission, all time | ~31.5M | ~30.0M | ~30.0M | ~30.0M |
+| **Supply cap** | **~32,530,000** | ~31,010,000 | ~30,100,000 | ~30,000,000 |
+| Era-0 emission | 4,320.00/day | 4,112.64/day | 2,056.32/day | 1,641.60/day |
+| Validator/year (6 validators, year 1) | **262,800** | 250,186 | 125,093 | 99,864 |
+| Subsidy still paid in year 90–100 | 3,078/yr total | 2,932/yr | 46,911/yr | 80,475/yr |
+| Sovereign share at year 10 | 6.0 % | 6.2 % | 11.8 % | 14.3 % |
+| Sovereign share at year 100 | **3.07 %** | 3.22 % | 3.32 % | 3.60 % |
+
+**Recommendation: A.** Round, auditable numbers (0.5 `$ULTRA` per block, halve every ten years), the
+era-0 share is exactly half the schedule the way Bitcoin's is, and the sovereign allocation lands at
+3.07 % of supply — a pre-mine ratio that needs no defence. C and D are the answer only if the priority
+is *reducing early dilution* rather than paying for security immediately: they roughly halve the decade-1
+subsidy and keep a larger tail in year 100, at the cost of the sovereign holding 4× more of supply in
+year 10.
+
+### 2.4 How such a change may be deployed (this is the part that can break the chain)
+
+`calculate_block_reward()` derives the reward from `total_blocks`, so **changing the base reward or the
+interval changes the reward of every block at every height**, including blocks already mined. A node
+running the new formula would reject a replay of the existing chain.
+
+Two legal routes, and no third:
+
+| Route | What it costs | When it is the right answer |
+|---|---|---|
+| **Height gate**: `if block_index < H { old reward } else { new reward }` | One condition in the reward function, an agreed `H` on every validator, plus a pinned test at the boundary | The chain has real history worth preserving |
+| **Reset**: start a new genesis at block 0 with the new schedule | Discards every existing account, balance and nonce — today that is 1,000,000.000650 `$ULTRA` at block 13, so almost nothing | The chain is 13 blocks old and nothing depends on it yet |
+
+The live network is at **block 13** with 12 transactions. That is the cheapest this decision will ever
+be, and doing it by height gate instead keeps a 13-block history nobody needs while permanently
+complicating the reward function. My recommendation is the **reset** — provided the owner confirms
+nothing external depends on the current 13 blocks.
+
+**Ratify R1:** ~~keep the schedule as written, and declare the cap 1,003,061.0872~~ → **superseded**.
+R1 is reopened; the schedule and cap are chosen from §2.3, and whichever is chosen must state the
+deployment route from §2.4. Emission remains the *only* mint in the system, forever, and the `× 0.8`
+density multiplier may only ever reduce it.
 
 Why the cap matters more than the inflation rate: 0.0158 %/year is economically invisible, but an
 undefined cap is a governance hole. A number that cannot be changed without a document change is worth
@@ -402,7 +467,7 @@ That is a *usage* thesis, not a *fee* thesis, and the document should not preten
 soundness comes from a hard cap and real demand for settlement, not from burning a rounding error of
 fees.
 
-### 7.4 A century in one table
+### 7.4 A century in one table (coded schedule — superseded by §2.3)
 
 Each era is 31,557,600 blocks, so its total emission is that block count times its reward: era 0 emits
 1,577.88, era 1 emits 788.94, and so on down to era 6's zero. The cumulative column is the sum of those,
@@ -422,7 +487,8 @@ not of the yearly figures.
 
 ## 8. Invariants — never change without a new architecture version
 
-1. Emission is the only mint. Cap 1,003,061.0872 `$ULTRA`.
+1. Emission is the only mint. The cap is whichever schedule §2.3 ratifies — candidates land between
+   ~30.0M and ~32.5M — and it is fixed forever once chosen.
 2. An AppChain redistributes; it never creates.
 3. The L1 does not verify AppChain state, and therefore never prices or taxes it by usage.
 4. Every distribution has a named source and a cap (faucet lifetime, per-address, per-chain, global).
@@ -438,8 +504,9 @@ Sign each line, or change it here first. This is the only approval mechanism.
 
 | ID | Parameter | Proposed value | Ratify |
 |---|---|---|---|
-| R1 | Maximum supply, forever | 1,003,061.0872 `$ULTRA` | ☐ |
-| R1b | Emission schedule | 50/block, halve every 31,557,600 blocks, reduce-only multiplier | ☐ |
+| R1 | Maximum supply, forever | **REOPENED — §2.3**, candidates ~30.0M–32.5M; recommend A (~32.5M) | ☐ |
+| R1b | Emission schedule | **REOPENED — §2.3**, recommend A: 0.5 `$ULTRA`/block, halve every 31,557,600 blocks | ☐ |
+| R1c | Deployment route for R1 (§2.4) | **reset** at block 13 (recommended) or height gate | ☐ |
 | V-1 | Fee split | by weight, remainder to producer | ☐ |
 | V-2 | Placeholder validators | cannot earn fees or rewards | ☐ |
 | V-3 | Validator bond (phase 4) | 1,000 `$ULTRA`, forfeited on third slash | ☐ |
