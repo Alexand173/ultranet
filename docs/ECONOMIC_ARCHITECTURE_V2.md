@@ -214,7 +214,10 @@ A validator earns from exactly two sources, and both must be stated as fractions
 2. **Transaction fees** — 100 % of every fee in a block, split **per `validator_set` entry with integer
    division** (`lib.rs:3779`, `lib.rs:4035`).
 
-### 3.2 What is true today
+### 3.2 What was true before 2026-11-15 (kept as the record)
+
+> **Resolved.** Every row below was fixed on 2026-11-15 (§3.3). They are kept because a defect that
+> cannot be read about again will be reintroduced.
 
 | Fact | Consequence |
 |---|---|
@@ -224,7 +227,37 @@ A validator earns from exactly two sources, and both must be stated as fractions
 | `stake` is `weight × 1000`, set at registration | It is bookkeeping. **No `$ULTRA` is ever bonded**, so nobody loses money for misbehaving; `slash_validator` removes a key after three strikes and slashes nothing |
 | Emission dominates fee revenue | Era-0 emission is 0.432 `$ULTRA`/day; fees only match it at ~108 chains anchoring 4×/day (§7) |
 
-### 3.3 v2 proposal
+### 3.3 Ratified and implemented (2026-11-15)
+
+**V-0 (implemented).** A validator is paid at `hex(SHA3-256(public_key))` — the same rule wallets use.
+The old code credited `hex::encode(public_key)`, the raw key, thousands of characters long: **every
+block reward and every fee went to an account no key could spend from.** `validator_payout_address`
+is now the single definition, and `a_validator_is_paid_at_the_hash_of_its_key` pins it.
+
+**V-1 (implemented).** Block reward *and* fees are distributed **by weight** through one helper,
+`split_by_weight`, used by both the live path (`update_state`) and the re-execution path
+(`reexecute_block_for_validation`) so a replayed block reproduces the same credits. The integer
+remainder goes to the largest weight (ties → first in order), so **no unit is destroyed** —
+previously an anchor's 1,000 became 996 across six validators and a 1-unit fee paid nobody. The block
+reward is no longer paid entirely to `validator_set.first()`.
+
+**V-2 (implemented).** `ValidatorInfo` gains `reward_eligible` (`serde` default **false**). The genesis
+bootstrap sets it false, the registration path sets it true, and `validator_payout_shares` pays only
+active, weight-bearing, eligible validators.
+
+**V-3 (phase 4, open).** A **bond** of 1,000 `$ULTRA` is required to validate, held from the validator's
+own balance and forfeited to the fee pool on the third slash. This is what turns `stake` from a label
+into money at risk. Deliberately later: it needs its own consensus change and a migration.
+
+### 3.3.1 The consequence an operator must know
+
+If **no** reward-eligible validator is in the set, the block's reward and fees are **not created** —
+nothing is credited to a fallback address, and a warning is logged. Emission is a ceiling, not a
+promise. On a freshly reset chain whose only validators are the genesis placeholders, **nothing is
+minted until a real validator is registered**: the reset runbook must register the operator's validator
+key as part of the reset, not afterwards.
+
+### 3.4 The original proposal (historical)
 
 **V-1 (ratify).** Fees are split **by weight**, and the integer remainder goes to the **block producer**.
 No unit is destroyed. A 1-unit fee pays that unit to someone.
@@ -238,7 +271,7 @@ held from the validator's own balance, and forfeited to the fee pool on the thir
 turns `stake` from a label into money at risk. It is deliberately **phase 4**, because it needs its own
 consensus change and a migration for the current roster.
 
-### 3.4 The honest number
+### 3.5 The honest number
 
 At 6 active validators and era-0 emission, a validator earns `157.68 ÷ 6 ≈ 26.28 $ULTRA` a year from
 seigniorage plus all fees. That is the entire revenue of running a consensus validator on this network
@@ -511,8 +544,9 @@ Sign each line, or change it here first. This is the only approval mechanism.
 | R1 | Maximum supply, forever | **RATIFIED 2026-11-15:** 32,557,379.0968 (`MAX_SUPPLY_BASE_UNITS = 32_557_379_096_800`) | ☑ |
 | R1b | Emission schedule | **RATIFIED 2026-11-15:** 0.5 `$ULTRA`/block, halve every 31,557,600 blocks (`GENESIS_REWARD = 500_000`) | ☑ |
 | R1c | Deployment route for R1 (§2.4) | **RATIFIED 2026-11-15:** reset at block 0 | ☑ |
-| V-1 | Fee split | by weight, remainder to producer | ☐ |
-| V-2 | Placeholder validators | cannot earn fees or rewards | ☐ |
+| V-0 | Validator payout address | **RATIFIED + IMPLEMENTED 2026-11-15:** `hex(SHA3-256(public_key))` | ☑ |
+| V-1 | Fee split | **RATIFIED + IMPLEMENTED 2026-11-15:** by weight, remainder to the largest weight, no unit destroyed | ☑ |
+| V-2 | Placeholder validators | **RATIFIED + IMPLEMENTED 2026-11-15:** `reward_eligible = false` for genesis entries | ☑ |
 | V-3 | Validator bond (phase 4) | 1,000 `$ULTRA`, forfeited on third slash | ☐ |
 | C-1 | AppChain prices | 0.01 register, 0.001 anchor, 0.001 handover | ☐ |
 | C-2 | "Live" listing rule | ≥ 1 anchor/day, enforced by the app | ☐ |
@@ -556,6 +590,7 @@ updated in the same commit.
 | Rev | Date | Change | Why |
 |---|---|---|---|
 | v2.0 | 2026-11-15 | First issue: R1–R6, 14 ratification rows | Establish one economic rule before code |
+| v2.3 | 2026-11-15 | P1 implemented: V-0 payout address, V-1 weighted split without loss, V-2 placeholder exclusion. §3.3 rewritten as ratified | Fees were credited to `hex(public_key)` — an unspendable phantom account — so validators had never actually been paid. Also fixes the remainder destroyed on every block |
 | v2.2 | 2026-11-15 | R1 ratified: 0.5 `$ULTRA`/block, cap 32,557,379.0968, deployed by reset. §2.2 rewritten for the chosen schedule | The coded 3,061 emission was 0.3% of the allocation — the inverse of the intended Bitcoin-shaped distribution. Implemented in `GENESIS_REWARD`, `MAX_SUPPLY_BASE_UNITS` and `genesis.json` |
 | v2.1 | 2026-11-15 | Added §2.1 (cap derivation and its upper bound) and §4.3 (per-AppChain anchor pricing), rows R3b and R3c | Review questioned the emission total and claimed per-chain anchor pricing already worked. §2.1 shows 97 is the *sum* of era rewards, not era 0's reward, so 3,061.0872 stands and 6,074.34 exceeds the geometric ceiling. §4.3 shows the per-chain field lives only in the retired prototype and that floor-plus-choice pricing collects *less* than the flat fee. |
 

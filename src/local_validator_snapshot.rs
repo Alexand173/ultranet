@@ -573,6 +573,7 @@ mod tests {
         ValidatorInfo {
             public_key: key,
             weight: 7,
+            reward_eligible: true,
             is_active,
             joined_at: 10,
             last_epoch: 2,

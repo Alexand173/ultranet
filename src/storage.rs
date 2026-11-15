@@ -1462,6 +1462,7 @@ mod tests {
             activated_validator: ValidatorInfo {
                 public_key: vec![id],
                 weight: 1,
+                reward_eligible: true,
                 is_active: true,
                 joined_at: recorded_at,
                 last_epoch: 0,

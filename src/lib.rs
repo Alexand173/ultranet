@@ -363,6 +363,47 @@ pub fn validator_payout_address(public_key: &[u8]) -> String {
     QuantumKeyPair::address_from_public_key(public_key)
 }
 
+/// Distributes `total` across `shares` in proportion to weight.
+///
+/// Uses 128-bit intermediates so no product can overflow, and adds the integer remainder — at most
+/// one unit per entry — to the largest weight, ties going to the earlier entry. The result therefore
+/// always sums to exactly `total`: not a unit is destroyed. Entries with weight 0 are skipped, and an
+/// empty result means "credit nobody", which callers must treat as "not created", never as "send it
+/// somewhere else".
+pub fn split_by_weight(total: u64, shares: &[(String, u64)]) -> Vec<(String, u64)> {
+    let eligible: Vec<(String, u64)> = shares
+        .iter()
+        .filter(|(_, weight)| *weight > 0)
+        .cloned()
+        .collect();
+    if total == 0 || eligible.is_empty() {
+        return Vec::new();
+    }
+    let total_weight: u128 = eligible.iter().map(|(_, weight)| *weight as u128).sum();
+    if total_weight == 0 {
+        return Vec::new();
+    }
+    let mut payouts: Vec<(String, u64)> = eligible
+        .iter()
+        .map(|(address, weight)| {
+            let share = (total as u128 * *weight as u128 / total_weight) as u64;
+            (address.clone(), share)
+        })
+        .collect();
+    let assigned: u64 = payouts.iter().map(|(_, amount)| *amount).sum();
+    let remainder = total.saturating_sub(assigned);
+    if remainder > 0 {
+        let mut largest = 0usize;
+        for (index, (_, weight)) in eligible.iter().enumerate() {
+            if *weight > eligible[largest].1 {
+                largest = index;
+            }
+        }
+        payouts[largest].1 = payouts[largest].1.saturating_add(remainder);
+    }
+    payouts
+}
+
 pub mod bls_aggregation {
     use super::*;
     use bls_signatures::{PublicKey, Serialize, Signature};
@@ -387,6 +428,13 @@ pub mod bls_aggregation {
     pub struct ValidatorInfo {
         pub public_key: Vec<u8>,
         pub weight: u64,
+        /// Whether this validator may receive block rewards and fees.
+        ///
+        /// Genesis bootstrap entries are `false`: they exist so the chain can produce blocks, not so
+        /// they can be paid. Only validators that went through registration are eligible. Defaults to
+        /// `false` so a record that predates this field can never start collecting silently.
+        #[serde(default)]
+        pub reward_eligible: bool,
         pub is_active: bool,
         pub joined_at: u64,
         pub last_epoch: u64,
@@ -408,6 +456,8 @@ pub mod bls_aggregation {
             let info = ValidatorInfo {
                 public_key: public_key.clone(),
                 weight,
+                // Genesis/bootstrap entries produce blocks but are not paid; see `reward_eligible`.
+                reward_eligible: false,
                 is_active: true,
                 joined_at: Utc::now().timestamp() as u64,
                 last_epoch: 0,
@@ -1953,7 +2003,7 @@ impl UltraBlockchain {
                 total_tx_count += 1;
             }
             if let Some(first_validator) = block.validator_set.first() {
-                let validator_address = validator_payout_address(first_validator);
+                let validator_address = hex::encode(first_validator);
                 let reward_balance = rebuilt_state.entry(validator_address.clone()).or_insert(0);
                 *reward_balance = reward_balance.saturating_add(block.block_reward);
 
@@ -2065,6 +2115,8 @@ impl UltraBlockchain {
         let info = bls_aggregation::ValidatorInfo {
             public_key: public_key.to_vec(),
             weight: 1,
+            // Registered through the approval path, so this one may be paid.
+            reward_eligible: true,
             is_active: true,
             joined_at: Utc::now().timestamp() as u64,
             last_epoch: self.current_epoch.load(Ordering::SeqCst),
@@ -3578,6 +3630,27 @@ impl UltraBlockchain {
     }
 
     /// Re-izvršava sve transakcije bloka na izolovanom stanju radi verifikacije
+    /// Who is entitled to this block's reward and fees, and in what proportion.
+    ///
+    /// Only validators that are active, carry weight, and are `reward_eligible` participate: the
+    /// genesis placeholders produce blocks but are not paid. An empty result means nobody is
+    /// entitled, and the amount is then not created at all — emission is a ceiling, not a promise,
+    /// and no unit is ever credited to an address that cannot spend it.
+    fn validator_payout_shares(&self, block: &UltraBlock) -> Vec<(String, u64)> {
+        let registry = self.validator.read();
+        block
+            .validator_set
+            .iter()
+            .filter_map(|public_key| {
+                let info = registry.get_validator_info(public_key)?;
+                if !info.is_active || !info.reward_eligible || info.weight == 0 {
+                    return None;
+                }
+                Some((validator_payout_address(public_key), info.weight))
+            })
+            .collect()
+    }
+
     fn reexecute_block_for_validation(
         &self,
         block: &UltraBlock,
@@ -3805,41 +3878,36 @@ impl UltraBlockchain {
             }
         }
 
-        // Nagrade i fee-jevi
-        if let Some(first_validator) = block.validator_set.first() {
-            let validator_address = validator_payout_address(first_validator);
+        // Block reward and fees: by weight, to the address each validator controls.
+        let total_fees: u64 = block.transactions.iter().map(|tx| tx.fee).sum();
+        let payout_shares = self.validator_payout_shares(block);
+        let mut credits: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        for (address, amount) in split_by_weight(block.block_reward, &payout_shares)
+            .into_iter()
+            .chain(split_by_weight(total_fees, &payout_shares))
+        {
+            let slot = credits.entry(address).or_insert(0);
+            *slot = slot.saturating_add(amount);
+        }
+        if credits.is_empty() && (block.block_reward > 0 || total_fees > 0) {
+            println!(
+                "⚠️ Block {} has no reward-eligible validator: {} base units of reward and {} of fees were not created",
+                block.index, block.block_reward, total_fees
+            );
+        }
+        for (validator_address, amount) in credits {
             let starting_balance = self
                 .candidate_account_balance(&candidate_trie, &move_vm, &validator_address)
                 .unwrap_or(0);
             let bal = candidate_balances
                 .entry(validator_address.clone())
                 .or_insert(starting_balance);
-            *bal = bal.saturating_add(block.block_reward);
+            *bal = bal.saturating_add(amount);
 
             let v_key = format!("acc:{}", validator_address);
             let v_shard = self.storage.get_shard_id(v_key.as_bytes());
             candidate_trie.insert(v_shard, v_key.as_bytes(), &bal.to_le_bytes())?;
             move_vm.set_persistent_coin_balance(&validator_address, *bal)?;
-        }
-
-        let total_fees: u64 = block.transactions.iter().map(|tx| tx.fee).sum();
-        if total_fees > 0 && !block.validator_set.is_empty() {
-            let fee_per_validator = total_fees / block.validator_set.len() as u64;
-            for validator_pk in &block.validator_set {
-                let validator_address = validator_payout_address(validator_pk);
-                let starting_balance = self
-                    .candidate_account_balance(&candidate_trie, &move_vm, &validator_address)
-                    .unwrap_or(0);
-                let bal = candidate_balances
-                    .entry(validator_address.clone())
-                    .or_insert(starting_balance);
-                *bal = bal.saturating_add(fee_per_validator);
-
-                let f_key = format!("acc:{}", validator_address);
-                let f_shard = self.storage.get_shard_id(f_key.as_bytes());
-                candidate_trie.insert(f_shard, f_key.as_bytes(), &bal.to_le_bytes())?;
-                move_vm.set_persistent_coin_balance(&validator_address, *bal)?;
-            }
         }
 
         // Dodaj Move VM resurse iz write_set-a u Trie
@@ -4067,30 +4135,31 @@ impl UltraBlockchain {
         self.apply_appchain_ledger(block);
 
         // Dodaj block reward prvom validatoru
-        if let Some(first_validator) = block.validator_set.first() {
-            let validator_address = validator_payout_address(first_validator);
-
-            let reward_balance = self
-                .get_unadjusted_balance(&validator_address)
-                .saturating_add(block.block_reward);
-            let mut move_vm = self.move_vm.write();
-            self.apply_account_balance(&validator_address, reward_balance, &mut move_vm)
-                .expect("validated block reward update must persist");
-        }
-
+        // Block reward and fees: by weight, to the address each validator controls. The live path and
+        // the re-execution path share one helper, so a replayed block reproduces the same credits.
         let total_fees: u64 = block.transactions.iter().map(|tx| tx.fee).sum();
-        if total_fees > 0 && !block.validator_set.is_empty() {
-            let fee_per_validator = total_fees / block.validator_set.len() as u64;
-            for validator_pk in &block.validator_set {
-                let validator_address = validator_payout_address(validator_pk);
-
-                let fee_balance = self
-                    .get_unadjusted_balance(&validator_address)
-                    .saturating_add(fee_per_validator);
-                let mut move_vm = self.move_vm.write();
-                self.apply_account_balance(&validator_address, fee_balance, &mut move_vm)
-                    .expect("validated fee distribution update must persist");
-            }
+        let payout_shares = self.validator_payout_shares(block);
+        let mut credits: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        for (address, amount) in split_by_weight(block.block_reward, &payout_shares)
+            .into_iter()
+            .chain(split_by_weight(total_fees, &payout_shares))
+        {
+            let slot = credits.entry(address).or_insert(0);
+            *slot = slot.saturating_add(amount);
+        }
+        if credits.is_empty() && (block.block_reward > 0 || total_fees > 0) {
+            println!(
+                "⚠️ Block {} has no reward-eligible validator: {} base units of reward and {} of fees were not created",
+                block.index, block.block_reward, total_fees
+            );
+        }
+        for (validator_address, amount) in credits {
+            let payout_balance = self
+                .get_unadjusted_balance(&validator_address)
+                .saturating_add(amount);
+            let mut move_vm = self.move_vm.write();
+            self.apply_account_balance(&validator_address, payout_balance, &mut move_vm)
+                .expect("validated validator payout update must persist");
         }
     }
 
@@ -5724,19 +5793,91 @@ mod emission_schedule_tests {
     }
 }
 
-/// The payout address defect: rewards and fees were credited to `hex(raw key)`, which is not an
-/// address and cannot be spent. This fails if anyone reintroduces it.
+/// Who gets paid, how much, and to which address. These pin the three defects that shipped together:
+/// an unspendable payout address, an equal split where the schedule says weighted, and a remainder
+/// that vanished on every block.
 #[cfg(test)]
-mod payout_address_tests {
+mod validator_payout_tests {
     use super::*;
+    use crate::bls_aggregation::{BLSValidator, ValidatorInfo};
+
+    fn key(byte: u8) -> Vec<u8> {
+        vec![byte; 48]
+    }
+
+    fn address(byte: u8) -> String {
+        format!("{}", hex::encode(vec![byte; 32]))
+    }
 
     #[test]
     fn a_validator_is_paid_at_the_hash_of_its_key() {
-        let public_key = vec![0x11u8; 48];
+        let public_key = key(0x11);
         let payout = validator_payout_address(&public_key);
         assert_eq!(payout.len(), 64, "an address is 64 hex characters");
         assert_eq!(payout, QuantumKeyPair::address_from_public_key(&public_key));
         assert_ne!(payout, hex::encode(&public_key), "the raw key is not an address");
         assert!(UltraBlockchain::is_valid_address(&payout));
+    }
+
+    #[test]
+    fn fees_are_split_by_weight_not_equally() {
+        let shares = vec![(address(0xAA), 3u64), (address(0xBB), 1u64)];
+        assert_eq!(
+            split_by_weight(1_000, &shares),
+            vec![(address(0xAA), 750), (address(0xBB), 250)]
+        );
+    }
+
+    #[test]
+    fn the_remainder_is_kept_not_destroyed() {
+        let shares = vec![(address(0xAA), 1u64), (address(0xBB), 1u64), (address(0xCC), 1u64)];
+        let payouts = split_by_weight(1_000, &shares);
+        let total: u64 = payouts.iter().map(|(_, amount)| *amount).sum();
+        assert_eq!(total, 1_000, "every unit must be paid to someone: {payouts:?}");
+        assert_eq!(payouts[0].1, 334, "the remainder goes to the first among equals");
+    }
+
+    #[test]
+    fn zero_weight_and_empty_sets_pay_nobody() {
+        let shares = vec![(address(0xAA), 0u64), (address(0xBB), 2u64)];
+        assert_eq!(split_by_weight(1_000, &shares), vec![(address(0xBB), 1_000)]);
+        assert!(split_by_weight(1_000, &[(address(0xAA), 0u64)]).is_empty());
+        assert!(split_by_weight(0, &shares).is_empty());
+        assert!(split_by_weight(1_000, &[]).is_empty());
+    }
+
+    #[test]
+    fn genesis_placeholders_are_not_reward_eligible() {
+        let mut registry = BLSValidator::new(2);
+        // The bootstrap path adds weight-100 entries that must never be paid.
+        registry.add_validator(key(0x21), 100);
+        assert!(
+            !registry.get_validator_info(&key(0x21)).expect("present").reward_eligible,
+            "a genesis entry produces blocks, it does not earn"
+        );
+
+        // A record created by the registration path is eligible.
+        registry.insert_validator_info(ValidatorInfo {
+            public_key: key(0x22),
+            weight: 1,
+            reward_eligible: true,
+            is_active: true,
+            joined_at: 0,
+            last_epoch: 0,
+            stake: 1_000,
+            rewards: 0,
+            slash_count: 0,
+        });
+        assert!(registry.get_validator_info(&key(0x22)).unwrap().reward_eligible);
+    }
+
+    #[test]
+    fn a_record_without_the_flag_cannot_start_collecting() {
+        // serde default is false: a validator record written before this field existed must not
+        // silently become eligible on upgrade.
+        let json = r#"{"public_key":[1,2,3],"weight":5,"is_active":true,"joined_at":0,
+            "last_epoch":0,"stake":5000,"rewards":0,"slash_count":0}"#;
+        let info: ValidatorInfo = serde_json::from_str(json).expect("parses");
+        assert!(!info.reward_eligible);
     }
 }
