@@ -23,7 +23,7 @@ did what it claims. It has **not** been executed. Do not run it until the gates 
 
 | Gate | State | Evidence required |
 |---|---|---|
-| **P1** restart changes no balance | **RED — blocked by finding J** | `cargo test --locked --lib -j 1 restart_restores_every_balance -- --ignored --test-threads=1` must pass. It is `#[ignore]`d today and **fails**: replay seeds only the sovereign and starts other accounts at 1,000 |
+| **P1** restart changes no balance | **GREEN — certified 2026-11-15** | `cargo test --locked --lib -j 1 restart_replay -- --test-threads=1`: `restart_restores_every_balance` and `a_restart_reproduces_the_payouts_...` both pass. The replay now copies the account shards instead of re-deriving balances, so it no longer invents a 1,000-unit opening balance for every account it meets |
 | **P2** a validator can be registered and becomes `reward_eligible` | **AMBER — tooling added, unexercised** | `src/bin/ultranet-propose.rs` now exists (added 2026-11-15) and compiles; it signs the version-2 envelope with the node's own identity, which no previous client could do. It has not yet been run against a live node, so step 9 is the first execution |
 | **P3** faucet funded and auto-mining on | green (values known) | `FAUCET envelope ≥ 200.101000 $ULTRA`; `ULTRANET_AUTO_MINE_INTERVAL_SECONDS` set |
 
@@ -308,10 +308,19 @@ exists on the new chain only.
 
 ## Known residuals after a successful reset
 
-1. **Finding J is still open**, so a restart after the reset will not restore non-sovereign balances.
-   The reset works; the second restart is the risk. This is why P1 is a gate and not a formality.
-2. Findings **B, C, D, E, F, G, H** are unchanged. The new chain still does not enforce its own block
+1. Findings **B, C, D, E, F, G, H** are unchanged. The new chain still does not enforce its own block
    reward, still mints fees for `MoveCall`, and still trusts the producer's `validator_set`.
-3. The five placeholder validators are recreated with new random keys on every fresh database. They
+2. The five placeholder validators are recreated with new random keys on every fresh database. They
    are unpayable, but they exist and inflate `validator_count` to 6 after registration.
-4. `genesis.json` remains documentation only; the node does not read it. Editing it changes nothing.
+3. `genesis.json` remains documentation only; the node does not read it. Editing it changes nothing.
+4. Balances are now trusted from the account shards rather than re-derived from blocks, so a crash
+   **between** `update_state` and `save_block` leaves the shards one block ahead of the chain and a
+   restart no longer repairs it. Re-mine the affected block or restore the backup. This is the price of
+   the fix below, and it is smaller than the defect it replaces.
+
+### Closed on 2026-11-15
+
+Finding J — a restart replaced every non-sovereign balance with 1,000 minus fees — is fixed. Replay
+copies the account shards, which `update_state` writes on every transition, instead of re-deriving
+balances from transactions. The drill and the gate both pass, so **P1 is certified** and this runbook is
+executable once P2 is exercised.

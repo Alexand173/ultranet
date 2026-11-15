@@ -236,13 +236,12 @@ The old code credited `hex::encode(public_key)`, the raw key, thousands of chara
 block reward and every fee went to an account no key could spend from.** `validator_payout_address`
 is now the single definition, and `a_validator_is_paid_at_the_hash_of_its_key` pins it.
 
-> **Correction, 2026-11-15 (same day).** The first attempt changed two of the three places that credit
-> a block. The **restart replay** in `with_storage` kept a second copy of the old rule and re-credited
-> `hex(raw public key)` with the whole block reward on **every startup**, and dropped the fees entirely.
-> A reset is a startup, so the reset could not run on that build. Replay now calls `payout_credits`
-> with the same eligibility rule, pays from the block carrying the validator's approval, and excludes
-> genesis, which carries a reward field but was never applied. `a_restart_reproduces_the_payouts_...`
-> fails if any of that comes back.
+> **Correction, same day.** The first attempt changed two of the places that credit a block. The third,
+> the restart replay, kept the old rule: it credited `hex(public_key)` with the whole reward on every
+> startup, dropped the fees, and filled the trie with a phantom account. It also paid the genesis block,
+> which no live path ever did. The fix was not to teach replay the payout rules but to stop replay from
+> paying at all — see V-4. `a_restart_restores_payouts` and `restart_restores_every_balance` fail if
+> either the phantom account or the fictional balances return.
 
 **V-1 (implemented).** Block reward *and* fees are distributed **by weight** through two shared
 helpers, `payout_shares_for` and `payout_credits`, used by the live path (`update_state`), the
@@ -263,6 +262,16 @@ weight-bearing, eligible validators.
 > protects new writes, not old ones. This is why the reset runbook forbids restoring an old database
 > and why a migrated roster needs a versioned record rather than a default (§3.3.2, finding F).
 
+**V-4 (implemented 2026-11-15).** A restart no longer re-derives balances from the blocks. Every
+transition is written to the account records by `apply_account_balance` — the same write that
+feeds the state trie — so those records are the authoritative post-chain state and the replay copies
+them; it still derives nonces, the epoch, the difficulty and the state-root history from the blocks. The
+old replay seeded only the sovereign and invented a 1,000-unit opening balance for every other account it
+met, so a restart replaced real balances with a fiction. The trade-off is stated rather than hidden: a
+crash between applying a block and saving it now leaves the records one block ahead of the chain, and the
+restart will not repair that. The alternative — rebuilding every balance from the genesis roots — needs
+the trie to be enumerable by account key, which it is not.
+
 **V-3 (phase 4, open).** A **bond** of 1,000 `$ULTRA` is required to validate, held from the validator's
 own balance and forfeited to the fee pool on the third slash. This is what turns `stake` from a label
 into money at risk. Deliberately later: it needs its own consensus change and a migration.
@@ -282,7 +291,7 @@ none is fixed by §3.3, and each is a consensus change with its own blast radius
 
 | # | Severity | Defect | Effect |
 |---|---|---|---|
-| **J** | **Blocker** | Restart replay seeds only `SOVEREIGN_ADDR` from the genesis roots and starts every other account at `or_insert(1000)` | A restart replaces real balances with 1,000 minus fees. `restart_restores_every_balance` is `#[ignore]`d and fails today. **The reset runbook's P1 gate cannot be certified until this is fixed** |
+| ~~**J**~~ | ~~Blocker~~ **fixed 2026-11-15** | Restart replay seeded only `SOVEREIGN_ADDR` and started every other account at `or_insert(1000)` | A restart replaced real balances with 1,000 minus fees. Replay now copies the account shards, which `update_state` writes on every transition; `restart_restores_every_balance` guards it and the reset runbook's P1 gate is certified |
 | B | Critical | `block_reward` is absent from `calculate_block_hash` and unvalidated in `validate_block` | A producer may claim any reward; 0.5 per block is not consensus |
 | C | Critical | `total_fees` sums every fee, but only `StandardTransfer` and AppChain payloads debit the sender | A fee on `MoveCall`/`MoveDeploy` is minted to validators from air |
 | D | Critical | `validator_set` is absent from the block hash and unvalidated | A producer may list itself alone or one key five times |
