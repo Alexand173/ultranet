@@ -10,6 +10,11 @@ green on the emulator (62 tests). Nothing below the app line has been built yet.
 **Non-goals for v1:** move-by-move storage, game logic on the node, PvP, matchmaking, a chess clock,
 resuming a game across launches.
 
+> **Economics superseded:** §5's caps and prize values are an application of
+> [`ECONOMIC_ARCHITECTURE_V2.md`](./ECONOMIC_ARCHITECTURE_V2.md) §5, which is the authority. This
+> document's 100-base-unit prize **is** the v2 standard; UltraNet Grid's 10-unit reward is the documented
+> exception, not a second standard.
+
 **Superseded in part (2026-11-14):** the node now carries a consensus AppChain ledger
 (`src/appchain/ledger.rs`): `AppChainRegister` and `AppChainAnchor` are owner-signed L1 transactions,
 and the app signs both itself (`AppChainSigner.kt`, `POST /api/appchain/tx`). So §3's operator-token

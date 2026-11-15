@@ -4,6 +4,11 @@
 **Agreed with the owner:** an original daily skill puzzle ("UltraNet Grid", working name) as AppChain #1. Test rewards of 0.00001 `$ULTRA` per win, withdrawable from 0.0001 `$ULTRA`, from a 1 `$ULTRA` pool funded from the faucet wallet.
 **Horizon:** UltraNet is built for 10–100 years and thousands of AppChains. Everything below is designed as a **generic primitive that any AppChain can use**. Only the puzzle itself is specific to this game.
 
+> **Economics superseded:** [`ECONOMIC_ARCHITECTURE_V2.md`](./ECONOMIC_ARCHITECTURE_V2.md) is the authority
+> on every number below. §4's table is out of date in two rows: the rewarded-win limit is **3 per address
+> per day** (the owner's later instruction, not 10), and the 10-base-unit reward stays only as a **test**
+> value until the 1 `$ULTRA` pool ends. Where this document and v2 disagree, v2 wins once ratified.
+
 ## 1. Starting point (from the code)
 
 - An AppChain is a registry entry: `name`, an `owner` **text** field, and a treasury derived from the chain ID (`src/appchain/factory.rs`). Creating and anchoring a chain are admin-only routes.
