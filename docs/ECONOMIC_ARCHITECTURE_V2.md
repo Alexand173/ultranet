@@ -49,6 +49,38 @@ those units.
 | Era-0 inflation against allocation | **0.0158 % / year** | 157.68 ÷ 1,000,000 |
 | Supply today (live, block 13) | 1,000,000.000650 `$ULTRA` | 13 × 50 base units emitted |
 
+### 2.1 How the cap is derived, and why it cannot be larger
+
+This was challenged in review with the figure `6,074.3449125`. The challenge counts the halving series
+twice, and this paragraph is here so the question is settled with arithmetic rather than opinion.
+
+The er0→6 per-block rewards are the **integer** sequence `50 >> era`:
+
+```
+era:            0     1     2     3    4    5    6+
+reward/block:  50    25    12     6    3    1     0
+```
+
+Two independent checks, both of which must agree:
+
+| Derivation | Result |
+|---|---|
+| Sum the actual integer sequence: `31,557,600 × (50+25+12+6+3+1)` = `31,557,600 × 97` | **3,061,087,200 base units = 3,061.0872 `$ULTRA`** |
+| Upper bound from the exact geometric series: `50 × 2 × 31,557,600` | 3,155,760,000 base units = 3,155.76 `$ULTRA` |
+
+Truncation can only ever *reduce* emission below the geometric bound, so any total above
+**3,155.76** is impossible by construction. The review's 6,074.34 is 1.93× that ceiling: it takes **97**
+— which is already the *sum* of the era rewards — and treats it as the era-0 reward, then applies
+`1 + ½ + … + 1/64` on top. That is the double count. Era 0 pays 50 per block, not 97.
+
+**On fractional base units:** there are none, and none are possible. `50 >> era` is integer division, so
+12 (not 12.5) and 6 (not 6.25) are exactly what the protocol pays; 3,061.0872 is the total *after* that
+truncation. No rounding rule is needed beyond the shift itself — which is why the constant can be pinned
+by a test instead of described in prose.
+
+The `× 0.8` density multiplier (`ai_governor.rs:111`) only reduces further, so 1,003,061.0872 is an
+**upper bound on supply**, reached only if the multiplier never triggers.
+
 **Ratify R1:** keep the schedule as written, and declare the cap **1,003,061.0872 `$ULTRA`** as a
 protocol constant with a test that pins it. Emission is the *only* mint in the system, forever. The
 `× 0.8` transaction-density multiplier in `ai_governor.rs:111` may only ever *reduce* emission, never
@@ -139,6 +171,60 @@ exists so that "anchored today" means something.
 magnitude of chain count (1,000 → 500 → 250), so the registry stays affordable at a million chains while
 L1 revenue still grows with the number of chains. Deliberately not now: a fee schedule that changes
 underneath owners needs its own activation-height process.
+
+### 4.3 Per-AppChain anchor pricing — what is real, and what it would cost to build
+
+**The proposal:** instead of one anchor price, each AppChain carries its own, so a symbolic puzzle pays
+less than an exchange. It is a reasonable instinct and it is *not* what the code does. Both halves of
+that need stating precisely, because a review claimed the mechanism already exists and is therefore free
+to switch on:
+
+| Path | Per-chain price? | Evidence |
+|---|---|---|
+| Legacy prototype registry (`/api/appchain/create`, `/api/appchain/anchor`) | A field **exists and is never varied** | `factory.rs:30` `default_anchor_fee()` returns the global constant; `api.rs:1499` writes that constant at creation; no route accepts a price |
+| Legacy charging basis | The chain's **derived treasury address** | `factory.rs:152`, `api.rs:1672` read `previous_config.anchor_fee` |
+| **Consensus ledger** (`AppChainAnchor`) | **No such field** | `grep -c anchor_fee src/appchain/ledger.rs` → `0`; `required_fee()` returns the global `APPCHAIN_ANCHOR_FEE` |
+
+The legacy field cannot be the foundation. Its fee is debited from a **keyless derived treasury**
+(`derive_appchain_treasury_address`), an address nobody can spend from — coins sent there are stranded,
+which is precisely why the ledger replaced it with a debit on the owner's own L1 account. It is also
+admin-token gated and never enters a block. Per-chain pricing in that path would price something that
+cannot pay.
+
+**What it would take in the ledger** (a real consensus change, comparable in size to the ownership
+transfer already shipped):
+
+1. A `minimum_anchor_fee` field on `LedgerChain`, set from the registration payload.
+2. An envelope rule: `tx.fee >= max(PROTOCOL_ANCHOR_FLOOR, chain.minimum_anchor_fee)` — a floor the
+   protocol owns, or an owner sets their own price to 1 base unit and pays nothing.
+3. A way to change it later, which is either a new signed operation or a re-registration, and its own
+   replay/idempotency rules.
+4. An activation height agreed by every validator, like every other consensus change.
+
+**The economics, stated honestly: flexible pricing does not raise L1 revenue by itself.** The revenue is
+`Σ anchors_i × price_i` and every owner chooses the smallest legal price. A chain with 10,000 users has
+no reason to declare 0.1 when the floor is 0.0001 — so the expected outcome is a **race to the floor** and
+the same revenue as today, with more code:
+
+| Scenario | Anchors/day | Daily L1 revenue |
+|---|---:|---:|
+| 10 chains at the floor (0.0001) | 40 | 0.004 |
+| 10 chains, one voluntarily at 0.01 | 40 | 0.014 (only if it chooses to) |
+| 10 chains at today's flat 0.001 | 40 | 0.04 |
+
+Note the third row: **today's flat fee already collects more than a floor-plus-choice model.** The
+flexibility argument and the revenue argument pull in opposite directions.
+
+**R3b (recommend: defer).** Price on what the L1 can *verify*, not on what an owner *declares*. The
+verifiable quantity is **anchor frequency** — an owner cannot fake anchoring more often, because each
+anchor is a paid transaction. A scheduled tier (first 4 anchors/day at 1,000, additional anchors at 2,000)
+charges a busy chain more while a small chain pays little, with no self-declared tier and no floor race.
+Per-chain pricing stays available as a product feature — a chain may *choose* to prepay for a higher-tier
+listing — but it is not an L1 revenue mechanism.
+
+**R3c (ratify).** If per-chain pricing is ever adopted, the protocol floor is
+`APPCHAIN_ANCHOR_FEE` (1,000 base units) and an owner may declare only **above** it. The floor is the
+spam barrier; it is not negotiable per chain.
 
 ---
 
@@ -318,6 +404,8 @@ Sign each line, or change it here first. This is the only approval mechanism.
 | C-1 | AppChain prices | 0.01 register, 0.001 anchor, 0.001 handover | ☐ |
 | C-2 | "Live" listing rule | ≥ 1 anchor/day, enforced by the app | ☐ |
 | C-3 | Volume-tiered anchor fee (phase 3) | halve per 10× chains above 10,000 | ☐ |
+| R3b | Per-AppChain anchor price | **rejected as an L1 revenue lever**; price by verifiable anchor frequency instead | ☐ |
+| R3c | Protocol anchor floor | 1,000 base units, owners may declare only above it | ☐ |
 | R4 | Standard reward | 100 base units, 3/day/address, 2,000/chain/day, 20,000/day global | ☐ |
 | R4b | Grid exception | 10 base units until its 1 `$ULTRA` pool ends | ☐ |
 | F-1 | Faucet budget | 1,200 `$ULTRA` lifetime, no refill from emission | ☐ |
@@ -347,3 +435,15 @@ updated in the same commit.
 - **AppChain utility fees** (what a chain charges its own users) — deliberately each owner's business.
 - **Prize legality** — entry-fee tournaments need legal review before they exist.
 - **Third-party chains** — v2 prices them exactly like ours, which is the point of a registry.
+
+---
+
+## 12. Revision log
+
+| Rev | Date | Change | Why |
+|---|---|---|---|
+| v2.0 | 2026-11-15 | First issue: R1–R6, 14 ratification rows | Establish one economic rule before code |
+| v2.1 | 2026-11-15 | Added §2.1 (cap derivation and its upper bound) and §4.3 (per-AppChain anchor pricing), rows R3b and R3c | Review questioned the emission total and claimed per-chain anchor pricing already worked. §2.1 shows 97 is the *sum* of era rewards, not era 0's reward, so 3,061.0872 stands and 6,074.34 exceeds the geometric ceiling. §4.3 shows the per-chain field lives only in the retired prototype and that floor-plus-choice pricing collects *less* than the flat fee. |
+
+Both challenges are recorded rather than quietly absorbed: a document that cannot show why it survived a
+review will be challenged again by the next reader.
