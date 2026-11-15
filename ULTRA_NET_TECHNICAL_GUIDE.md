@@ -644,7 +644,7 @@ An **AppChain** is an application-specific execution environment that runs its o
 
 ```mermaid
 graph LR
-    A[POST /api/appchain/create] --> B[AppChainRegistry.register_chain]
+    A[Owner signs AppChainRegister tx - POST /api/appchain/tx] --> B[appchain::ledger records the chain]
     B --> C[AppChainRuntime::new - isolated Sled DB]
     C --> D[AppChain processes its own txs via Move VM]
     D --> E[Periodic: produce_block generates FHE + recursive-ZK proof]
@@ -708,7 +708,7 @@ A 16-cell grid (0–15), one per state-trie shard, color-coded:
 |Button|Endpoint|Effect|
 |-|-|-|
 |**Manual Mine**|`POST /api/mine`|Immediately processes mempool into a new block|
-|**Register AppChain**|`POST /api/appchain/create`|Launches a new L3|
+|**Register AppChain** (retired)|`POST /api/appchain/create`|Answers `410 Gone`; the owner registers by signing `AppChainRegister`|
 |**Submit Join Proposal**|`POST /api/governance/propose`|Public validator application|
 |**Approve Proposal** (Sovereign only)|(2-of-3 signed tx)|Admits validator into swarm|
 
@@ -745,7 +745,7 @@ Base URL: `http://<host>:8081`
 |GET|`/api/fhe/stats`|Last FHE proving time / gas multiplier|
 |GET|`/api/state/size`|State trie size per shard|
 |POST|`/api/state/prune`|Trigger mark-and-sweep pruning|
-|POST|`/api/appchain/create`|Register a new AppChain|
+|POST|`/api/appchain/create`|Retired (`410 Gone`); register via `POST /api/appchain/tx`|
 |POST|`/api/appchain/anchor`|Anchor AppChain state to L1|
 |GET|`/api/appchain/list`|List active AppChains|
 |GET|`/api/appchain/anchors`|Anchoring history|

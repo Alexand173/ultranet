@@ -29,7 +29,7 @@ The bearer token protects administrative/state-changing routes:
 - `POST /api/mine`
 - `POST /api/move/resource`
 - `POST /api/state/prune`
-- `POST /api/appchain/create`
+- `POST /api/appchain/create` (retired, answers `410 Gone`; the token is still required)
 - `POST /api/appchain/anchor`
 
 Call protected routes with `Authorization: Bearer <ULTRANET_ADMIN_TOKEN>`. Missing, malformed, or incorrect tokens return `401 Unauthorized`. CORS preflight requests remain available, but the actual state-changing request must include the token. Wallet-signed transaction and governance proposal/approval endpoints retain their existing Dilithium verification contract and are not replaced by this node-admin token.

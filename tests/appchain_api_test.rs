@@ -15,9 +15,9 @@ use sha3::{Digest, Sha3_256};
 use std::fs;
 use std::sync::Arc;
 use UltraNet::api::{
-    appchain_ledger, appchain_ledger_anchors, appchain_ledger_chain,
-    appchain_request_to_transaction, submit_appchain_tx, AppChainOperation, AppChainTxRequest,
-    AppState,
+    appchain_ledger, appchain_ledger_anchors, appchain_ledger_chain, appchain_overview,
+    appchain_request_to_transaction, list_appchains, submit_appchain_tx, AppChainOperation,
+    AppChainTxRequest, AppState,
 };
 use UltraNet::appchain::ledger::{
     APPCHAIN_ANCHOR_FEE, APPCHAIN_REGISTER_FEE, APPCHAIN_TRANSFER_FEE, APPCHAIN_TX_VERSION,
@@ -76,7 +76,9 @@ async fn register_then_anchor_through_the_public_api() {
             .route("/api/appchain/tx", web::post().to(submit_appchain_tx))
             .route("/api/appchain/ledger", web::get().to(appchain_ledger))
             .route("/api/appchain/ledger/{chain_id}", web::get().to(appchain_ledger_chain))
-            .route("/api/appchain/ledger/{chain_id}/anchors", web::get().to(appchain_ledger_anchors)),
+            .route("/api/appchain/ledger/{chain_id}/anchors", web::get().to(appchain_ledger_anchors))
+            .route("/api/appchain/list", web::get().to(list_appchains))
+            .route("/api/appchain/overview", web::get().to(appchain_overview)),
     )
     .await;
 
@@ -142,6 +144,28 @@ async fn register_then_anchor_through_the_public_api() {
     assert_eq!(chains[0]["name"], "UltraNet Grid");
     assert_eq!(chains[0]["owner"], owner.address.as_str(), "the signer is the owner");
 
+    // The website and the operator dashboard read these two routes, not the ledger routes. A chain
+    // the ledger knows about has to appear here, or a successful registration looks like it failed.
+    let overview: Value =
+        actix_test::call_and_read_body_json(&app, get("/api/appchain/overview")).await;
+    let views = overview["chains"].as_array().unwrap();
+    assert_eq!(views.len(), 1, "the ledger registration must be visible: {overview}");
+    assert_eq!(views[0]["name"], "UltraNet Grid");
+    assert_eq!(views[0]["owner"], owner.address.as_str());
+    assert_eq!(views[0]["source"], "ledger");
+    assert_eq!(views[0]["account_address"], "", "a ledger chain has no treasury");
+    assert_eq!(views[0]["balance"], "", "no treasury means no balance to report");
+    assert!(views[0]["registered_block"].as_u64().is_some(), "the block it landed in is reported");
+    assert_eq!(views[0]["registered_tx"].as_str().map(str::len), Some(64));
+    assert_eq!(
+        views[0]["anchor_availability"], "not-implemented",
+        "the node holds no owner key, so it cannot anchor this chain for the owner"
+    );
+    assert_eq!(overview["totals"]["anchor_count"], 0);
+
+    let list: Value = actix_test::call_and_read_body_json(&app, get("/api/appchain/list")).await;
+    assert_eq!(list["chains"].as_array().unwrap().len(), 1);
+
     // Anchor: the owner signs a state root for chain #1.
     let root = "ab".repeat(32);
     let anchor = signed_request(
@@ -167,6 +191,20 @@ async fn register_then_anchor_through_the_public_api() {
 
     let chain: Value = actix_test::call_and_read_body_json(&app, get("/api/appchain/ledger/1")).await;
     assert_eq!(chain["chain"]["anchor_count"], 1);
+
+    // The anchor has to reach the dashboard too, including when it happened: the chain record only
+    // carries a block index, so the view reads the anchor's own timestamp.
+    let overview: Value =
+        actix_test::call_and_read_body_json(&app, get("/api/appchain/overview")).await;
+    assert_eq!(overview["chains"][0]["anchor_count"], 1);
+    assert_eq!(overview["chains"][0]["latest_state_root"], root.as_str());
+    assert!(
+        overview["chains"][0]["latest_anchor_at"].as_u64().is_some(),
+        "the anchor's block time must reach the dashboard: {overview}"
+    );
+    assert_eq!(overview["totals"]["anchor_count"], 1);
+    assert_eq!(overview["totals"]["anchor_spend"], APPCHAIN_ANCHOR_FEE.to_string());
+
     let missing = actix_test::call_service(&app, get("/api/appchain/ledger/7")).await;
     assert_eq!(missing.status(), 404);
 

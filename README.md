@@ -112,7 +112,7 @@ Do not extract or run an archive if its checksum does not match. For non-x86_64 
 
 ### AppChain management and test anchoring
 
-AppChain creation and anchoring are authenticated operator operations. The `/api/appchain/overview` endpoint exposes registry metadata, the dedicated L1 treasury address, live treasury balance, and cumulative protocol debits. `POST /api/appchain/create` creates a durable registry record and derives a unique treasury address; the treasury starts at zero and must be funded through a normal L1 transfer.
+AppChains are registered by their owner signing a version-5 `AppChainRegister` transaction against the node (`POST /api/appchain/tx`, or `appchain-cli register`); the node assigns the id and the signer becomes the owner. `/api/appchain/overview` and `/api/appchain/list` read both stores: ledger chains, which are owned and anchored by an L1 address and have no treasury, and legacy factory registry chains, which carry a dedicated treasury address, live balance and cumulative protocol debits. `POST /api/appchain/create` is retired and answers `410 Gone`.
 
 `POST /api/appchain/{chain_id}/anchor` snapshots the server-side L3 state, derives a deterministic SHA3-256 state root, creates and verifies a versioned proof envelope, then records the anchor fee debit against that AppChain treasury. The current proof scheme is a server-verified state commitment; a recursive ZK proof circuit can replace the envelope in a later protocol version without changing the treasury contract.
 

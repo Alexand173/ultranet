@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::sync::Arc;
 use std::{
+    collections::BTreeMap,
     env, fs,
     io::{self, Read},
     path::Path,
@@ -1281,15 +1282,6 @@ async fn manual_prune(state: web::Data<AppState>) -> impl Responder {
     }))
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CreateAppChainRequest {
-    pub name: String,
-    /// A display owner address or alias. The node derives a separate treasury
-    /// address and never accepts a caller-selected treasury account.
-    pub owner: String,
-}
-
 #[derive(Debug, Serialize)]
 pub struct AppChainView {
     pub id: u32,
@@ -1306,6 +1298,13 @@ pub struct AppChainView {
     pub latest_state_root: Option<String>,
     pub anchor_availability: &'static str,
     pub proof_scheme: &'static str,
+    /// Which store knows this chain: `"ledger"` when its owner signed a version-5 L1
+    /// transaction, `"registry"` for a legacy factory record, or `"ledger+registry"`
+    /// when both do. A ledger chain has no treasury of its own.
+    pub source: &'static str,
+    /// Ledger chains only: the L1 transaction that registered them.
+    pub registered_tx: Option<String>,
+    pub registered_block: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1328,14 +1327,6 @@ pub struct AppChainOverviewResponse {
 pub struct AppChainListResponse {
     pub success: bool,
     pub chains: Vec<AppChainView>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CreateAppChainResponse {
-    pub success: bool,
-    pub message: String,
-    pub chain_id: u32,
-    pub chain: AppChainView,
 }
 
 #[derive(Debug, Serialize)]
@@ -1451,112 +1442,18 @@ async fn get_manifest() -> impl Responder {
     })
 }
 
-fn validate_appchain_name(name: &str) -> Result<String, String> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Err("AppChain name is required".to_string());
-    }
-    if name.len() > 80 {
-        return Err("AppChain name must be 80 characters or fewer".to_string());
-    }
-    if !name
-        .chars()
-        .all(|character| character.is_ascii_alphanumeric() || " -_".contains(character))
-    {
-        return Err(
-            "AppChain name may contain only letters, numbers, spaces, hyphens, and underscores"
-                .to_string(),
-        );
-    }
-    Ok(name.to_string())
-}
-
-// Create AppChain
-async fn create_appchain(
-    state: web::Data<AppState>,
-    req: web::Json<CreateAppChainRequest>,
-) -> impl Responder {
-    let name = match validate_appchain_name(&req.name) {
-        Ok(name) => name,
-        Err(message) => {
-            return HttpResponse::BadRequest().json(serde_json::json!({
-                "success": false,
-                "message": message,
-            }))
-        }
-    };
-    let owner = req.owner.trim();
-    if owner.is_empty() || owner.len() > 120 {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "success": false,
-            "message": "AppChain owner is required and must be 120 characters or fewer",
-        }));
-    }
-    let blockchain = state.blockchain.read();
-    let mut registry = blockchain.appchain_registry.write();
-    let chain_id = match registry.next_chain_id() {
-        Ok(chain_id) => chain_id,
-        Err(message) => {
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "success": false,
-                "message": message,
-            }))
-        }
-    };
-    let config = crate::appchain::AppChainConfig {
-        id: chain_id,
-        name,
-        owner: owner.to_string(),
-        account_address: crate::appchain::derive_appchain_treasury_address(chain_id),
-        genesis_root: [0u8; 32],
-        anchor_fee: crate::appchain::DEFAULT_APPCHAIN_ANCHOR_FEE,
-        anchor_spend: 0,
-        anchor_count: 0,
-        latest_anchor_at: None,
-        latest_state_root: None,
-    };
-
-    if let Err(message) = blockchain.storage.save_appchain_config(&config) {
-        return HttpResponse::InternalServerError().json(serde_json::json!({
-            "success": false,
-            "message": format!("Unable to persist AppChain config: {message}"),
-        }));
-    }
-    if let Err(message) = registry.register_chain(config.clone()) {
-        let _ = blockchain.storage.delete_appchain_config(chain_id);
-        return HttpResponse::Conflict().json(serde_json::json!({
-            "success": false,
-            "message": message,
-        }));
-    }
-    drop(registry);
-
-    // Keep AppChain state under the same durable root as the node. If the
-    // isolated runtime cannot open, roll back the registry record instead of
-    // panicking after the config has been persisted.
-    let db_path = std::env::var("ULTRANET_DB_PATH").unwrap_or_else(|_| "ultranet_db".to_string());
-    if let Err(error) = crate::appchain::AppChainRuntime::try_new(chain_id, &db_path) {
-        let _ = blockchain.storage.delete_appchain_config(chain_id);
-        blockchain
-            .appchain_registry
-            .write()
-            .active_chains
-            .remove(&chain_id);
-        return HttpResponse::InternalServerError().json(serde_json::json!({
-            "success": false,
-            "message": format!("Unable to open AppChain runtime: {error}"),
-        }));
-    }
-
-    HttpResponse::Ok().json(CreateAppChainResponse {
-        success: true,
-        message: format!(
-            "AppChain #{} ('{}') created successfully!",
-            config.id, config.name
-        ),
-        chain_id,
-        chain: appchain_view(&blockchain, &config),
-    })
+// Retired: node-side AppChain creation.
+//
+// A chain is created by its owner signing a version-5 AppChainRegister transaction, which is the
+// only form the consensus ledger records and therefore the only one the API views can see. The
+// factory path that used to live here minted chains in a separate store, with its own id space
+// starting at 1 and no way to anchor them, so it is gone rather than kept as a second source of
+// truth. The route stays mounted so an old client gets a message naming the replacement.
+async fn create_appchain() -> impl Responder {
+    HttpResponse::Gone().json(serde_json::json!({
+        "success": false,
+        "message": "AppChain creation through the node is retired. Register by signing an AppChainRegister transaction with the owner key: appchain-cli register --key-file <owner-key> --name <name> --node <api-url>",
+    }))
 }
 
 fn test_anchoring_enabled() -> bool {
@@ -1591,19 +1488,88 @@ fn appchain_view(
         latest_state_root: config.latest_state_root.clone(),
         anchor_availability: appchain_anchor_availability(),
         proof_scheme: APPCHAIN_PROOF_SCHEME,
+        source: "registry",
+        registered_tx: None,
+        registered_block: None,
     }
 }
 
+/// A chain the consensus ledger knows about, i.e. one whose owner signed a version-5 L1
+/// transaction. There is no treasury address behind it — the owner pays from their own balance —
+/// so the fields the ledger does not model stay empty instead of carrying zeroes that read like
+/// real values. The website renders an empty string as "Unavailable", which is the truth.
+fn ledger_appchain_view(
+    blockchain: &UltraBlockchain,
+    chain: &crate::appchain::ledger::LedgerChain,
+) -> AppChainView {
+    use crate::appchain::ledger;
+
+    // The chain record keeps the block its latest anchor landed in, not a wall-clock time; the
+    // anchor record itself carries the timestamp.
+    let latest_anchor_at = if chain.anchor_count == 0 {
+        None
+    } else {
+        blockchain
+            .storage
+            .ledger_anchors(chain.id, chain.anchor_count, 1)
+            .ok()
+            .and_then(|anchors| anchors.first().map(|anchor| anchor.block_timestamp))
+    };
+
+    AppChainView {
+        id: chain.id,
+        name: chain.name.clone(),
+        owner: chain.owner.clone(),
+        account_address: String::new(),
+        genesis_root: String::new(),
+        anchor_fee: ledger::APPCHAIN_ANCHOR_FEE.to_string(),
+        balance: String::new(),
+        // Every anchor moved the protocol anchor fee out of the owner's balance.
+        anchor_spend: chain
+            .anchor_count
+            .saturating_mul(ledger::APPCHAIN_ANCHOR_FEE)
+            .to_string(),
+        anchor_count: chain.anchor_count,
+        latest_anchor_at,
+        latest_state_root: chain.latest_state_root.clone(),
+        // The node holds no owner key, so it cannot anchor this chain on the owner's behalf.
+        anchor_availability: "not-implemented",
+        proof_scheme: APPCHAIN_PROOF_SCHEME,
+        source: "ledger",
+        registered_tx: Some(chain.registered_tx.clone()),
+        registered_block: Some(chain.registered_block),
+    }
+}
+
+/// Every chain this node knows about, from both stores that can know one.
+///
+/// The consensus ledger and the (now retired) factory registry are separate sled trees that never
+/// learned about each other, so reading the registry alone hid every ledger registration: UltraGrid
+/// #1 was on chain and invisible here. The ledger is the authority for existence, ownership and
+/// anchor history; a matching registry record still contributes the treasury it funded.
 fn appchain_views(
     blockchain: &UltraBlockchain,
     registry: &crate::appchain::AppChainRegistry,
-) -> Vec<AppChainView> {
-    let mut chains = registry.active_chains.values().collect::<Vec<_>>();
-    chains.sort_by_key(|config| config.id);
-    chains
-        .into_iter()
-        .map(|config| appchain_view(blockchain, config))
-        .collect()
+) -> Result<Vec<AppChainView>, String> {
+    let mut views: BTreeMap<u32, AppChainView> = registry
+        .active_chains
+        .values()
+        .map(|config| (config.id, appchain_view(blockchain, config)))
+        .collect();
+
+    for chain in blockchain.storage.ledger_chains()? {
+        let mut view = ledger_appchain_view(blockchain, &chain);
+        if let Some(registry_view) = views.remove(&chain.id) {
+            view.account_address = registry_view.account_address;
+            view.genesis_root = registry_view.genesis_root;
+            view.balance = registry_view.balance;
+            view.anchor_availability = registry_view.anchor_availability;
+            view.source = "ledger+registry";
+        }
+        views.insert(chain.id, view);
+    }
+
+    Ok(views.into_values().collect())
 }
 
 fn now_seconds() -> u64 {
@@ -1644,6 +1610,23 @@ async fn run_appchain_anchor(
     let blockchain = state.blockchain.read();
     let mut registry = blockchain.appchain_registry.write();
     let Some(previous_config) = registry.get_chain(chain_id).cloned() else {
+        // A ledger chain is anchored by its owner signing a version-5 transaction; this endpoint
+        // only knows the factory registry and has no key to sign with. Say which path to take
+        // rather than reporting the chain as missing.
+        if blockchain
+            .storage
+            .ledger_chain(chain_id)
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return HttpResponse::Conflict().json(serde_json::json!({
+                "success": false,
+                "message": format!(
+                    "AppChain #{chain_id} is anchored by its owner: sign an AppChainAnchor transaction with the owner key instead of anchoring from the node"
+                ),
+            }));
+        }
         return HttpResponse::NotFound().json(serde_json::json!({
             "success": false,
             "message": format!("AppChain #{chain_id} was not found"),
@@ -3305,11 +3288,7 @@ pub async fn list_approval_journal(
     }))
 }
 
-fn appchain_overview_totals(
-    blockchain: &UltraBlockchain,
-    registry: &crate::appchain::AppChainRegistry,
-) -> AppChainOverviewTotals {
-    let chains = appchain_views(blockchain, registry);
+fn appchain_overview_totals(chains: &[AppChainView]) -> AppChainOverviewTotals {
     AppChainOverviewTotals {
         anchor_count: chains
             .iter()
@@ -3324,29 +3303,41 @@ fn appchain_overview_totals(
 }
 
 // Get AppChain list
-async fn list_appchains(state: web::Data<AppState>) -> impl Responder {
+pub async fn list_appchains(state: web::Data<AppState>) -> impl Responder {
     let blockchain = state.blockchain.read();
     let registry = blockchain.appchain_registry.read();
 
-    HttpResponse::Ok().json(AppChainListResponse {
-        success: true,
-        chains: appchain_views(&blockchain, &registry),
-    })
+    match appchain_views(&blockchain, &registry) {
+        Ok(chains) => HttpResponse::Ok().json(AppChainListResponse {
+            success: true,
+            chains,
+        }),
+        Err(error) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "message": format!("Unable to read the AppChain ledger: {error}"),
+        })),
+    }
 }
 
 // Get AppChain registry data used by the operator dashboard.
-async fn appchain_overview(state: web::Data<AppState>) -> impl Responder {
+pub async fn appchain_overview(state: web::Data<AppState>) -> impl Responder {
     let blockchain = state.blockchain.read();
     let registry = blockchain.appchain_registry.read();
 
-    HttpResponse::Ok().json(AppChainOverviewResponse {
-        success: true,
-        chains: appchain_views(&blockchain, &registry),
-        totals: appchain_overview_totals(&blockchain, &registry),
-        anchor_availability: appchain_anchor_availability(),
-        proof_scheme: APPCHAIN_PROOF_SCHEME,
-        updated_at: now_seconds(),
-    })
+    match appchain_views(&blockchain, &registry) {
+        Ok(chains) => HttpResponse::Ok().json(AppChainOverviewResponse {
+            success: true,
+            totals: appchain_overview_totals(&chains),
+            chains,
+            anchor_availability: appchain_anchor_availability(),
+            proof_scheme: APPCHAIN_PROOF_SCHEME,
+            updated_at: now_seconds(),
+        }),
+        Err(error) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "message": format!("Unable to read the AppChain ledger: {error}"),
+        })),
+    }
 }
 
 // Get AI Governance history
@@ -3794,7 +3785,7 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
     println!("   GET  /api/recursive/verify - Verify chain");
     println!("   GET  /api/stm/stats - Block-STM statistics");
     println!("   GET  /api/fhe/pk - FHE Public Key");
-    println!("   POST /api/appchain/create - Create L3 AppChain with dedicated treasury");
+    println!("   POST /api/appchain/create - RETIRED (410): register by signing an AppChainRegister transaction");
     println!("   POST /api/appchain/{{chain_id}}/anchor - Server-verified AppChain anchor");
     println!("   POST /api/appchain/{{chain_id}}/anchor/test - Development-only fixture anchor");
     println!("   POST /api/governance/propose - Submit validator proposal");
