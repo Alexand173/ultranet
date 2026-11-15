@@ -354,6 +354,15 @@ pub mod merkle_tree {
 // ============================================================
 // 3. BLS AGREGACIJA SA THRESHOLD-OM
 // ============================================================
+/// The address that may spend a validator's block reward and fees.
+///
+/// This used to be `hex::encode(public_key)` — the raw key, thousands of characters long, which is
+/// not an address and which no wallet can spend. Every reward and every fee was credited to that
+/// phantom account. The rule here is the same one wallets use: `hex(SHA3-256(public_key))`.
+pub fn validator_payout_address(public_key: &[u8]) -> String {
+    QuantumKeyPair::address_from_public_key(public_key)
+}
+
 pub mod bls_aggregation {
     use super::*;
     use bls_signatures::{PublicKey, Serialize, Signature};
@@ -1944,7 +1953,7 @@ impl UltraBlockchain {
                 total_tx_count += 1;
             }
             if let Some(first_validator) = block.validator_set.first() {
-                let validator_address = hex::encode(first_validator);
+                let validator_address = validator_payout_address(first_validator);
                 let reward_balance = rebuilt_state.entry(validator_address.clone()).or_insert(0);
                 *reward_balance = reward_balance.saturating_add(block.block_reward);
 
@@ -3798,7 +3807,7 @@ impl UltraBlockchain {
 
         // Nagrade i fee-jevi
         if let Some(first_validator) = block.validator_set.first() {
-            let validator_address = hex::encode(first_validator);
+            let validator_address = validator_payout_address(first_validator);
             let starting_balance = self
                 .candidate_account_balance(&candidate_trie, &move_vm, &validator_address)
                 .unwrap_or(0);
@@ -3817,7 +3826,7 @@ impl UltraBlockchain {
         if total_fees > 0 && !block.validator_set.is_empty() {
             let fee_per_validator = total_fees / block.validator_set.len() as u64;
             for validator_pk in &block.validator_set {
-                let validator_address = hex::encode(validator_pk);
+                let validator_address = validator_payout_address(validator_pk);
                 let starting_balance = self
                     .candidate_account_balance(&candidate_trie, &move_vm, &validator_address)
                     .unwrap_or(0);
@@ -4059,7 +4068,7 @@ impl UltraBlockchain {
 
         // Dodaj block reward prvom validatoru
         if let Some(first_validator) = block.validator_set.first() {
-            let validator_address = hex::encode(first_validator);
+            let validator_address = validator_payout_address(first_validator);
 
             let reward_balance = self
                 .get_unadjusted_balance(&validator_address)
@@ -4073,7 +4082,7 @@ impl UltraBlockchain {
         if total_fees > 0 && !block.validator_set.is_empty() {
             let fee_per_validator = total_fees / block.validator_set.len() as u64;
             for validator_pk in &block.validator_set {
-                let validator_address = hex::encode(validator_pk);
+                let validator_address = validator_payout_address(validator_pk);
 
                 let fee_balance = self
                     .get_unadjusted_balance(&validator_address)
@@ -5712,5 +5721,22 @@ mod emission_schedule_tests {
             UltraBlockchain::GENESIS_REWARD / 2
         );
         assert_eq!(governor.predict_optimal_reward(UltraBlockchain::GENESIS_REWARD, interval * 19), 0);
+    }
+}
+
+/// The payout address defect: rewards and fees were credited to `hex(raw key)`, which is not an
+/// address and cannot be spent. This fails if anyone reintroduces it.
+#[cfg(test)]
+mod payout_address_tests {
+    use super::*;
+
+    #[test]
+    fn a_validator_is_paid_at_the_hash_of_its_key() {
+        let public_key = vec![0x11u8; 48];
+        let payout = validator_payout_address(&public_key);
+        assert_eq!(payout.len(), 64, "an address is 64 hex characters");
+        assert_eq!(payout, QuantumKeyPair::address_from_public_key(&public_key));
+        assert_ne!(payout, hex::encode(&public_key), "the raw key is not an address");
+        assert!(UltraBlockchain::is_valid_address(&payout));
     }
 }
