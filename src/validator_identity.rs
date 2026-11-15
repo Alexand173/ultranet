@@ -48,6 +48,14 @@ pub fn ensure(db_path: &Path) -> Result<String, String> {
     Ok(identity.keypair.address())
 }
 
+/// The node's validator keypair, for a caller that has to sign with it — applying as a validator.
+///
+/// The key never leaves the process: the caller signs inside a single command and drops the keypair.
+/// Everything that only needs the address should use `ensure`, which does not hand the secret out.
+pub fn load_keypair(db_path: &Path) -> Result<QuantumKeyPair, String> {
+    Ok(load_or_create(db_path)?.keypair)
+}
+
 /// Export only the persistent validator public key as lowercase hexadecimal.
 /// The corresponding secret key is never written to the requested output path.
 pub fn export_public_key(
