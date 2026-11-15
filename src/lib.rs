@@ -445,25 +445,6 @@ pub fn payout_credits(
     credits
 }
 
-/// The validators a chain's approval journal activated, keyed by the approval transaction's hash.
-///
-/// Restart replay uses this to know that a validator was paid from the block carrying its approval
-/// onwards, and not for the blocks before it. Reading the final registry for every historical block
-/// would credit blocks that actually paid nobody.
-pub fn approval_keys_by_tx(
-    records: &[ValidatorApprovalRecord],
-) -> std::collections::HashMap<[u8; 32], Vec<u8>> {
-    records
-        .iter()
-        .map(|record| {
-            (
-                record.approval_transaction.get_hash(),
-                record.activated_validator.public_key.clone(),
-            )
-        })
-        .collect()
-}
-
 pub mod bls_aggregation {
     use super::*;
     use bls_signatures::{PublicKey, Serialize, Signature};
@@ -1962,31 +1943,31 @@ impl UltraBlockchain {
             existing_blocks
         };
 
-        // ✅ NOVO: Rekonstruiši state (balansi) i brojače replay-ovanjem
-        // svih blokova sa diska. Bez ovoga bi `state` HashMap bio prazan
-        // pri svakom restartu, iako su transakcije već izvršene ranije.
-        let mut rebuilt_state: HashMap<String, u64> = HashMap::new();
+        // Account balances come from the state shards. `update_state` writes every transition there
+        // through `apply_account_balance`, so the persisted set is the authoritative post-block state.
+        // This used to re-derive balances from the transactions instead, which seeded only the
+        // sovereign and invented a 1,000-unit opening balance for every other account it met
+        // (`or_insert(1000)`) — so a restart replaced real balances with a fiction. Seeding from the
+        // stored state removes that, and with it the only reason replay had to guess at payouts: the
+        // block reward and fees are already in the balances it is copying.
+        //
+        // What is still derived below is what is not stored per account: nonces, the epoch, the
+        // difficulty and the state-root history.
+        let rebuilt_state = storage.get_all_state();
         let mut rebuilt_merkle_tree = MerkleTree::new(256);
+        for (address, balance) in &rebuilt_state {
+            rebuilt_merkle_tree.insert(address.as_bytes(), &balance.to_le_bytes());
+        }
+        // A trie that had to be rebuilt starts empty, so it is filled from the same authoritative set.
         if trie_needs_rebuild {
-            // A database without blocks has no historical state to replay. The
-            // account shard is therefore the canonical pre-state for genesis.
-            for (address, balance) in storage.get_all_state() {
-                rebuilt_state.insert(address.clone(), balance);
-                rebuilt_merkle_tree.insert(address.as_bytes(), &balance.to_le_bytes());
-            }
-        } else if let Some(genesis) = chain.first() {
-            // For an existing chain, only read the account snapshot represented
-            // by the stored genesis roots; current state shards may be newer.
-            let genesis_account_key = format!("acc:{}", Self::SOVEREIGN_ADDR);
-            let genesis_trie =
-                ShardedStateTrie::new(storage.trie_shards.clone(), genesis.shard_roots.clone());
-            let genesis_shard = storage.get_shard_id(genesis_account_key.as_bytes());
-            if let Some(balance) = genesis_trie
-                .get(genesis_shard, genesis_account_key.as_bytes())
-                .and_then(|bytes| bytes.try_into().ok().map(u64::from_le_bytes))
-            {
-                rebuilt_state.insert(Self::SOVEREIGN_ADDR.to_string(), balance);
-                rebuilt_merkle_tree.insert(Self::SOVEREIGN_ADDR.as_bytes(), &balance.to_le_bytes());
+            for (address, balance) in &rebuilt_state {
+                let account_key = format!("acc:{address}");
+                let account_shard = storage.get_shard_id(account_key.as_bytes());
+                let _ = state_trie_instance.write().insert(
+                    account_shard,
+                    account_key.as_bytes(),
+                    &balance.to_le_bytes(),
+                );
             }
         }
         let mut rebuilt_history: Vec<[u8; 32]> = Vec::new();
@@ -1995,144 +1976,16 @@ impl UltraBlockchain {
         let mut last_epoch: u64 = 0;
         let mut last_total_difficulty: u128 = 4;
 
-        // Who may be paid, block by block. The live path activates a validator when its approval is
-        // admitted, before the block carrying it is mined, so that block is the first one the validator
-        // is paid for. Reading the final registry for every historical block instead would credit
-        // blocks that actually paid nobody — the placeholders-only stretch at the start of a chain.
-        let chain_tx_hashes: std::collections::HashSet<[u8; 32]> = chain
-            .iter()
-            .flat_map(|block| block.transactions.iter())
-            .map(|tx| tx.get_hash())
-            .collect();
-        let approval_keys = approval_keys_by_tx(&approval_records);
-        let mut eligible_validators: HashMap<Vec<u8>, bls_aggregation::ValidatorInfo> = HashMap::new();
-        // A validator that is eligible but whose approval is not in this chain was already active
-        // before block 1 — a seeded, migrated or journal-recovered set — and is payable from the first
-        // block, exactly as it was.
-        for info in validator_instance.validators.values() {
-            if !info.reward_eligible || !info.is_active {
-                continue;
-            }
-            let approved_in_chain = approval_keys
-                .iter()
-                .any(|(tx_hash, key)| key == &info.public_key && chain_tx_hashes.contains(tx_hash));
-            if !approved_in_chain {
-                eligible_validators.insert(info.public_key.clone(), info.clone());
-            }
-        }
-
+        // Nonces, the epoch, the difficulty and the state-root history are derived from the blocks
+        // themselves; balances are not, because they are durable.
         for block in &chain {
             for tx in &block.transactions {
-                if let TransactionPayload::SovereignSupplyCorrection {
-                    target_address,
-                    target_balance,
-                    ..
-                } = &tx.payload
-                {
-                    // A correction is not a transfer to `0x0`. Replaying it
-                    // as a zero-value transfer would materialize fake 1000-unit
-                    // accounts and lose the corrected sovereign balance.
-                    rebuilt_state.insert(target_address.clone(), *target_balance);
-                    rebuilt_merkle_tree
-                        .insert(target_address.as_bytes(), &target_balance.to_le_bytes());
-
-                    if trie_needs_rebuild {
-                        let key = format!("acc:{target_address}");
-                        let shard = storage.get_shard_id(key.as_bytes());
-                        let _ = state_trie_instance.write().insert(
-                            shard,
-                            key.as_bytes(),
-                            &target_balance.to_le_bytes(),
-                        );
-                    }
-                } else {
-                    let new_sender_balance = {
-                        let bal = rebuilt_state.entry(tx.sender.clone()).or_insert(1000);
-                        *bal = bal.saturating_sub(tx.amount + tx.fee);
-                        *bal
-                    };
-                    let new_recipient_balance = {
-                        let bal = rebuilt_state.entry(tx.recipient.clone()).or_insert(1000);
-                        *bal = bal.saturating_add(tx.amount);
-                        *bal
-                    };
-                    rebuilt_merkle_tree
-                        .insert(tx.sender.as_bytes(), &new_sender_balance.to_le_bytes());
-                    rebuilt_merkle_tree.insert(
-                        tx.recipient.as_bytes(),
-                        &new_recipient_balance.to_le_bytes(),
-                    );
-
-                    // ✅ AŽURIRAJ MPT TRIE (samo ako je potreban rebuild)
-                    if trie_needs_rebuild {
-                        let s_key = format!("acc:{}", tx.sender);
-                        let r_key = format!("acc:{}", tx.recipient);
-                        let s_shard = storage.get_shard_id(s_key.as_bytes());
-                        let r_shard = storage.get_shard_id(r_key.as_bytes());
-
-                        let _ = state_trie_instance.write().insert(
-                            s_shard,
-                            s_key.as_bytes(),
-                            &new_sender_balance.to_le_bytes(),
-                        );
-                        let _ = state_trie_instance.write().insert(
-                            r_shard,
-                            r_key.as_bytes(),
-                            &new_recipient_balance.to_le_bytes(),
-                        );
-                    }
-                }
-
                 let next_nonce = tx.nonce.saturating_add(1);
                 let current_nonce = rebuilt_nonces.entry(tx.sender.clone()).or_insert(0);
                 *current_nonce = (*current_nonce).max(next_nonce);
                 total_tx_count += 1;
             }
-            // The approval transaction in this block makes its validator payable from here on.
-            for tx in &block.transactions {
-                if let Some(public_key) = approval_keys.get(&tx.get_hash()) {
-                    if let Some(info) = validator_instance.get_validator_info(public_key) {
-                        if info.is_active && info.reward_eligible && info.weight > 0 {
-                            eligible_validators.insert(public_key.clone(), info.clone());
-                        }
-                    }
-                }
-            }
 
-            // Reward and fees for this block, by exactly the rule the block was applied under. This
-            // used to credit `hex(first_validator)` — the raw public key, which is not an address — with
-            // the whole reward and to drop the fees entirely, so every restart re-created an unspendable
-            // account and lost what validators had actually been paid.
-            //
-            // Genesis is excluded: it carries a reward field, but no block was mined and `update_state`
-            // was never applied to it, so paying it here would credit a block that paid nobody.
-            let shares = if block.index == 0 {
-                Vec::new()
-            } else {
-                payout_shares_for(&block.validator_set, &|public_key| {
-                    eligible_validators.get(public_key).cloned()
-                })
-            };
-            let replay_fees: u64 = block.transactions.iter().map(|tx| tx.fee).sum();
-            for (validator_address, amount) in
-                payout_credits(block.block_reward, replay_fees, &shares)
-            {
-                let balance = rebuilt_state.entry(validator_address.clone()).or_insert(0);
-                *balance = balance.saturating_add(amount);
-
-                // ✅ AŽURIRAJ MPT TRIE (samo ako je potreban rebuild)
-                if trie_needs_rebuild {
-                    let v_key = format!("acc:{}", validator_address);
-                    let v_shard = storage.get_shard_id(v_key.as_bytes());
-                    let _ = state_trie_instance.write().insert(
-                        v_shard,
-                        v_key.as_bytes(),
-                        &balance.to_le_bytes(),
-                    );
-                }
-            }
-
-            // ✅ DODAJ U ISTORIJU ROOT-OVA ZA PRUNING
             rebuilt_history.push(block.state_root);
             if rebuilt_history.len() > 100 {
                 rebuilt_history.remove(0);
@@ -6053,48 +5906,6 @@ mod payout_accounting_tests {
         );
     }
 
-    #[test]
-    fn replay_finds_a_validator_by_its_approval_transaction() {
-        let key = vec![0xABu8; 48];
-        let approval = Transaction {
-            sender: "3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c".to_string(),
-            sender_public_key: vec![],
-            recipient: "0x0".to_string(),
-            amount: 0,
-            signature: vec![],
-            zk_proof: vec![],
-            nullifier: [7u8; 32],
-            timestamp: 1_800_000_000,
-            fee: 0,
-            nonce: 1,
-            gas_limit: 100_000,
-            gas_price: 1,
-            proof_type: ProofType::Ownership,
-            payload: TransactionPayload::StandardTransfer,
-            chain_id: 0,
-            version: 3,
-        };
-        let approval_hash = approval.get_hash();
-        let journal = vec![ValidatorApprovalRecord {
-            proposal_hash: [0u8; 32],
-            approval_transaction: approval,
-            proposal: ValidatorJoinProposalData {
-                public_key: key.clone(),
-                metadata: "validator".to_string(),
-                proposer: "3b8ef38a".to_string(),
-                timestamp: 1_800_000_000,
-            },
-            activated_validator: record(key.clone(), 1, true),
-            recorded_at: 1_800_000_001,
-        }];
-
-        let by_tx = approval_keys_by_tx(&journal);
-        assert_eq!(
-            by_tx.get(&approval_hash),
-            Some(&key),
-            "replay must credit the validator from the block that carried this approval, not before"
-        );
-    }
 }
 
 /// The restart drill. A reset is a first start on an empty database and a restart is a replay of every
@@ -6214,11 +6025,11 @@ mod restart_replay_tests {
             payout_after_mining,
             "replay reproduced the payout the block actually made"
         );
-        // The payer's balance is not asserted here: replay restores only the sovereign's opening
-        // balance and defaults every other account to 1_000 before applying transactions, so a payer
-        // comes back wrong. That is `restart_restores_every_balance` below, ignored, and it is what
-        // the reset runbook's P1 gate must be certified against.
-        let _ = payer_after;
+        assert_eq!(
+            reopened.get_unadjusted_balance(&payer.address),
+            payer_after,
+            "replay reproduced the payer balance, including the fee"
+        );
         assert_eq!(
             reopened.get_unadjusted_balance(&raw_key_account),
             0,
@@ -6230,12 +6041,12 @@ mod restart_replay_tests {
 
     /// The P1 gate in `docs/runbooks/chain-reset-2026-11-15.md`.
     ///
-    /// It fails today, for a reason older than the payout rewrite: the replay seeds only
-    /// `SOVEREIGN_ADDR` from the parent chain's genesis roots and starts every other account at
-    /// `or_insert(1000)`, so a restart replaces real balances with 1_000 minus fees. Remove this
-    /// `ignore` when that is fixed — until then the reset runbook's first gate cannot be certified.
+    /// It failed until 2026-11-15 for a reason older than this work: replay seeded only
+    /// `SOVEREIGN_ADDR` from the genesis roots and started every other account at `or_insert(1000)`,
+    /// so a restart replaced real balances with 1_000 minus fees. Replay now copies the account
+    /// shards, which `update_state` writes on every transition, so this asserts the whole state
+    /// survives a restart.
     #[test]
-    #[ignore = "blocked by finding J: restart replay does not restore non-sovereign balances"]
     fn restart_restores_every_balance() {
         let path = "test_db_restart_full_balances";
         let _ = fs::remove_dir_all(path);
