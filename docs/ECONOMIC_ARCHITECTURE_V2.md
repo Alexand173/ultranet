@@ -209,10 +209,12 @@ more than three hundredths of a percent.
 
 A validator earns from exactly two sources, and both must be stated as fractions of a defined pool:
 
-1. **Seigniorage** — the block reward, distributed **by weight** among active validators
-   (`distribute_rewards`, `lib.rs:582`).
-2. **Transaction fees** — 100 % of every fee in a block, split **per `validator_set` entry with integer
-   division** (`lib.rs:3779`, `lib.rs:4035`).
+1. **Seigniorage** — the block reward, distributed **by weight** among reward-eligible validators by
+   `payout_credits`, called by `update_state`, `reexecute_block_for_validation` and the restart replay.
+   `distribute_rewards` still runs, but only on the mining node and only on the `rewards` field: it is
+   bookkeeping, not payment, and it disagrees with what is paid (§3.3.2, finding G).
+2. **Transaction fees** — 100 % of every fee in the block, split on the same by-weight basis through
+   the same helper.
 
 ### 3.2 What was true before 2026-11-15 (kept as the record)
 
@@ -234,16 +236,32 @@ The old code credited `hex::encode(public_key)`, the raw key, thousands of chara
 block reward and every fee went to an account no key could spend from.** `validator_payout_address`
 is now the single definition, and `a_validator_is_paid_at_the_hash_of_its_key` pins it.
 
-**V-1 (implemented).** Block reward *and* fees are distributed **by weight** through one helper,
-`split_by_weight`, used by both the live path (`update_state`) and the re-execution path
-(`reexecute_block_for_validation`) so a replayed block reproduces the same credits. The integer
+> **Correction, 2026-11-15 (same day).** The first attempt changed two of the three places that credit
+> a block. The **restart replay** in `with_storage` kept a second copy of the old rule and re-credited
+> `hex(raw public key)` with the whole block reward on **every startup**, and dropped the fees entirely.
+> A reset is a startup, so the reset could not run on that build. Replay now calls `payout_credits`
+> with the same eligibility rule, pays from the block carrying the validator's approval, and excludes
+> genesis, which carries a reward field but was never applied. `a_restart_reproduces_the_payouts_...`
+> fails if any of that comes back.
+
+**V-1 (implemented).** Block reward *and* fees are distributed **by weight** through two shared
+helpers, `payout_shares_for` and `payout_credits`, used by the live path (`update_state`), the
+re-execution path (`reexecute_block_for_validation`) and the restart replay, so all three reproduce the
+same credits. The integer
 remainder goes to the largest weight (ties → first in order), so **no unit is destroyed** —
 previously an anchor's 1,000 became 996 across six validators and a 1-unit fee paid nobody. The block
 reward is no longer paid entirely to `validator_set.first()`.
 
-**V-2 (implemented).** `ValidatorInfo` gains `reward_eligible` (`serde` default **false**). The genesis
-bootstrap sets it false, the registration path sets it true, and `validator_payout_shares` pays only
-active, weight-bearing, eligible validators.
+**V-2 (implemented).** `ValidatorInfo` gains `reward_eligible` (default **false**). The genesis
+bootstrap sets it false, the registration path sets it true, and the payout shares include only active,
+weight-bearing, eligible validators.
+
+> **Caveat, and it is not academic.** The default is a `serde` attribute, and the validator tree is
+> stored with **bincode**, which is positional: a record written before this field existed does not
+> decode with `false`, it decodes with the old `is_active` byte in that slot, which usually fails the
+> record and aborts startup, and occasionally succeeds with every following field shifted. The field
+> protects new writes, not old ones. This is why the reset runbook forbids restoring an old database
+> and why a migrated roster needs a versioned record rather than a default (§3.3.2, finding F).
 
 **V-3 (phase 4, open).** A **bond** of 1,000 `$ULTRA` is required to validate, held from the validator's
 own balance and forfeited to the fee pool on the third slash. This is what turns `stake` from a label
@@ -256,6 +274,22 @@ nothing is credited to a fallback address, and a warning is logged. Emission is 
 promise. On a freshly reset chain whose only validators are the genesis placeholders, **nothing is
 minted until a real validator is registered**: the reset runbook must register the operator's validator
 key as part of the reset, not afterwards.
+
+### 3.3.2 Open defects found while certifying the reset (2026-11-15)
+
+The payout rewrite was reviewed adversarially before the reset was allowed to run. These were found;
+none is fixed by §3.3, and each is a consensus change with its own blast radius.
+
+| # | Severity | Defect | Effect |
+|---|---|---|---|
+| **J** | **Blocker** | Restart replay seeds only `SOVEREIGN_ADDR` from the genesis roots and starts every other account at `or_insert(1000)` | A restart replaces real balances with 1,000 minus fees. `restart_restores_every_balance` is `#[ignore]`d and fails today. **The reset runbook's P1 gate cannot be certified until this is fixed** |
+| B | Critical | `block_reward` is absent from `calculate_block_hash` and unvalidated in `validate_block` | A producer may claim any reward; 0.5 per block is not consensus |
+| C | Critical | `total_fees` sums every fee, but only `StandardTransfer` and AppChain payloads debit the sender | A fee on `MoveCall`/`MoveDeploy` is minted to validators from air |
+| D | Critical | `validator_set` is absent from the block hash and unvalidated | A producer may list itself alone or one key five times |
+| E | Major | Activation happens at mempool admission, not in block application | A verifier that never saw the approval credits a different address and rejects an honest block |
+| F | Major | `reward_eligible` relies on a `serde` default on a bincode-stored struct | Old records fail to decode (startup abort) or decode shifted, paying placeholders |
+| G | Major | `distribute_rewards` ignores `reward_eligible` and runs only on the mining node | The reported `rewards` field contradicts what is paid and diverges across nodes |
+| H | Minor | `mine_block` applies state and clears the mempool before a fallible `replace_validators` | A persistence error leaves state applied to a block that is not in the chain |
 
 ### 3.4 The original proposal (historical)
 
