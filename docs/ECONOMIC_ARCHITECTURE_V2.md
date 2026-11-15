@@ -81,6 +81,48 @@ by a test instead of described in prose.
 The `× 0.8` density multiplier (`ai_governor.rs:111`) only reduces further, so 1,003,061.0872 is an
 **upper bound on supply**, reached only if the multiplier never triggers.
 
+### 2.2 The 100-year figure, established
+
+One halving interval is 31,557,600 blocks = **exactly 10.0000 years** at the 10 s target, so a century is
+ten intervals — more than the schedule needs.
+
+| Era | Years | Reward/block | Emitted | Cumulative |
+|---|---|---:|---:|---:|
+| 0 | 0–10 | 50 | 1,577.8800 | 1,577.8800 |
+| 1 | 10–20 | 25 | 788.9400 | 2,366.8200 |
+| 2 | 20–30 | 12 | 378.6912 | 2,745.5112 |
+| 3 | 30–40 | 6 | 189.3456 | 2,934.8568 |
+| 4 | 40–50 | 3 | 94.6728 | 3,029.5296 |
+| 5 | 50–60 | 1 | 31.5576 | **3,061.0872** |
+| 6–9 | 60–100 | 0 | **0.0000** | 3,061.0872 |
+
+**Emission over 100 years: 3,061.0872 `$ULTRA`.** That is not "of which" anything — it is the complete
+schedule, identical to all-time emission, because the last coin is minted in year 60 and years 61–100
+mint nothing at all.
+
+| Quantity | Value |
+|---|---:|
+| Emission, years 1–100 | **3,061.0872 `$ULTRA`** |
+| Emission, years 61–100 | 0.0000 |
+| Emission, all time | 3,061.0872 (same number) |
+| Total supply at year 100 | **1,003,061.0872** |
+| Emission as a share of the genesis allocation | **0.3061 %** |
+| Lower bound if the density multiplier is always active | 2,448.8698 |
+
+**The one sensitivity that can change the century figure: block time.** Total emission is fixed in
+*blocks*, not in years, so block time changes only *when* the schedule finishes:
+
+| Block time | One era | Schedule completes | Emission in first 100 years |
+|---:|---:|---:|---:|
+| 2 s | 2.0 yr | year 12 | 3,061.0872 |
+| 5 s | 5.0 yr | year 30 | 3,061.0872 |
+| **10 s** | **10.0 yr** | **year 60** | **3,061.0872** |
+| 20 s | 20.0 yr | year 120 | 3,029.5296 (era 5 unfinished) |
+| 30 s | 30.0 yr | year 180 | 2,934.8568 (era 4 unfinished) |
+
+So: at any block time of **16.67 s or less**, the 100-year emission is exactly 3,061.0872. Beyond that
+the century figure drops — but only because the same coins arrive later, never because fewer exist.
+
 **Ratify R1:** keep the schedule as written, and declare the cap **1,003,061.0872 `$ULTRA`** as a
 protocol constant with a test that pins it. Emission is the *only* mint in the system, forever. The
 `× 0.8` transaction-density multiplier in `ai_governor.rs:111` may only ever *reduce* emission, never
