@@ -301,7 +301,13 @@ interface ApprovalRecordPayload {
 interface ApprovalsPayload {
   success?: boolean;
   approvals?: ApprovalRecordPayload[];
+  pagination?: { has_more?: boolean; next_cursor?: string | null; total_count?: number };
 }
+
+/** The node rejects `limit` above 100, so a count of the journal has to page. */
+const APPROVALS_PAGE_SIZE = 100;
+/** Bound on pages walked, so a pathological journal cannot stall the page. */
+const MAX_APPROVAL_PAGES = 10;
 
 /**
  * Validators admitted by 2-of-3 approval, which is also what makes them reward-eligible.
@@ -313,9 +319,25 @@ interface ApprovalsPayload {
  * when the journal is unreachable, which callers render as "Unavailable" rather than as zero.
  */
 export async function fetchActiveValidatorCount(signal?: AbortSignal): Promise<number | null> {
-  const payload = await fetchJson<ApprovalsPayload>("/api/governance/approvals?limit=200", { signal });
-  if (!Array.isArray(payload.approvals)) return null;
-  return payload.approvals.filter((record) => record?.activated_validator?.is_active === true).length;
+  let cursor: string | null = null;
+  let active = 0;
+
+  for (let page = 0; page < MAX_APPROVAL_PAGES; page += 1) {
+    const query = new URLSearchParams({ limit: String(APPROVALS_PAGE_SIZE) });
+    if (cursor) query.set("cursor", cursor);
+
+    const payload = await fetchJson<ApprovalsPayload>(`/api/governance/approvals?${query.toString()}`, { signal });
+    if (!Array.isArray(payload.approvals)) return null;
+
+    active += payload.approvals.filter((record) => record?.activated_validator?.is_active === true).length;
+
+    const next = payload.pagination?.next_cursor ?? null;
+    if (!payload.pagination?.has_more || !next) return active;
+    cursor = next;
+  }
+
+  // The journal is longer than the bound allows: report what was counted rather than a wrong zero.
+  return active;
 }
 
 export async function fetchLatestTransactions(signal?: AbortSignal): Promise<LatestTransaction[]> {
