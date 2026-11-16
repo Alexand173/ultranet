@@ -55,6 +55,9 @@ import cc.ultranet.ultraverse.data.ServiceCatalog
 import cc.ultranet.ultraverse.data.ServiceEntry
 import cc.ultranet.ultraverse.ui.appchains.AppChainsScreen
 import cc.ultranet.ultraverse.ui.chess.ChessScreen
+import cc.ultranet.ultraverse.ui.games.GameCatalog
+import cc.ultranet.ultraverse.ui.games.GamesScreen
+import cc.ultranet.ultraverse.ui.grid.GridScreen
 import cc.ultranet.ultraverse.ui.contacts.ContactsScreen
 import cc.ultranet.ultraverse.ui.contacts.LocalContactBook
 import cc.ultranet.ultraverse.ui.home.AvailabilityLegend
@@ -86,7 +89,7 @@ import cc.ultranet.ultraverse.wallet.faucetAmountLabel
 import kotlinx.coroutines.launch
 
 /** Top-level native destinations. Every supported catalog entry maps to one of these. */
-private enum class HomeSection { Apps, Wallet, Pay, Contacts, Profile, AppChains, Validator, Mining, Chess }
+private enum class HomeSection { Apps, Wallet, Pay, Contacts, Profile, AppChains, Validator, Mining, Games, Chess, Grid }
 
 @Composable
 internal fun UltraVerseApp(
@@ -154,7 +157,7 @@ internal fun UltraVerseApp(
             ServiceCatalog.APPCHAINS_ID -> section = HomeSection.AppChains
             ServiceCatalog.VALIDATOR_ID -> { validatorReturn = HomeSection.Apps; section = HomeSection.Validator }
             ServiceCatalog.MINING_ID -> section = HomeSection.Mining
-            ServiceCatalog.CHESS_ID -> section = HomeSection.Chess
+            ServiceCatalog.GAMES_ID -> section = HomeSection.Games
             else -> Unit
         }
     }
@@ -338,8 +341,25 @@ internal fun UltraVerseApp(
                 onOpenWallet = { openWallet() },
             )
 
-            HomeSection.Chess -> ChessScreen(
+            HomeSection.Games -> GamesScreen(
                 onBack = { section = HomeSection.Apps },
+                onOpen = { gameId ->
+                    when (gameId) {
+                        GameCatalog.CHESS_ID -> section = HomeSection.Chess
+                        GameCatalog.GRID_ID -> section = HomeSection.Grid
+                    }
+                },
+                modifier = Modifier.padding(scaffoldPadding),
+            )
+
+            // Back from a game returns to the directory it was opened from, not to the catalogue.
+            HomeSection.Chess -> ChessScreen(
+                onBack = { section = HomeSection.Games },
+                modifier = Modifier.padding(scaffoldPadding),
+            )
+
+            HomeSection.Grid -> GridScreen(
+                onBack = { section = HomeSection.Games },
                 modifier = Modifier.padding(scaffoldPadding),
             )
 

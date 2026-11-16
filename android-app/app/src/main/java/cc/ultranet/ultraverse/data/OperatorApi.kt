@@ -38,9 +38,12 @@ internal class UltraNetOperatorApi(
      */
     suspend fun appChainLedger(): AppChainLedger = parseLedger(get("/api/appchain/ledger"))
 
-    /** Owner-signed anchors for one chain, ordered by sequence. */
-    suspend fun appChainAnchors(chainId: Int, limit: Int = 50): List<AppChainAnchorRecord> {
-        val payload = get("/api/appchain/ledger/$chainId/anchors?limit=$limit")
+    /**
+     * Owner-signed anchors for one chain, ordered by sequence. [from] is the first sequence wanted
+     * (1-based): without it a long-lived chain would only ever show its oldest anchors.
+     */
+    suspend fun appChainAnchors(chainId: Int, limit: Int = 50, from: Long = 1): List<AppChainAnchorRecord> {
+        val payload = get("/api/appchain/ledger/$chainId/anchors?from=${from.coerceAtLeast(1)}&limit=$limit")
         return payload.optJSONArray("anchors").orEmpty().mapObjects { row ->
             AppChainAnchorRecord(
                 chainId = row.optInt("chain_id", chainId),

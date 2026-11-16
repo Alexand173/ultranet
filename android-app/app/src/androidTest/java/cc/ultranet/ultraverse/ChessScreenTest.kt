@@ -32,7 +32,10 @@ class ChessScreenTest {
         compose.waitUntil(30_000) { tagExists("ultraverse-home") }
         // The Applications group is the last one, after the three payments/build groups.
         compose.onNodeWithTag("ultraverse-home").performScrollToIndex(6)
-        compose.onNodeWithContentDescription("Ultra Chess. Supported path.", substring = true).performClick()
+        // Ultra Chess now sits in the Games directory, one tap behind the Applications tile.
+        compose.onNodeWithContentDescription("Games. Supported path.", substring = true).performClick()
+        compose.waitUntil(15_000) { tagExists("games-entry-ultra-chess") }
+        compose.onNodeWithTag("games-entry-ultra-chess").performClick()
         compose.waitUntil(15_000) { tagExists("chess-board") }
     }
 
