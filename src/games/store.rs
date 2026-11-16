@@ -14,7 +14,8 @@ use std::{
 };
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 1;
+/// The schema this build writes. 1 was the games and payouts tables; 2 adds the game registry.
+const SCHEMA_VERSION: i64 = 2;
 pub const UTC_DAY_SECONDS: u64 = 86_400;
 
 #[derive(Debug, Error)]
@@ -40,11 +41,11 @@ pub enum StoreError {
     NotSettleable(String),
 }
 
-fn to_i64(value: u64) -> Result<i64, StoreError> {
+pub(super) fn to_i64(value: u64) -> Result<i64, StoreError> {
     i64::try_from(value).map_err(|_| StoreError::NumericRange)
 }
 
-fn to_u64(value: i64) -> Result<u64, StoreError> {
+pub(super) fn to_u64(value: i64) -> Result<u64, StoreError> {
     u64::try_from(value).map_err(|_| StoreError::NumericRange)
 }
 
@@ -307,7 +308,7 @@ impl GamesStore {
         })
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, StoreError> {
+    pub(super) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, StoreError> {
         self.connection.lock().map_err(|_| StoreError::LockPoisoned)
     }
 
@@ -1062,6 +1063,9 @@ fn migrate(connection: &Connection) -> Result<(), StoreError> {
         .and_then(|value| value.parse().ok());
     match version {
         Some(SCHEMA_VERSION) => return Ok(()),
+        // A database from before the registry: add its tables and nothing else. Every existing table
+        // and row is left exactly as it was.
+        Some(1) => return upgrade_to_registry(connection),
         Some(other) => {
             return Err(StoreError::Malformed(format!(
                 "database schema {other} is not understood by this build (expects {SCHEMA_VERSION})"
@@ -1145,10 +1149,32 @@ fn migrate(connection: &Connection) -> Result<(), StoreError> {
          );",
     )?;
     connection.execute(
-        "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)",
-        params![SCHEMA_VERSION.to_string()],
+        "INSERT INTO meta (key, value) VALUES ('schema_version', '1')",
+        [],
     )?;
-    Ok(())
+    upgrade_to_registry(connection)
+}
+
+/// Schema 1 to 2, inside one transaction so a crash leaves a database that is plainly 1 or plainly 2.
+fn upgrade_to_registry(connection: &Connection) -> Result<(), StoreError> {
+    connection.execute_batch("BEGIN IMMEDIATE;")?;
+    let result = (|| -> Result<(), StoreError> {
+        connection.execute_batch(super::registry::REGISTRY_SCHEMA)?;
+        connection.execute(
+            "UPDATE meta SET value = ?1 WHERE key = 'schema_version'",
+            params![SCHEMA_VERSION.to_string()],
+        )?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => connection
+            .execute_batch("COMMIT;")
+            .map_err(StoreError::from),
+        Err(error) => {
+            let _ = connection.execute_batch("ROLLBACK;");
+            Err(error)
+        }
+    }
 }
 
 #[cfg(test)]

@@ -19,7 +19,7 @@
 
 use sha3::{Digest, Sha3_256};
 
-fn sha3(parts: &[&[u8]]) -> [u8; 32] {
+pub(super) fn sha3(parts: &[&[u8]]) -> [u8; 32] {
     let mut hasher = Sha3_256::new();
     for part in parts {
         hasher.update(part);
