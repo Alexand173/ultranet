@@ -7,6 +7,13 @@ is what makes it tamper-evident afterwards.
 **P0 delivered (2026-11-14):** rules, opponent, screen and the catalogue tile are in the app and
 green on the emulator (62 tests). Nothing below the app line has been built yet.
 
+> **Superseded for the receipt and prize path (2026-11-16):** that path is now built, but not the way §3–§4
+> sketch it. An AppChain is an L1 object that stores nothing, so there is no per-chain state write; the
+> service (`src/games`) records every win itself and **anchors one root per day** over a canonical, sorted
+> list of them. The prize service is `ultranet-games`, shared with UltraGrid, and the rules and review are
+> [`GAMES_RULES_AND_PAYOUTS.md`](./GAMES_RULES_AND_PAYOUTS.md). The screen reports a win once per game and
+> shows what the server decided; chess results stay *unverifiable* and are marked so in every receipt.
+
 **Non-goals for v1:** move-by-move storage, game logic on the node, PvP, matchmaking, a chess clock,
 resuming a game across launches.
 

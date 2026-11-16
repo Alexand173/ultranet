@@ -11,15 +11,41 @@
 }
 
 api.example.com {
-    reverse_proxy 127.0.0.1:8081 {
-        import cloudflare-trusted-proxy
-        # Caddy rebuilds X-Forwarded-For from trusted proxy ranges;
-        # direct-origin requests cannot choose the client identity.
-        header_up -Forwarded
-        header_up -X-Forwarded-Host
-        header_up -X-Forwarded-Proto
-        header_up -X-Real-IP
-        header_up -CF-Connecting-IP
+    # The games service (UltraGrid, Ultra Chess) answers everything under /api/games on this same
+    # hostname, so the app needs no new DNS name or certificate. Enable only after the service has been
+    # installed from deploy/ultranet-games.service and docs/runbooks/games-service.md. Add the
+    # Cloudflare rate limits from that runbook (§6) before opening it: the service has caps, not a login.
+    handle /api/games/* {
+        request_body {
+            max_size 16KB
+        }
+        reverse_proxy 127.0.0.1:8095 {
+            import cloudflare-trusted-proxy
+            header_up -Authorization
+            header_up -Cookie
+            header_up -CF-Connecting-IP
+            header_up -Forwarded
+            header_up -X-Forwarded-Host
+            header_up -X-Forwarded-Proto
+            header_up -X-Real-IP
+            transport http {
+                dial_timeout 2s
+                response_header_timeout 20s
+            }
+        }
+    }
+
+    handle {
+        reverse_proxy 127.0.0.1:8081 {
+            import cloudflare-trusted-proxy
+            # Caddy rebuilds X-Forwarded-For from trusted proxy ranges;
+            # direct-origin requests cannot choose the client identity.
+            header_up -Forwarded
+            header_up -X-Forwarded-Host
+            header_up -X-Forwarded-Proto
+            header_up -X-Real-IP
+            header_up -CF-Connecting-IP
+        }
     }
 }
 

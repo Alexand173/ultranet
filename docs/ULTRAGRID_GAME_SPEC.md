@@ -5,8 +5,12 @@
 document applies it to one game and never overrides it. Where the two disagree, V2 wins.
 **Supersedes for mechanics:** the puzzle sketch in [`APPCHAIN_FIRST_GAME_PLAN.md`](./APPCHAIN_FIRST_GAME_PLAN.md).
 
-**Status:** the **engine** and the **phone game** are built and pinned (G0, G1). The service, the daily
-anchor and payouts are **not built**; §9 says exactly what remains.
+**Status:** the **engine**, the **phone game**, the **games service** (answer checking, receipts, daily
+anchor through `appchain-cli`, rewards and withdrawals) and the phone's rewards screens are built and tested
+(G0–G3). Nothing is deployed and no live payout has been made. The rules as built, and the review that
+produced them, are in [`GAMES_RULES_AND_PAYOUTS.md`](./GAMES_RULES_AND_PAYOUTS.md); installing it is
+[`runbooks/games-service.md`](./runbooks/games-service.md). §6 below is the original sketch; where it differs
+from the code (the routes, the solvency rule, the reserved address) the code and that review are right.
 
 ---
 
@@ -145,7 +149,7 @@ submitting (a few seconds per turn of par), and a one-time eligibility check per
 
 ---
 
-## 6. The service (proposed shape, not built)
+## 6. The service (original sketch; built as `src/games`, see the review)
 
 A small Rust binary like the faucet. Because money only ever flows **to the address that was credited**,
 the API needs no login: submitting someone else's answer credits *them*.
@@ -209,8 +213,8 @@ Ultra Chess still opens, Back returns).
 |---|---|---|---|
 | **G0 engine** | `src/ultragrid`, CLI `ultragrid`, Python reference, pinned vectors | 15 tests green; Python `--check` agrees | **done** |
 | **G1 phone** | Kotlin port (same vectors), a playable screen, the Games directory; no prizes | the Kotlin test asserts the same ten ids and commitment; ten levels playable on the emulator | **done** — 95/95 instrumented tests; the live board matches the Rust CLI tile for tile |
-| **G2 service** | answer verification, receipts, day close + anchor via `appchain-cli`, no money | a day's `day_root` is anchored and recomputable from the public API | |
-| **G3 payouts** | payout wallet, ledger, withdrawals, caps | three wins pay, the fourth is `recorded`; a withdrawal returns a hash | |
+| **G2 service** | answer verification, receipts, day close + anchor via `appchain-cli` | a day's `day_root` is anchored and recomputable from the public API | **built and tested** (fake chain, fake node, and a live read-only smoke test); **not deployed** — needs the owner key handed over and funded |
+| **G3 payouts** | payout wallet, ledger, withdrawals, caps | three wins pay, the fourth is `recorded`; a withdrawal returns a hash | **built and tested** (every failure path pauses rather than guesses); **no live payout yet** — needs the funded payout wallet and the go-live checklist |
 | **G4 phase 2** | entry fees or sponsors replace the owner's pool | legal review first; the pool is no longer the owner's | |
 
 G1 ships on its own and is worth doing first: it is the whole game, and none of it depends on money.
