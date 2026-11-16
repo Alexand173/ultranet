@@ -8,6 +8,7 @@ pub mod anchor;
 pub mod api;
 pub mod chain;
 pub mod config;
+pub mod ownership;
 pub mod registry;
 pub mod roots;
 pub mod rules;

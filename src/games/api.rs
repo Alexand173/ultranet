@@ -17,7 +17,7 @@
 
 use super::service::{
     date_start, shift_date, ChessResultRequest, GamesError, GamesService, GridAnswerRequest,
-    RegistryResultRequest,
+    RegistryRegisterRequest, RegistryResultRequest, RegistryRotateRequest,
 };
 use crate::ultragrid;
 use actix_web::{http::StatusCode, web, App, HttpRequest, HttpResponse, HttpServer};
@@ -26,7 +26,8 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::watch;
 
-const MAX_JSON_BODY_BYTES: usize = 16 * 1024;
+// A post-quantum public key and signature are about 7 KB each as hex; ownership proofs carry both.
+const MAX_JSON_BODY_BYTES: usize = 32 * 1024;
 
 pub fn configure_routes(config: &mut web::ServiceConfig) {
     config
@@ -51,6 +52,8 @@ pub fn configure_routes(config: &mut web::ServiceConfig) {
         .route("/api/games/payouts/{id}", web::get().to(payout))
         // Third-party games. `/g/` keeps every game id clear of the fixed routes above.
         .route("/api/games/g", web::get().to(registry_listed))
+        .route("/api/games/g", web::post().to(registry_register))
+        .route("/api/games/g/{id}/rotate-key", web::post().to(registry_rotate))
         .route("/api/games/g/{id}", web::get().to(registry_game))
         .route("/api/games/g/{id}/results", web::post().to(registry_result))
         .route(
@@ -285,6 +288,21 @@ async fn registry_result(
     respond(service.submit_registry_result(&id, &bearer_key(&request), body.into_inner()))
 }
 
+async fn registry_register(
+    service: web::Data<GamesService>,
+    body: web::Json<RegistryRegisterRequest>,
+) -> HttpResponse {
+    respond(service.self_register(body.into_inner()).await)
+}
+
+async fn registry_rotate(
+    service: web::Data<GamesService>,
+    id: web::Path<String>,
+    body: web::Json<RegistryRotateRequest>,
+) -> HttpResponse {
+    respond(service.self_rotate_key(&id, body.into_inner()))
+}
+
 async fn registry_listed(service: web::Data<GamesService>) -> HttpResponse {
     respond(
         service
@@ -392,6 +410,8 @@ mod tests {
             (GamesError::GameSuspended, 403, "game_suspended"),
             (GamesError::ResultConflict, 409, "result_conflict"),
             (GamesError::GameLimit, 429, "game_daily_limit"),
+            (GamesError::OwnerLimit, 429, "owner_game_limit"),
+            (GamesError::RegistrationLimit, 429, "registration_limit"),
             (GamesError::PlayerLimit, 429, "player_daily_limit"),
             (GamesError::NotFound("x".into()), 404, "not_found"),
         ];

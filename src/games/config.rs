@@ -35,6 +35,8 @@ pub const MAX_PAYOUT_RESERVE_UNITS: u64 = 1_000_000_000;
 pub const MAX_REGISTRY_RESULTS_PER_GAME_PER_DAY: u64 = 1_000_000;
 pub const MAX_REGISTRY_RESULTS_PER_PLAYER_PER_DAY: u64 = 100_000;
 pub const MAX_REGISTRY_SANDBOX_RESULTS_PER_DAY: u64 = 10_000;
+pub const MAX_REGISTRY_GAMES_PER_OWNER: u64 = 20;
+pub const MAX_REGISTRY_SELF_REGISTRATIONS_PER_DAY: u64 = 5_000;
 pub const MIN_CHESS_PLIES: u32 = 10;
 pub const MAX_CHESS_PLIES: u32 = 1_000;
 
@@ -108,10 +110,15 @@ pub fn validate_policy(policy: &Policy) -> Result<(), String> {
         || registry.results_per_player_per_game_per_day > MAX_REGISTRY_RESULTS_PER_PLAYER_PER_DAY
         || registry.sandbox_results_per_game_per_day == 0
         || registry.sandbox_results_per_game_per_day > MAX_REGISTRY_SANDBOX_RESULTS_PER_DAY
+        || registry.games_per_owner == 0
+        || registry.games_per_owner > MAX_REGISTRY_GAMES_PER_OWNER
+        || registry.self_registrations_per_day == 0
+        || registry.self_registrations_per_day > MAX_REGISTRY_SELF_REGISTRATIONS_PER_DAY
     {
         return Err(format!(
             "registry limits must be within {MAX_REGISTRY_RESULTS_PER_GAME_PER_DAY} results per game, \
-             {MAX_REGISTRY_RESULTS_PER_PLAYER_PER_DAY} per player and {MAX_REGISTRY_SANDBOX_RESULTS_PER_DAY} per sandbox, per day"
+             {MAX_REGISTRY_RESULTS_PER_PLAYER_PER_DAY} per player and {MAX_REGISTRY_SANDBOX_RESULTS_PER_DAY} per sandbox, per day; \
+             {MAX_REGISTRY_GAMES_PER_OWNER} games per owner and {MAX_REGISTRY_SELF_REGISTRATIONS_PER_DAY} self-registrations per day"
         ));
     }
     if policy.chess_min_plies < MIN_CHESS_PLIES
@@ -234,6 +241,14 @@ impl GamesConfig {
                 sandbox_results_per_game_per_day: number(
                     "GAMES_REGISTRY_SANDBOX_RESULTS_PER_DAY",
                     standard.registry.sandbox_results_per_game_per_day,
+                )?,
+                games_per_owner: number(
+                    "GAMES_REGISTRY_GAMES_PER_OWNER",
+                    standard.registry.games_per_owner,
+                )?,
+                self_registrations_per_day: number(
+                    "GAMES_REGISTRY_SELF_REGISTRATIONS_PER_DAY",
+                    standard.registry.self_registrations_per_day,
                 )?,
             },
         };

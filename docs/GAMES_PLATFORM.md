@@ -20,16 +20,26 @@ changed or removed since.
 
 ## 1. Get a game id and key
 
-Today the operator creates it for you:
+You need a wallet key file (`{"public_key":"<hex>","secret_key":"<hex>"}`, as written by
+`ultranet-faucet keygen --output owner.json`) whose address has been active on UltraNet, for instance by
+claiming from the faucet. Then:
 
 ```bash
-ultranet-games game-register --id my-game --name "My Game" --owner <your 64-hex address>
+ultranet-game-dev address  --key owner.json                                   # your owner address
+ultranet-game-dev register --key owner.json --id my-game --name "My Game"
 ```
 
-The id is 3–32 characters of `a-z 0-9 -` (names like `grid`, `chess`, `admin` are reserved). **The API key is
-printed once** and only its hash is stored. Lose it and the operator must rotate it. Keep it on your
-server, never in a mobile app or web page: anyone holding it can submit results as your game.
-(Self-service registration with a wallet signature is planned, not built.)
+The id is 3–32 characters of `a-z 0-9 -` (names like `grid`, `chess`, `admin` are reserved). The tool signs
+a short message locally; your secret key never leaves your machine, and the server only learns your public
+key and a signature. **You become the owner by signing: the owner is the address your public key hashes to.**
+It prints your **API key once**; only its hash is stored. Keep it on your server, never in a mobile app or web
+page: anyone holding it can submit results as your game.
+
+Lost the key? `ultranet-game-dev rotate-key --key owner.json --id my-game` issues a new one and kills the old
+one, with no operator involved. Each owner address may hold 3 games, and the platform takes 100 new games
+a day, so a refusal with `owner_game_limit` or `registration_limit` is a limit, not a fault.
+To sign from your own code instead, the exact layout is at the top of `src/games/ownership.rs`
+(Dilithium5 over a SHA3-256 digest of action, id, name and time).
 
 ## 2. Send a result
 
@@ -89,6 +99,6 @@ another language, port those layouts and compare against the same vectors.
 
 ## What is not built yet
 
-Self-service registration with proof of address ownership, a web console, TypeScript and Kotlin SDKs,
-and any developer-funded rewards. Until then, a game is onboarded by the operator and you call the HTTP
-API directly, as above.
+A web console, TypeScript and Kotlin SDKs, and any developer-funded rewards. Until then you use
+`ultranet-game-dev` and call the HTTP API directly, as above. Registration is self-service, but a game
+only leaves the sandbox when the operator promotes it.

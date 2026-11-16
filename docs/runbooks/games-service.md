@@ -210,6 +210,20 @@ it in the daily root and gives it a public page and proofs. `listed` adds it to 
 rewritten. Promote only a game whose owner you can reach: the owner address is the contact of record, and
 nothing here pays or moves money for any game.
 
+**Self-service.** Developers can register their own game, and rotate a lost key, without you:
+`POST /api/games/g` and `POST /api/games/g/<id>/rotate-key`, normally through `ultranet-game-dev`. The
+request carries the developer's public key and a signature over the action, id, name and time
+(layout at the top of `src/games/ownership.rs`); the owner is the address that key hashes to, so nobody
+can register a game as someone else. Every self-registered game starts in `sandbox` and only you promote
+it. Three things bound it, because it is free: an owner holds at most `GAMES_REGISTRY_GAMES_PER_OWNER`
+games (3), the whole platform takes at most `GAMES_REGISTRY_SELF_REGISTRATIONS_PER_DAY` (100) per UTC
+day, and the owner address must already be active on the chain (as it is for rewards), so a farm of
+games costs a farm of faucet claims. Add a Cloudflare rate limit on `POST /api/games/g` beside the others
+in §3. A rotation request is refused if its timestamp is not later than the game's last change, so a
+captured request cannot be replayed; rotating twice within one second is therefore refused once.
+A game id taken by a squatter is an operator decision: `game-status --status suspended` frees nothing
+(a suspended game keeps its id), so decide before promoting, and check names against trademarks.
+
 **Ids and keys.** An id is 3 to 32 of `a-z 0-9 -`; `grid`, `chess`, `registry`, `admin` and similar
 names are reserved. The key is shown once and only its hash is stored. If a developer loses it, rotate:
 there is no way to read it back. Send the key over a channel you trust, never in a ticket.

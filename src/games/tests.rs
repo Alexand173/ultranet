@@ -2762,3 +2762,296 @@ mod http {
         );
     }
 }
+
+mod self_service {
+    use super::*;
+    use crate::games::{
+        ownership::{self, ACTION_REGISTER, ACTION_ROTATE_KEY},
+        registry::GameStatus,
+        service::{RegistryRegisterRequest, RegistryResultRequest, RegistryRotateRequest},
+    };
+
+    fn register_request(
+        pair: &QuantumKeyPair,
+        id: &str,
+        name: &str,
+        timestamp: u64,
+    ) -> RegistryRegisterRequest {
+        let digest = ownership::proof_digest(ACTION_REGISTER, id, name, timestamp);
+        RegistryRegisterRequest {
+            id: id.into(),
+            name: name.into(),
+            public_key: hex::encode(&pair.public_key),
+            timestamp,
+            signature: hex::encode(pair.sign(&digest)),
+        }
+    }
+
+    fn rotate_request(pair: &QuantumKeyPair, id: &str, timestamp: u64) -> RegistryRotateRequest {
+        let digest = ownership::proof_digest(ACTION_ROTATE_KEY, id, "", timestamp);
+        RegistryRotateRequest {
+            public_key: hex::encode(&pair.public_key),
+            timestamp,
+            signature: hex::encode(pair.sign(&digest)),
+        }
+    }
+
+    fn a_result(id: &str) -> RegistryResultRequest {
+        RegistryResultRequest {
+            player: A.into(),
+            result_id: id.into(),
+            score: 1,
+            data_hash: None,
+        }
+    }
+
+    #[actix_web::test]
+    async fn an_owner_registers_a_sandbox_game_and_the_key_it_gets_works() {
+        let h = harness(Options::default());
+        let pair = QuantumKeyPair::generate();
+        let created = h
+            .service
+            .self_register(register_request(&pair, "tetris", "Tetris", h.service.now()))
+            .await
+            .unwrap();
+        assert_eq!(created.game.owner, pair.address(), "the owner is derived, not claimed");
+        assert_eq!(created.game.status, GameStatus::Sandbox.code());
+        let reply = h
+            .service
+            .submit_registry_result("tetris", &created.api_key, a_result("match-0001"))
+            .unwrap();
+        assert_eq!((reply.status, reply.anchored), ("sandbox", false));
+    }
+
+    #[actix_web::test]
+    async fn a_proof_for_other_terms_or_an_unknown_address_creates_nothing() {
+        let h = harness(Options::default());
+        let pair = QuantumKeyPair::generate();
+        let now = h.service.now();
+
+        let mut wrong_name = register_request(&pair, "tetris", "Tetris", now);
+        wrong_name.name = "Tetris Pro".into();
+        let mut wrong_id = register_request(&pair, "tetris", "Tetris", now);
+        wrong_id.id = "snake".into();
+        for request in [
+            wrong_name,
+            wrong_id,
+            register_request(&pair, "tetris", "Tetris", now - 301),
+            register_request(&pair, "tetris", "Tetris", now + 301),
+        ] {
+            let error = h.service.self_register(request).await.unwrap_err();
+            assert_eq!(error.code(), "invalid_key");
+        }
+
+        // A key whose address the chain has never seen cannot register, however valid the proof.
+        h.chain.everyone_active.store(false, Ordering::SeqCst);
+        let error = h
+            .service
+            .self_register(register_request(&pair, "tetris", "Tetris", now))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), "invalid_request");
+        h.chain.active.lock().unwrap().insert(pair.address());
+        h.service
+            .self_register(register_request(&pair, "tetris", "Tetris", now))
+            .await
+            .unwrap();
+        assert_eq!(h.service.store().games().unwrap().len(), 1);
+    }
+
+    #[actix_web::test]
+    async fn taken_and_reserved_ids_are_refused() {
+        let h = harness(Options::default());
+        let (one, two) = (QuantumKeyPair::generate(), QuantumKeyPair::generate());
+        let now = h.service.now();
+        h.service
+            .self_register(register_request(&one, "tetris", "Tetris", now))
+            .await
+            .unwrap();
+        for (pair, id) in [(&two, "tetris"), (&two, "grid"), (&two, "Bad_Id")] {
+            let error = h
+                .service
+                .self_register(register_request(pair, id, "Mine", now))
+                .await
+                .unwrap_err();
+            assert_eq!(error.code(), "invalid_request", "{id}");
+        }
+        assert_eq!(h.service.store().games().unwrap().len(), 1);
+    }
+
+    #[actix_web::test]
+    async fn one_owner_and_one_day_are_both_bounded() {
+        let mut policy = Policy::standard();
+        policy.registry.games_per_owner = 2;
+        policy.registry.self_registrations_per_day = 3;
+        let h = harness(Options {
+            policy,
+            ..Options::default()
+        });
+        let now = h.service.now();
+        let owner = QuantumKeyPair::generate();
+        for id in ["game-one", "game-two"] {
+            h.service
+                .self_register(register_request(&owner, id, id, now))
+                .await
+                .unwrap();
+        }
+        let error = h
+            .service
+            .self_register(register_request(&owner, "game-three", "Three", now))
+            .await
+            .unwrap_err();
+        assert_eq!((error.code(), error.status()), ("owner_game_limit", 429));
+
+        // Someone else may still register the third of the day; the fourth is turned away.
+        let other = QuantumKeyPair::generate();
+        h.service
+            .self_register(register_request(&other, "game-four", "Four", now))
+            .await
+            .unwrap();
+        let error = h
+            .service
+            .self_register(register_request(&QuantumKeyPair::generate(), "game-five", "Five", now))
+            .await
+            .unwrap_err();
+        assert_eq!((error.code(), error.status()), ("registration_limit", 429));
+
+        // The next day the allowance is back.
+        h.advance(86_400);
+        h.service
+            .self_register(register_request(
+                &QuantumKeyPair::generate(),
+                "game-five",
+                "Five",
+                h.service.now(),
+            ))
+            .await
+            .unwrap();
+    }
+
+    #[actix_web::test]
+    async fn the_owner_rotates_a_lost_key_and_nobody_else_can() {
+        let h = harness(Options::default());
+        let owner = QuantumKeyPair::generate();
+        let created = h
+            .service
+            .self_register(register_request(&owner, "tetris", "Tetris", h.service.now()))
+            .await
+            .unwrap();
+
+        // A stranger's valid signature, an unknown game, and a wrong-action proof all read the same.
+        let stranger = QuantumKeyPair::generate();
+        for (id, request) in [
+            ("tetris", rotate_request(&stranger, "tetris", h.service.now())),
+            ("nothing", rotate_request(&owner, "nothing", h.service.now())),
+        ] {
+            let error = h.service.self_rotate_key(id, request).unwrap_err();
+            assert_eq!(error.code(), "invalid_key", "{id}");
+        }
+        let mut wrong_action = rotate_request(&owner, "tetris", h.service.now());
+        wrong_action.signature = register_request(&owner, "tetris", "", h.service.now()).signature;
+        assert_eq!(
+            h.service.self_rotate_key("tetris", wrong_action).unwrap_err().code(),
+            "invalid_key"
+        );
+
+        h.advance(10);
+        let request = rotate_request(&owner, "tetris", h.service.now());
+        let replay = rotate_request(&owner, "tetris", h.service.now());
+        let rotated = h.service.self_rotate_key("tetris", request).unwrap();
+        assert_ne!(rotated.api_key, created.api_key);
+        assert_eq!(
+            h.service
+                .submit_registry_result("tetris", &created.api_key, a_result("match-0001"))
+                .unwrap_err()
+                .code(),
+            "invalid_key",
+            "the old key is dead"
+        );
+        h.service
+            .submit_registry_result("tetris", &rotated.api_key, a_result("match-0001"))
+            .unwrap();
+
+        // The same signed request, captured and sent again, must not replace the new key.
+        assert_eq!(
+            h.service.self_rotate_key("tetris", replay).unwrap_err().code(),
+            "invalid_key"
+        );
+        h.service
+            .submit_registry_result("tetris", &rotated.api_key, a_result("match-0002"))
+            .unwrap();
+    }
+
+    #[actix_web::test]
+    async fn the_http_routes_carry_the_proof_and_return_the_key_once() {
+        use actix_web::{
+            http::StatusCode,
+            test::{call_service, init_service, read_body_json, TestRequest},
+            web, App,
+        };
+        use serde_json::{json, Value};
+
+        let h = harness(Options::default());
+        let app = init_service(
+            App::new()
+                .app_data(web::Data::from(h.service.clone()))
+                .configure(crate::games::api::configure_routes),
+        )
+        .await;
+        let owner = QuantumKeyPair::generate();
+        let request = register_request(&owner, "tetris", "Tetris", h.service.now());
+        let body = json!({
+            "id": request.id, "name": request.name, "public_key": request.public_key,
+            "timestamp": request.timestamp, "signature": request.signature,
+        });
+        assert!(body.to_string().len() > 14_000, "a real proof is large");
+        let response = call_service(
+            &app,
+            TestRequest::post().uri("/api/games/g").set_json(&body).to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let created: Value = read_body_json(response).await;
+        assert_eq!(created["game"]["owner"], json!(owner.address()));
+        assert_eq!(created["game"]["status"], json!("sandbox"));
+        assert!(created["api_key"].as_str().unwrap().len() >= 32);
+
+        // Unknown fields are refused: nobody can slip an `owner` in beside the proof.
+        let mut with_owner = body.clone();
+        with_owner["owner"] = json!(A);
+        with_owner["id"] = json!("other-game");
+        let response = call_service(
+            &app,
+            TestRequest::post().uri("/api/games/g").set_json(&with_owner).to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        // A forged proof is a 401.
+        let mut forged = body.clone();
+        forged["id"] = json!("forged-game");
+        let response = call_service(
+            &app,
+            TestRequest::post().uri("/api/games/g").set_json(&forged).to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        h.advance(5);
+        let rotate = rotate_request(&owner, "tetris", h.service.now());
+        let response = call_service(
+            &app,
+            TestRequest::post()
+                .uri("/api/games/g/tetris/rotate-key")
+                .set_json(json!({
+                    "public_key": rotate.public_key, "timestamp": rotate.timestamp,
+                    "signature": rotate.signature,
+                }))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let rotated: Value = read_body_json(response).await;
+        assert_ne!(rotated["api_key"], created["api_key"]);
+    }
+}

@@ -164,6 +164,10 @@ pub struct RegistryCaps {
     pub results_per_player_per_game_per_day: u64,
     /// A sandbox is free and unanchored, so it is held to a much smaller day.
     pub sandbox_results_per_game_per_day: u64,
+    /// Games one owner address may hold. Self-service registration is free, so it is bounded.
+    pub games_per_owner: u64,
+    /// Games anyone may register themselves in one UTC day, across all owners.
+    pub self_registrations_per_day: u64,
 }
 
 impl RegistryCaps {
@@ -172,6 +176,8 @@ impl RegistryCaps {
             results_per_game_per_day: 50_000,
             results_per_player_per_game_per_day: 1_000,
             sandbox_results_per_game_per_day: 500,
+            games_per_owner: 3,
+            self_registrations_per_day: 100,
         }
     }
 }
@@ -197,6 +203,10 @@ pub enum RegistryError {
     PlayerDailyCap,
     #[error("no such game")]
     UnknownGame,
+    #[error("this address already holds the most games one owner may have")]
+    OwnerLimit,
+    #[error("too many games were registered today; try again tomorrow")]
+    RegistrationLimit,
     #[error("storage error: {0}")]
     Store(String),
 }
@@ -537,6 +547,104 @@ impl GamesStore {
         drop(connection);
         let record = self.game(id)?.ok_or(RegistryError::UnknownGame)?;
         Ok((record, key))
+    }
+
+    /// How many games an owner holds (every status: a suspended game still counts).
+    pub fn games_owned_by(&self, owner: &str) -> Result<u64, RegistryError> {
+        let connection = self.lock()?;
+        let count: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM registry_games WHERE owner = ?1",
+            params![owner],
+            |row| row.get(0),
+        )?;
+        Ok(count as u64)
+    }
+
+    /// How many games were created at or after `since` (seconds).
+    pub fn games_created_since(&self, since: u64) -> Result<u64, RegistryError> {
+        let connection = self.lock()?;
+        let count: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM registry_games WHERE created_at >= ?1",
+            params![to_i64(since)?],
+            |row| row.get(0),
+        )?;
+        Ok(count as u64)
+    }
+
+    /// Register a game for an owner who proved control of the address, within the self-service limits.
+    /// The two counts and the insert happen under one lock, so concurrent requests cannot pass the same
+    /// limit together.
+    pub fn register_game_self_service(
+        &self,
+        id: &str,
+        name: &str,
+        owner: &str,
+        day_start: u64,
+        caps: &RegistryCaps,
+        now: u64,
+    ) -> Result<(GameRecord, String), RegistryError> {
+        validate_game_id(id)?;
+        let name = validate_game_name(name)?;
+        let key = generate_key();
+        let mut connection = self.lock()?;
+        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let owned: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM registry_games WHERE owner = ?1",
+            params![owner],
+            |row| row.get(0),
+        )?;
+        if owned as u64 >= caps.games_per_owner {
+            return Err(RegistryError::OwnerLimit);
+        }
+        let today: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM registry_games WHERE created_at >= ?1",
+            params![to_i64(day_start)?],
+            |row| row.get(0),
+        )?;
+        if today as u64 >= caps.self_registrations_per_day {
+            return Err(RegistryError::RegistrationLimit);
+        }
+        let inserted = tx.execute(
+            "INSERT OR IGNORE INTO registry_games (id, name, owner, status, key_hash, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'sandbox', ?4, ?5, ?5)",
+            params![id, name, owner, hash_key(&key).as_slice(), to_i64(now)?],
+        )?;
+        if inserted == 0 {
+            return Err(RegistryError::IdTaken);
+        }
+        tx.commit()?;
+        drop(connection);
+        let record = self.game(id)?.ok_or(RegistryError::UnknownGame)?;
+        Ok((record, key))
+    }
+
+    /// Rotate a key on the owner's signed request. `proof_time` must be later than the game's last
+    /// change, so a captured request cannot be replayed after it has been used.
+    pub fn rotate_key_signed(
+        &self,
+        id: &str,
+        owner: &str,
+        proof_time: u64,
+        now: u64,
+    ) -> Result<String, RegistryError> {
+        let key = generate_key();
+        let connection = self.lock()?;
+        let changed = connection.execute(
+            "UPDATE registry_games SET key_hash = ?3, updated_at = ?4
+             WHERE id = ?1 AND owner = ?2 AND updated_at < ?5",
+            params![
+                id,
+                owner,
+                hash_key(&key).as_slice(),
+                to_i64(now.max(proof_time))?,
+                to_i64(proof_time)?
+            ],
+        )?;
+        if changed == 0 {
+            // Unknown game, someone else's game, or a replayed request: all the same answer.
+            return Err(RegistryError::BadKey);
+        }
+        Ok(key)
     }
 
     pub fn game(&self, id: &str) -> Result<Option<GameRecord>, RegistryError> {
@@ -1244,6 +1352,7 @@ mod tests {
             results_per_game_per_day: 4,
             results_per_player_per_game_per_day: 2,
             sandbox_results_per_game_per_day: 3,
+            ..RegistryCaps::standard()
         };
         // Per player: the third result by one player is refused, another player is not.
         store

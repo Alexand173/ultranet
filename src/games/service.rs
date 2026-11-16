@@ -14,6 +14,7 @@
 use super::{
     anchor::Anchorer,
     chain::{ChainError, GamesChain},
+    ownership,
     registry::{self, RegistryDay, RegistryError, ResultInput},
     roots::{self, ChessResult, GridResult},
     rules::{self, Policy, RecordedReason, GAME_CHESS, GAME_GRID},
@@ -117,6 +118,10 @@ pub enum GamesError {
     GameLimit,
     #[error("this player has reached the limit of results for this game today")]
     PlayerLimit,
+    #[error("this address already holds the most games one owner may have")]
+    OwnerLimit,
+    #[error("too many games were registered today; try again tomorrow")]
+    RegistrationLimit,
     #[error("{0}")]
     NotFound(String),
     #[error("internal error: {0}")]
@@ -140,6 +145,8 @@ impl GamesError {
             GamesError::ResultConflict => "result_conflict",
             GamesError::GameLimit => "game_daily_limit",
             GamesError::PlayerLimit => "player_daily_limit",
+            GamesError::OwnerLimit => "owner_game_limit",
+            GamesError::RegistrationLimit => "registration_limit",
             GamesError::NotFound(_) => "not_found",
             GamesError::Internal(_) => "internal_error",
         }
@@ -157,7 +164,9 @@ impl GamesError {
             GamesError::BelowMinimum { .. }
             | GamesError::PayoutDailyCap
             | GamesError::GameLimit
-            | GamesError::PlayerLimit => 429,
+            | GamesError::PlayerLimit
+            | GamesError::OwnerLimit
+            | GamesError::RegistrationLimit => 429,
             GamesError::Disabled | GamesError::PayoutsPaused | GamesError::ChainUnavailable => 503,
             GamesError::Internal(_) => 500,
         }
@@ -195,6 +204,8 @@ impl From<RegistryError> for GamesError {
             RegistryError::DailyCap => GamesError::GameLimit,
             RegistryError::PlayerDailyCap => GamesError::PlayerLimit,
             RegistryError::UnknownGame => GamesError::NotFound("no such game".into()),
+            RegistryError::OwnerLimit => GamesError::OwnerLimit,
+            RegistryError::RegistrationLimit => GamesError::RegistrationLimit,
             RegistryError::Store(detail) => GamesError::Internal(detail),
         }
     }
@@ -1349,6 +1360,33 @@ pub struct RegistryResultRequest {
     pub data_hash: Option<String>,
 }
 
+/// A developer registering their own game. The owner is not named: it is the address the public key
+/// hashes to, so naming one that is not yours is not possible.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistryRegisterRequest {
+    pub id: String,
+    pub name: String,
+    pub public_key: String,
+    pub timestamp: u64,
+    pub signature: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistryRotateRequest {
+    pub public_key: String,
+    pub timestamp: u64,
+    pub signature: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RegistryKeyResponse {
+    pub game: RegistryGameView,
+    /// Shown once. Only its hash is stored.
+    pub api_key: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct RegistryResultResponse {
     pub game_id: String,
@@ -1456,6 +1494,71 @@ impl GamesService {
             owner: game.owner,
             status: game.status.code(),
         }
+    }
+
+    /// Register a game on the owner's signed request. The game starts in the sandbox, as every game
+    /// does; the operator decides when it is promoted. Costs the developer nothing but is bounded per
+    /// owner and per day, and the owner's address must already exist on the chain, so each game costs
+    /// its maker at least one faucet claim or a payment received.
+    pub async fn self_register(
+        &self,
+        request: RegistryRegisterRequest,
+    ) -> Result<RegistryKeyResponse, GamesError> {
+        let now = self.now();
+        let name = registry::validate_game_name(&request.name)?;
+        registry::validate_game_id(&request.id)?;
+        let owner = ownership::verify_owner_proof(
+            ownership::ACTION_REGISTER,
+            &request.id,
+            &name,
+            request.timestamp,
+            &request.public_key,
+            &request.signature,
+            now,
+        )?;
+        if self.policy.require_chain_presence && !self.chain.address_active(&owner).await? {
+            return Err(GamesError::Invalid(
+                "the owner address has no activity on UltraNet yet: claim from the faucet first".into(),
+            ));
+        }
+        let day_start = now - now % 86_400;
+        let (game, api_key) = self.store.register_game_self_service(
+            &request.id,
+            &name,
+            &owner,
+            day_start,
+            &self.policy.registry,
+            now,
+        )?;
+        Ok(RegistryKeyResponse {
+            game: Self::game_view(game),
+            api_key,
+        })
+    }
+
+    /// Replace a game's key on its owner's signed request: the recovery path for a lost key, with no
+    /// operator involved. The old key stops working at once.
+    pub fn self_rotate_key(
+        &self,
+        id: &str,
+        request: RegistryRotateRequest,
+    ) -> Result<RegistryKeyResponse, GamesError> {
+        let now = self.now();
+        let owner = ownership::verify_owner_proof(
+            ownership::ACTION_ROTATE_KEY,
+            id,
+            "",
+            request.timestamp,
+            &request.public_key,
+            &request.signature,
+            now,
+        )?;
+        let api_key = self.store.rotate_key_signed(id, &owner, request.timestamp, now)?;
+        let game = self.store.game(id)?.ok_or(GamesError::InvalidKey)?;
+        Ok(RegistryKeyResponse {
+            game: Self::game_view(game),
+            api_key,
+        })
     }
 
     /// A game's public page. A sandbox game is private and a suspended one is gone from view: both read
