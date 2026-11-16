@@ -97,8 +97,24 @@ The script uses only the Python standard library and is an independent implement
 the top of `src/games/registry.rs`, checked against the Rust code's fixed test vectors. To verify in
 another language, port those layouts and compare against the same vectors.
 
+## Node.js SDK
+
+`sdk/typescript/ultranet-games.mjs` is one file with no dependencies (Node 18+) for your game **server**:
+
+```js
+import { GamesClient } from "./ultranet-games.mjs";
+const games = new GamesClient({ gameId: "my-game", apiKey: process.env.ULTRANET_GAME_KEY });
+await games.submitResult({ player, resultId: "match-0001", score: 1200 });   // safe to retry
+const day = await games.verifyDay("2026-11-16", myRecordsForThatDay);        // { ok, problems, anchored }
+```
+
+It also exports `gameResultsRoot`, `verifyProof` and `ownerProofDigest`. Its tests (`node --test sdk/typescript/`)
+check the same fixed vectors as the Rust code and the Python script. There is deliberately no Kotlin or
+mobile SDK: results must be sent by your server, because an API key inside an app can be extracted and
+used to report results for your game.
+
 ## What is not built yet
 
-A web console, TypeScript and Kotlin SDKs, and any developer-funded rewards. Until then you use
+A web console (the website's wallet can only sign transfers today; signing a game proof there needs a new wallet method and a decision), and any developer-funded rewards. Until then you use
 `ultranet-game-dev` and call the HTTP API directly, as above. Registration is self-service, but a game
 only leaves the sandbox when the operator promotes it.
