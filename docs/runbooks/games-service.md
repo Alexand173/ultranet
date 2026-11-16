@@ -134,6 +134,9 @@ login**, so put these limits at the edge (Cloudflare, per `deploy/CLOUDFLARE_RUL
 |---|---|---|
 | `/api/games/grid/answers`, `/api/games/chess/results` | POST | 30 / minute |
 | `/api/games/withdraw` | POST | 6 / minute |
+| `/api/games/g` (register), `/api/games/g/*/rotate-key` | POST | 5 / hour (each is a post-quantum signature check) |
+| `/api/games/g/*/results` | POST | 600 / minute (a game's server sends many; the key is its login, the per-game daily cap is the real bound) |
+| `/api/games/g`, `/api/games/g/*`, `/api/games/registry/*` | GET | 120 / minute |
 | `/api/games/wallet/*`, `/api/games/payouts/*`, `/api/games/status`, `/api/games/grid/day` | GET | 120 / minute |
 
 The Caddyfile edit in this repository was **not machine-validated** (Caddy is not installed where it was
