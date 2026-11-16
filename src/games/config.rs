@@ -32,6 +32,9 @@ pub const MAX_PAYOUT_DAILY_CAP_UNITS: u64 = 5_000_000;
 /// cover a burst of withdrawals, and the solvency rule would promise money the fees then eat.
 pub const MIN_PAYOUT_RESERVE_UNITS: u64 = 100;
 pub const MAX_PAYOUT_RESERVE_UNITS: u64 = 1_000_000_000;
+pub const MAX_REGISTRY_RESULTS_PER_GAME_PER_DAY: u64 = 1_000_000;
+pub const MAX_REGISTRY_RESULTS_PER_PLAYER_PER_DAY: u64 = 100_000;
+pub const MAX_REGISTRY_SANDBOX_RESULTS_PER_DAY: u64 = 10_000;
 pub const MIN_CHESS_PLIES: u32 = 10;
 pub const MAX_CHESS_PLIES: u32 = 1_000;
 
@@ -96,6 +99,19 @@ pub fn validate_policy(policy: &Policy) -> Result<(), String> {
     {
         return Err(format!(
             "the payout reserve must be {MIN_PAYOUT_RESERVE_UNITS} to {MAX_PAYOUT_RESERVE_UNITS} base units"
+        ));
+    }
+    let registry = &policy.registry;
+    if registry.results_per_game_per_day == 0
+        || registry.results_per_game_per_day > MAX_REGISTRY_RESULTS_PER_GAME_PER_DAY
+        || registry.results_per_player_per_game_per_day == 0
+        || registry.results_per_player_per_game_per_day > MAX_REGISTRY_RESULTS_PER_PLAYER_PER_DAY
+        || registry.sandbox_results_per_game_per_day == 0
+        || registry.sandbox_results_per_game_per_day > MAX_REGISTRY_SANDBOX_RESULTS_PER_DAY
+    {
+        return Err(format!(
+            "registry limits must be within {MAX_REGISTRY_RESULTS_PER_GAME_PER_DAY} results per game, \
+             {MAX_REGISTRY_RESULTS_PER_PLAYER_PER_DAY} per player and {MAX_REGISTRY_SANDBOX_RESULTS_PER_DAY} per sandbox, per day"
         ));
     }
     if policy.chess_min_plies < MIN_CHESS_PLIES
@@ -206,6 +222,20 @@ impl GamesConfig {
                 "GAMES_PAYOUT_RESERVE_UNITS",
                 standard.payout_reserve_units,
             )?,
+            registry: super::registry::RegistryCaps {
+                results_per_game_per_day: number(
+                    "GAMES_REGISTRY_RESULTS_PER_GAME_PER_DAY",
+                    standard.registry.results_per_game_per_day,
+                )?,
+                results_per_player_per_game_per_day: number(
+                    "GAMES_REGISTRY_RESULTS_PER_PLAYER_PER_DAY",
+                    standard.registry.results_per_player_per_game_per_day,
+                )?,
+                sandbox_results_per_game_per_day: number(
+                    "GAMES_REGISTRY_SANDBOX_RESULTS_PER_DAY",
+                    standard.registry.sandbox_results_per_game_per_day,
+                )?,
+            },
         };
         validate_policy(&policy)?;
 
@@ -234,6 +264,20 @@ impl GamesConfig {
         service.anchor_empty_days = boolean("GAMES_ANCHOR_EMPTY_DAYS", service.anchor_empty_days)?;
         service.anchor_retry_seconds =
             number("GAMES_ANCHOR_RETRY_SECONDS", service.anchor_retry_seconds)?;
+        service.registry_chain_id = match lookup("GAMES_REGISTRY_CHAIN_ID") {
+            None => None,
+            Some(value) => {
+                let id: u32 = value.trim().parse().map_err(|_| {
+                    "GAMES_REGISTRY_CHAIN_ID must be an unsigned integer".to_string()
+                })?;
+                if id == 0 || id == policy.grid.chain_id || id == policy.chess.chain_id {
+                    return Err(
+                        "GAMES_REGISTRY_CHAIN_ID must be an AppChain of its own: not 0 (the L1) and not a game's chain".into(),
+                    );
+                }
+                Some(id)
+            }
+        };
         service.anchor_games = text("GAMES_ANCHOR_GAMES", "grid")
             .split(',')
             .map(|name| name.trim().to_string())
@@ -421,6 +465,66 @@ mod tests {
         let worst = (MAX_REWARD_UNITS * MAX_REWARDED_PER_ADDRESS_PER_DAY as u64) * 2;
         assert_eq!(worst, 20_000);
         assert!(worst <= MAX_PAYOUT_DAILY_CAP_UNITS);
+    }
+
+    #[test]
+    fn the_registry_is_not_anchored_unless_it_is_given_a_chain_of_its_own() {
+        assert_eq!(config(&[]).unwrap().service.registry_chain_id, None);
+        assert_eq!(
+            config(&[("GAMES_REGISTRY_CHAIN_ID", "3")])
+                .unwrap()
+                .service
+                .registry_chain_id,
+            Some(3)
+        );
+        for bad in ["0", "1", "2", "-1", "three", ""] {
+            assert!(
+                config(&[("GAMES_REGISTRY_CHAIN_ID", bad)]).is_err(),
+                "{bad:?} must be refused"
+            );
+        }
+        // The games may be moved to other chains, and then those ids are the ones the registry must avoid.
+        assert!(config(&[
+            ("GAMES_GRID_CHAIN_ID", "7"),
+            ("GAMES_REGISTRY_CHAIN_ID", "7")
+        ])
+        .is_err());
+        assert!(config(&[
+            ("GAMES_GRID_CHAIN_ID", "7"),
+            ("GAMES_REGISTRY_CHAIN_ID", "1")
+        ])
+        .is_ok());
+    }
+
+    #[test]
+    fn a_third_party_games_daily_limits_cannot_be_loosened_past_their_ceilings() {
+        let ok = config(&[
+            ("GAMES_REGISTRY_RESULTS_PER_GAME_PER_DAY", "1000000"),
+            ("GAMES_REGISTRY_RESULTS_PER_PLAYER_PER_DAY", "100000"),
+            ("GAMES_REGISTRY_SANDBOX_RESULTS_PER_DAY", "10000"),
+        ]);
+        assert!(ok.is_ok(), "{:?}", ok.err());
+        for (name, value) in [
+            ("GAMES_REGISTRY_RESULTS_PER_GAME_PER_DAY", "1000001"),
+            ("GAMES_REGISTRY_RESULTS_PER_PLAYER_PER_DAY", "100001"),
+            ("GAMES_REGISTRY_SANDBOX_RESULTS_PER_DAY", "10001"),
+            ("GAMES_REGISTRY_RESULTS_PER_GAME_PER_DAY", "0"),
+            ("GAMES_REGISTRY_SANDBOX_RESULTS_PER_DAY", "0"),
+        ] {
+            assert!(
+                config(&[(name, value)]).is_err(),
+                "{name}={value} must be refused"
+            );
+        }
+        let defaults = config(&[]).unwrap().policy.registry;
+        assert_eq!(
+            (
+                defaults.results_per_game_per_day,
+                defaults.results_per_player_per_game_per_day,
+                defaults.sandbox_results_per_game_per_day
+            ),
+            (50_000, 1_000, 500)
+        );
     }
 
     #[test]

@@ -280,6 +280,7 @@ struct Options {
     pool_balance: u64,
     anchor_games: Vec<String>,
     with_signer: bool,
+    registry_chain: Option<u32>,
 }
 
 impl Default for Options {
@@ -293,6 +294,7 @@ impl Default for Options {
             pool_balance: 100_000,
             anchor_games: vec![GAME_GRID.to_string()],
             with_signer: true,
+            registry_chain: Some(3),
         }
     }
 }
@@ -307,6 +309,7 @@ fn harness(options: Options) -> Harness {
     let payout_address = signer.address().to_string();
     let mut config = ServiceConfig::new(payout_address.clone());
     config.anchor_games = options.anchor_games;
+    config.registry_chain_id = options.registry_chain;
     let tick = clock.clone();
     let service = Arc::new(GamesService::new(
         GamesStore::open(Path::new(":memory:")).unwrap(),
@@ -1655,6 +1658,471 @@ async fn a_payout_somehow_addressed_to_the_wallet_is_released_without_pausing_an
     assert!(h.service.store().audit().unwrap().ok());
 }
 
+// --- the registry: third-party games ------------------------------------------------------------
+
+mod registry_service {
+    use super::*;
+    use crate::games::{
+        registry::{self, GameStatus},
+        service::RegistryResultRequest,
+    };
+
+    const OWNER: &str = "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e";
+
+    /// A game in the given status, with its API key.
+    fn game(h: &Harness, id: &str, status: GameStatus) -> String {
+        let (_, key) = h
+            .service
+            .store()
+            .register_game(id, id, OWNER, h.service.now())
+            .unwrap();
+        h.service
+            .store()
+            .set_game_status(id, status, h.service.now())
+            .unwrap();
+        key
+    }
+
+    fn result(player: &str, id: &str, score: u64) -> RegistryResultRequest {
+        RegistryResultRequest {
+            player: player.into(),
+            result_id: id.into(),
+            score,
+            data_hash: None,
+        }
+    }
+
+    fn chain_three_calls(h: &Harness) -> Vec<[u8; 32]> {
+        h.anchorer
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(chain, _)| *chain == 3)
+            .map(|(_, root)| *root)
+            .collect()
+    }
+
+    #[test]
+    fn a_registered_game_records_a_result_with_its_key_and_a_replay_adds_nothing() {
+        let h = harness(Options::default());
+        let key = game(&h, "tetris", GameStatus::Registered);
+        let first = h
+            .service
+            .submit_registry_result("tetris", &key, result(A, "match-0001", 900))
+            .unwrap();
+        assert_eq!(
+            (
+                first.duplicate,
+                first.anchored,
+                first.status,
+                first.day.as_str()
+            ),
+            (false, true, "registered", DAY)
+        );
+        let again = h
+            .service
+            .submit_registry_result("tetris", &key, result(A, "match-0001", 900))
+            .unwrap();
+        assert!(again.duplicate);
+        assert_eq!(
+            h.service
+                .store()
+                .results_for_day("tetris", DAY)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_sandbox_game_records_but_says_plainly_it_is_not_anchored() {
+        let h = harness(Options::default());
+        let key = game(&h, "scratch", GameStatus::Sandbox);
+        let response = h
+            .service
+            .submit_registry_result("scratch", &key, result(A, "match-0001", 1))
+            .unwrap();
+        assert_eq!((response.anchored, response.status), (false, "sandbox"));
+    }
+
+    #[test]
+    fn a_wrong_missing_or_foreign_key_and_an_unknown_game_are_one_and_the_same_refusal() {
+        let h = harness(Options::default());
+        let key = game(&h, "tetris", GameStatus::Registered);
+        let other = game(&h, "snake", GameStatus::Registered);
+        for (id, presented) in [
+            ("tetris", "ugk_wrong"),
+            ("tetris", ""),
+            ("tetris", other.as_str()),
+            ("no-such-game", key.as_str()),
+        ] {
+            let error = h
+                .service
+                .submit_registry_result(id, presented, result(A, "match-0001", 1))
+                .unwrap_err();
+            assert!(
+                matches!(error, GamesError::InvalidKey),
+                "{id} / {presented}"
+            );
+            assert_eq!(error.status(), 401);
+        }
+        assert!(h
+            .service
+            .store()
+            .results_for_day("tetris", DAY)
+            .unwrap()
+            .is_empty());
+        assert!(h
+            .service
+            .store()
+            .results_for_day("snake", DAY)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn a_suspended_game_is_refused_with_its_own_valid_key() {
+        let h = harness(Options::default());
+        let key = game(&h, "tetris", GameStatus::Suspended);
+        let error = h
+            .service
+            .submit_registry_result("tetris", &key, result(A, "match-0001", 1))
+            .unwrap_err();
+        assert!(matches!(error, GamesError::GameSuspended));
+        assert_eq!(error.status(), 403);
+    }
+
+    #[test]
+    fn the_same_result_id_with_different_contents_is_a_conflict() {
+        let h = harness(Options::default());
+        let key = game(&h, "tetris", GameStatus::Registered);
+        h.service
+            .submit_registry_result("tetris", &key, result(A, "match-0001", 900))
+            .unwrap();
+        let error = h
+            .service
+            .submit_registry_result("tetris", &key, result(A, "match-0001", 901))
+            .unwrap_err();
+        assert!(matches!(error, GamesError::ResultConflict));
+        assert_eq!(error.status(), 409);
+        assert_eq!(
+            h.service.store().results_for_day("tetris", DAY).unwrap()[0].score,
+            900
+        );
+    }
+
+    #[test]
+    fn a_games_daily_limit_is_a_429_with_a_code_a_developer_can_act_on() {
+        let mut policy = Policy::standard();
+        policy.registry.results_per_game_per_day = 2;
+        policy.registry.results_per_player_per_game_per_day = 1;
+        let h = harness(Options {
+            policy,
+            ..Options::default()
+        });
+        let key = game(&h, "tetris", GameStatus::Registered);
+        h.service
+            .submit_registry_result("tetris", &key, result(A, "match-0001", 1))
+            .unwrap();
+        let player = h
+            .service
+            .submit_registry_result("tetris", &key, result(A, "match-0002", 1))
+            .unwrap_err();
+        assert!(matches!(player, GamesError::PlayerLimit));
+        h.service
+            .submit_registry_result("tetris", &key, result(B, "match-0003", 1))
+            .unwrap();
+        let full = h
+            .service
+            .submit_registry_result(
+                "tetris",
+                &key,
+                result("1".repeat(64).as_str(), "match-0004", 1),
+            )
+            .unwrap_err();
+        assert!(matches!(full, GamesError::GameLimit));
+        assert_eq!((player.status(), full.status()), (429, 429));
+    }
+
+    #[test]
+    fn a_malformed_result_is_refused_before_anything_is_stored() {
+        let h = harness(Options::default());
+        let key = game(&h, "tetris", GameStatus::Registered);
+        let bad_hash = RegistryResultRequest {
+            data_hash: Some("not-hex".into()),
+            ..result(A, "match-0001", 1)
+        };
+        for request in [result("nope", "match-0001", 1), result(A, "x", 1), bad_hash] {
+            assert!(matches!(
+                h.service.submit_registry_result("tetris", &key, request),
+                Err(GamesError::Invalid(_))
+            ));
+        }
+        let good_hash = RegistryResultRequest {
+            data_hash: Some("ab".repeat(32)),
+            ..result(A, "match-0002", 1)
+        };
+        h.service
+            .submit_registry_result("tetris", &key, good_hash)
+            .unwrap();
+        assert_eq!(
+            h.service.store().results_for_day("tetris", DAY).unwrap()[0].data_hash,
+            [0xAB; 32]
+        );
+        assert_eq!(
+            h.service
+                .store()
+                .results_for_day("tetris", DAY)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_player_address_is_accepted_in_any_case_and_stored_lowercase() {
+        let h = harness(Options::default());
+        let key = game(&h, "tetris", GameStatus::Registered);
+        h.service
+            .submit_registry_result("tetris", &key, result(&A.to_uppercase(), "match-0001", 1))
+            .unwrap();
+        assert_eq!(
+            h.service.store().results_for_day("tetris", DAY).unwrap()[0].player,
+            A
+        );
+    }
+
+    #[test]
+    fn the_platform_switch_stops_third_party_results_too() {
+        let h = harness(Options::default());
+        let key = game(&h, "tetris", GameStatus::Registered);
+        h.service
+            .store()
+            .set_state(Some(false), None, Some("maintenance"), 1)
+            .unwrap();
+        assert!(matches!(
+            h.service
+                .submit_registry_result("tetris", &key, result(A, "match-0001", 1)),
+            Err(GamesError::Disabled)
+        ));
+    }
+
+    #[test]
+    fn only_registered_and_listed_games_have_a_public_page_and_only_listed_ones_are_in_the_directory(
+    ) {
+        let h = harness(Options::default());
+        game(&h, "scratch", GameStatus::Sandbox);
+        game(&h, "tetris", GameStatus::Registered);
+        game(&h, "snake", GameStatus::Listed);
+        game(&h, "banned", GameStatus::Suspended);
+        assert_eq!(
+            h.service.registry_game("tetris").unwrap().status,
+            "registered"
+        );
+        assert_eq!(h.service.registry_game("snake").unwrap().status, "listed");
+        for hidden in ["scratch", "banned", "never-existed"] {
+            assert!(
+                matches!(
+                    h.service.registry_game(hidden),
+                    Err(GamesError::NotFound(_))
+                ),
+                "{hidden}"
+            );
+        }
+        let listed: Vec<String> = h
+            .service
+            .registry_listed()
+            .unwrap()
+            .into_iter()
+            .map(|g| g.id)
+            .collect();
+        assert_eq!(listed, vec!["snake".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn the_daily_run_closes_the_registry_day_and_anchors_its_root_exactly_once() {
+        let h = harness(Options::default());
+        let tetris = game(&h, "tetris", GameStatus::Registered);
+        let snake = game(&h, "snake", GameStatus::Listed);
+        let scratch = game(&h, "scratch", GameStatus::Sandbox);
+        h.service
+            .submit_registry_result("tetris", &tetris, result(A, "match-0001", 10))
+            .unwrap();
+        h.service
+            .submit_registry_result("snake", &snake, result(B, "match-0001", 20))
+            .unwrap();
+        h.service
+            .submit_registry_result("scratch", &scratch, result(A, "match-0001", 30))
+            .unwrap();
+
+        // Today is never closed early.
+        h.service.run_daily().await.unwrap();
+        assert!(chain_three_calls(&h).is_empty());
+        assert!(h.service.registry_day_view(DAY).is_err());
+
+        h.next_day();
+        let report = h.service.run_daily().await.unwrap();
+        assert!(report
+            .anchored
+            .contains(&("registry".to_string(), DAY.to_string())));
+        let view = h.service.registry_day_view(DAY).unwrap();
+        assert_eq!(
+            view.games.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(),
+            vec!["snake", "tetris"],
+            "the sandbox is not anchored"
+        );
+        let calls = chain_three_calls(&h);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            hex::encode(calls[0]),
+            view.day_root,
+            "the anchored root is the one the day publishes"
+        );
+        assert_eq!(view.state, "anchored");
+        assert_eq!(view.chain_id, Some(3));
+
+        // Straight away again: pending, so no second anchor. Then it lands, and the day is confirmed.
+        h.service.run_daily().await.unwrap();
+        assert_eq!(chain_three_calls(&h).len(), 1);
+        h.chain.add_anchor(3, 1, calls[0], h.service.now());
+        let report = h.service.run_daily().await.unwrap();
+        assert!(report
+            .confirmed
+            .contains(&("registry".to_string(), DAY.to_string())));
+        assert_eq!(h.service.registry_day_view(DAY).unwrap().state, "confirmed");
+        assert_eq!(chain_three_calls(&h).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_registry_anchor_of_unclear_outcome_is_checked_on_the_ledger_before_it_is_repeated() {
+        let h = harness(Options::default());
+        let key = game(&h, "tetris", GameStatus::Registered);
+        h.service
+            .submit_registry_result("tetris", &key, result(A, "match-0001", 10))
+            .unwrap();
+        h.next_day();
+        h.anchorer.fail.store(true, Ordering::SeqCst);
+        h.service.run_daily().await.unwrap();
+        assert_eq!(chain_three_calls(&h).len(), 1);
+        let day = h.service.store().registry_day(DAY).unwrap().unwrap();
+        assert!(day.last_error.is_some());
+        // Too soon to retry; and when it is time, the root is found on the ledger and nothing is resubmitted.
+        h.advance(60);
+        h.service.run_daily().await.unwrap();
+        assert_eq!(
+            chain_three_calls(&h).len(),
+            1,
+            "no retry before the interval"
+        );
+        h.chain.add_anchor(3, 1, day.day_root, h.service.now());
+        h.advance(601);
+        h.service.run_daily().await.unwrap();
+        assert_eq!(h.service.registry_day_view(DAY).unwrap().state, "confirmed");
+        assert_eq!(chain_three_calls(&h).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn without_a_registry_chain_the_day_is_closed_for_proofs_but_never_anchored() {
+        let h = harness(Options {
+            registry_chain: None,
+            ..Options::default()
+        });
+        let key = game(&h, "tetris", GameStatus::Registered);
+        h.service
+            .submit_registry_result("tetris", &key, result(A, "match-0001", 10))
+            .unwrap();
+        h.next_day();
+        h.service.run_daily().await.unwrap();
+        assert!(h
+            .anchorer
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(chain, _)| *chain != 3));
+        let view = h.service.registry_day_view(DAY).unwrap();
+        assert_eq!((view.state.as_str(), view.chain_id), ("closed", None));
+        assert!(
+            h.service.registry_proof("tetris", DAY).is_ok(),
+            "a developer can still be given a proof"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_day_with_no_registered_results_is_never_anchored() {
+        let h = harness(Options::default());
+        let key = game(&h, "scratch", GameStatus::Sandbox);
+        h.service
+            .submit_registry_result("scratch", &key, result(A, "match-0001", 1))
+            .unwrap();
+        h.next_day();
+        h.service.run_daily().await.unwrap();
+        assert!(
+            chain_three_calls(&h).is_empty(),
+            "nothing registered happened, so there is nothing to anchor"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_developer_can_verify_their_proof_against_the_published_root() {
+        let h = harness(Options::default());
+        for id in ["tetris", "snake", "puzzle-x"] {
+            let key = game(&h, id, GameStatus::Registered);
+            h.service
+                .submit_registry_result(id, &key, result(A, "match-0001", 5))
+                .unwrap();
+        }
+        h.next_day();
+        h.service.close_registry_day(DAY).await.unwrap();
+        for id in ["tetris", "snake", "puzzle-x"] {
+            let proof = h.service.registry_proof(id, DAY).unwrap();
+            let leaf: [u8; 32] = hex::decode(&proof.leaf).unwrap().try_into().unwrap();
+            let root: [u8; 32] = hex::decode(&proof.merkle_root).unwrap().try_into().unwrap();
+            let steps: Vec<registry::ProofStep> = proof
+                .steps
+                .iter()
+                .map(|s| registry::ProofStep {
+                    sibling: hex::decode(&s.sibling).unwrap().try_into().unwrap(),
+                    sibling_on_left: s.side == "left",
+                })
+                .collect();
+            assert!(registry::verify_inclusion(&leaf, &steps, &root), "{id}");
+            // And the developer recomputes their own game root from their own records.
+            let mine = h.service.store().results_for_day(id, DAY).unwrap();
+            assert_eq!(
+                hex::encode(registry::game_results_root(id, &mine)),
+                proof.game_root
+            );
+            assert_eq!(
+                hex::encode(registry::registry_day_root(DAY, &root)),
+                proof.day_root
+            );
+        }
+        assert!(matches!(
+            h.service.registry_proof("scratch-none", DAY),
+            Err(GamesError::NotFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn only_a_finished_day_can_be_closed_and_a_bad_date_is_refused() {
+        let h = harness(Options::default());
+        assert!(matches!(
+            h.service.close_registry_day(DAY).await,
+            Err(GamesError::Invalid(_))
+        ));
+        assert!(matches!(
+            h.service.close_registry_day("garbage").await,
+            Err(GamesError::Invalid(_))
+        ));
+        assert!(matches!(
+            h.service.registry_day_view("garbage"),
+            Err(GamesError::Invalid(_))
+        ));
+    }
+}
+
 // --- HTTP ------------------------------------------------------------------------------------
 
 mod http {
@@ -2037,6 +2505,259 @@ mod http {
         .await;
         assert_eq!(
             (status.as_u16(), body["code"].as_str()),
+            (400, Some("invalid_request"))
+        );
+    }
+
+    // --- third-party games over HTTP --------------------------------------------------------------
+
+    fn register(h: &Harness, id: &str, status: crate::games::registry::GameStatus) -> String {
+        let (_, key) = h
+            .service
+            .store()
+            .register_game(id, id, A, h.service.now())
+            .unwrap();
+        h.service
+            .store()
+            .set_game_status(id, status, h.service.now())
+            .unwrap();
+        key
+    }
+
+    #[actix_web::test]
+    async fn a_game_reports_a_result_with_a_bearer_key() {
+        use crate::games::registry::GameStatus;
+        let h = harness(Options::default());
+        let key = register(&h, "tetris", GameStatus::Registered);
+        let app = app!(h);
+        let body = json!({"player": A, "result_id": "match-0001", "score": 1200});
+        let request = |auth: Option<String>| {
+            let mut r = TestRequest::post()
+                .uri("/api/games/g/tetris/results")
+                .set_json(&body);
+            if let Some(value) = auth {
+                r = r.insert_header(("Authorization", value));
+            }
+            r.to_request()
+        };
+        let (status, ok) =
+            json_of(call_service(&app, request(Some(format!("Bearer {key}")))).await).await;
+        assert_eq!(status, 200, "{ok}");
+        assert_eq!(
+            (
+                ok["game_id"].as_str(),
+                ok["duplicate"].as_bool(),
+                ok["anchored"].as_bool(),
+                ok["status"].as_str()
+            ),
+            (Some("tetris"), Some(false), Some(true), Some("registered"))
+        );
+
+        // The scheme is case-insensitive, and a replay is a 200 that says so.
+        let (status, again) =
+            json_of(call_service(&app, request(Some(format!("bearer {key}")))).await).await;
+        assert_eq!(
+            (status.as_u16(), again["duplicate"].as_bool()),
+            (200, Some(true))
+        );
+
+        // No header, a wrong scheme and a wrong key are one refusal, 401, with no hint which.
+        for bad in [
+            None,
+            Some(format!("Basic {key}")),
+            Some("Bearer ugk_wrong".to_string()),
+            Some(key.clone()),
+        ] {
+            let (status, error) = json_of(call_service(&app, request(bad)).await).await;
+            assert_eq!(
+                (status.as_u16(), error["code"].as_str()),
+                (401, Some("invalid_key"))
+            );
+        }
+        assert_eq!(
+            h.service
+                .store()
+                .results_for_day("tetris", DAY)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[actix_web::test]
+    async fn the_key_of_one_game_opens_no_other_game_over_http() {
+        use crate::games::registry::GameStatus;
+        let h = harness(Options::default());
+        let tetris = register(&h, "tetris", GameStatus::Registered);
+        register(&h, "snake", GameStatus::Registered);
+        let app = app!(h);
+        let body = json!({"player": A, "result_id": "match-0001"});
+        let request = TestRequest::post()
+            .uri("/api/games/g/snake/results")
+            .insert_header(("Authorization", format!("Bearer {tetris}")))
+            .set_json(&body)
+            .to_request();
+        let (status, error) = json_of(call_service(&app, request).await).await;
+        assert_eq!(
+            (status.as_u16(), error["code"].as_str()),
+            (401, Some("invalid_key"))
+        );
+        assert!(h
+            .service
+            .store()
+            .results_for_day("snake", DAY)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[actix_web::test]
+    async fn a_result_cannot_smuggle_extra_fields_past_the_parser() {
+        use crate::games::registry::GameStatus;
+        let h = harness(Options::default());
+        let key = register(&h, "tetris", GameStatus::Registered);
+        let app = app!(h);
+        let sneaky = json!({"player": A, "result_id": "match-0001", "reward_units": 1000, "game_id": "snake"});
+        let request = TestRequest::post()
+            .uri("/api/games/g/tetris/results")
+            .insert_header(("Authorization", format!("Bearer {key}")))
+            .set_json(&sneaky)
+            .to_request();
+        let (status, error) = json_of(call_service(&app, request).await).await;
+        assert_eq!(
+            (status.as_u16(), error["code"].as_str()),
+            (400, Some("invalid_request"))
+        );
+        assert!(h
+            .service
+            .store()
+            .results_for_day("tetris", DAY)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[actix_web::test]
+    async fn the_public_pages_show_only_what_a_stranger_should_see() {
+        use crate::games::registry::GameStatus;
+        let h = harness(Options::default());
+        register(&h, "scratch", GameStatus::Sandbox);
+        register(&h, "tetris", GameStatus::Registered);
+        register(&h, "snake", GameStatus::Listed);
+        let app = app!(h);
+        let get = |uri: &str| TestRequest::get().uri(uri).to_request();
+
+        let (status, page) = json_of(call_service(&app, get("/api/games/g/tetris")).await).await;
+        assert_eq!(
+            (status.as_u16(), page["status"].as_str()),
+            (200, Some("registered"))
+        );
+        assert!(
+            page.get("key_hash").is_none() && !page.to_string().contains("ugk_"),
+            "no key material is ever shown"
+        );
+        for hidden in ["scratch", "never-existed"] {
+            let (status, error) =
+                json_of(call_service(&app, get(&format!("/api/games/g/{hidden}"))).await).await;
+            assert_eq!(
+                (status.as_u16(), error["code"].as_str()),
+                (404, Some("not_found")),
+                "{hidden}"
+            );
+        }
+        let (_, directory) = json_of(call_service(&app, get("/api/games/g")).await).await;
+        let ids: Vec<&str> = directory["games"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| g["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["snake"], "only listed games are in the directory");
+    }
+
+    #[actix_web::test]
+    async fn the_registry_day_and_a_proof_are_public_once_the_day_is_closed() {
+        use crate::games::registry::GameStatus;
+        let h = harness(Options::default());
+        let key = register(&h, "tetris", GameStatus::Registered);
+        let app = app!(h);
+        let body = json!({"player": A, "result_id": "match-0001", "score": 5});
+        let submit = TestRequest::post()
+            .uri("/api/games/g/tetris/results")
+            .insert_header(("Authorization", format!("Bearer {key}")))
+            .set_json(&body)
+            .to_request();
+        assert_eq!(call_service(&app, submit).await.status(), 200);
+
+        // Before the day is closed there is nothing to show, and that is a 404, not an empty promise.
+        let (status, _) = json_of(
+            call_service(
+                &app,
+                TestRequest::get()
+                    .uri(&format!("/api/games/registry/days/{DAY}"))
+                    .to_request(),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, 404);
+
+        h.next_day();
+        h.service.close_registry_day(DAY).await.unwrap();
+        let (status, day) = json_of(
+            call_service(
+                &app,
+                TestRequest::get()
+                    .uri(&format!("/api/games/registry/days/{DAY}"))
+                    .to_request(),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, 200, "{day}");
+        assert_eq!(day["games"][0]["id"], "tetris");
+        assert_eq!(day["chain_id"], 3);
+        let (status, proof) = json_of(
+            call_service(
+                &app,
+                TestRequest::get()
+                    .uri(&format!("/api/games/g/tetris/proof/{DAY}"))
+                    .to_request(),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, 200, "{proof}");
+        assert_eq!(proof["merkle_root"], day["merkle_root"]);
+        assert_eq!(
+            proof["steps"].as_array().unwrap().len(),
+            0,
+            "a one-game day is its own root"
+        );
+        let (status, missing) = json_of(
+            call_service(
+                &app,
+                TestRequest::get()
+                    .uri(&format!("/api/games/g/snake/proof/{DAY}"))
+                    .to_request(),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            (status.as_u16(), missing["code"].as_str()),
+            (404, Some("not_found"))
+        );
+        let (status, bad) = json_of(
+            call_service(
+                &app,
+                TestRequest::get()
+                    .uri("/api/games/registry/days/garbage")
+                    .to_request(),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            (status.as_u16(), bad["code"].as_str()),
             (400, Some("invalid_request"))
         );
     }

@@ -51,6 +51,8 @@ pub struct Policy {
     /// Held back inside the payout wallet for network fees, which it pays on top of every payout. It is
     /// part of the solvency rule: rewards are promised only against what is left after it.
     pub payout_reserve_units: u64,
+    /// What one third-party game may write per day. Storage is the platform's cost, so it is bounded.
+    pub registry: super::registry::RegistryCaps,
 }
 
 impl Policy {
@@ -90,6 +92,7 @@ impl Policy {
             chess_min_plies: 10,
             chess_max_plies: 600,
             payout_reserve_units: 1_000,
+            registry: super::registry::RegistryCaps::standard(),
         }
     }
 

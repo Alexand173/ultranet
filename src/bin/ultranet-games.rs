@@ -11,6 +11,12 @@
 //! ultranet-games payout-resolve --id <id> (--confirmed | --failed) --note "..."
 //! ultranet-games close-day --game grid|chess --date YYYY-MM-DD
 //! ultranet-games backup --to /var/backups/ultranet-games/games-YYYYMMDD.db
+//!
+//! ultranet-games game-register --id tetris --name "Tetris" --owner <64 hex>    # prints the API key ONCE
+//! ultranet-games game-list
+//! ultranet-games game-status --id tetris --status sandbox|registered|listed|suspended
+//! ultranet-games game-rotate-key --id tetris                                   # prints the new key ONCE
+//! ultranet-games registry-close-day --date YYYY-MM-DD                          # close (and anchor) a registry day
 //! ```
 //!
 //! Only `serve`, `check-config` and `close-day` read credentials or touch the network. The rest open
@@ -54,7 +60,12 @@ async fn main() {
         "payout-resolve" => payout_resolve(&args[1..]),
         "close-day" => close_day(&args[1..]).await,
         "backup" => backup(&args[1..]),
-        _ => Err("use serve, check-config, status, audit, disable, enable, payouts, payout-resolve, close-day or backup".into()),
+        "game-register" => game_register(&args[1..]),
+        "game-list" => game_list(),
+        "game-status" => game_status(&args[1..]),
+        "game-rotate-key" => game_rotate_key(&args[1..]),
+        "registry-close-day" => registry_close_day(&args[1..]).await,
+        _ => Err("use serve, check-config, status, audit, disable, enable, payouts, payout-resolve, close-day, backup, game-register, game-list, game-status, game-rotate-key or registry-close-day".into()),
     };
     if let Err(error) = result {
         eprintln!("ultranet-games: {error}");
@@ -329,6 +340,105 @@ fn backup(args: &[String]) -> Result<(), String> {
         }
         Err("the backup was written but it does not pass the audit; the live database has the same problem".into())
     }
+}
+
+/// Create a third-party game in the sandbox. The key is printed here and never stored: lose it and the
+/// only remedy is `game-rotate-key`. Only the database is opened.
+fn game_register(args: &[String]) -> Result<(), String> {
+    let id = flag(args, "--id").ok_or("--id is required")?;
+    let name = flag(args, "--name").ok_or("--name is required")?;
+    let owner = flag(args, "--owner").ok_or("--owner <64 hex address> is required")?;
+    let store = open_store()?;
+    let (game, key) = store
+        .register_game(&id, &name, &owner, UltraNet::auth::now_seconds())
+        .map_err(|e| e.to_string())?;
+    println!(
+        "registered {} ({}) for {} in the {} state",
+        game.id,
+        game.name,
+        game.owner,
+        game.status.code()
+    );
+    println!();
+    println!("API KEY (shown once, store it now): {key}");
+    println!();
+    println!(
+        "Results go to POST /api/games/g/{}/results with `Authorization: Bearer <key>`.",
+        game.id
+    );
+    println!("A sandbox game is private and never anchored: promote it with `game-status --status registered`.");
+    Ok(())
+}
+
+fn game_list() -> Result<(), String> {
+    let games = open_store()?.games().map_err(|e| e.to_string())?;
+    if games.is_empty() {
+        println!("no registered games");
+    }
+    for game in games {
+        println!(
+            "{:<32} {:<11} {}  {}",
+            game.id,
+            game.status.code(),
+            game.owner,
+            game.name
+        );
+    }
+    Ok(())
+}
+
+fn game_status(args: &[String]) -> Result<(), String> {
+    use UltraNet::games::registry::GameStatus;
+    let id = flag(args, "--id").ok_or("--id is required")?;
+    let status = flag(args, "--status")
+        .and_then(|value| GameStatus::parse(&value))
+        .ok_or("--status must be sandbox, registered, listed or suspended")?;
+    open_store()?
+        .set_game_status(&id, status, UltraNet::auth::now_seconds())
+        .map_err(|e| e.to_string())?;
+    println!("{id} is now {}", status.code());
+    if status == GameStatus::Suspended {
+        println!("It takes no new results. Days already closed and anchored are unchanged.");
+    }
+    Ok(())
+}
+
+fn game_rotate_key(args: &[String]) -> Result<(), String> {
+    let id = flag(args, "--id").ok_or("--id is required")?;
+    let key = open_store()?
+        .rotate_key(&id, UltraNet::auth::now_seconds())
+        .map_err(|e| e.to_string())?;
+    println!("the old key for {id} no longer works");
+    println!();
+    println!("NEW API KEY (shown once, store it now): {key}");
+    Ok(())
+}
+
+/// Close a finished registry day and anchor it if the configuration has a registry chain. Like
+/// `close-day` it loads the full configuration and the unit's credentials, so it is not a plain-shell command.
+async fn registry_close_day(args: &[String]) -> Result<(), String> {
+    let date = flag(args, "--date").ok_or("--date YYYY-MM-DD is required")?;
+    let config = GamesConfig::from_env()?;
+    let service = build_service(&config)?;
+    let day = service
+        .close_registry_day(&date)
+        .await
+        .map_err(|e| e.to_string())?;
+    println!(
+        "registry {} -> {} ({} game(s))",
+        day.date,
+        day.state,
+        day.games.len()
+    );
+    println!("merkle root: {}", hex::encode(day.merkle_root));
+    println!("day root:    {}", hex::encode(day.day_root));
+    if let Some(tx) = &day.anchor_tx {
+        println!("anchor tx:   {tx}");
+    }
+    if let Some(error) = &day.last_error {
+        println!("last error:  {error}");
+    }
+    Ok(())
 }
 
 fn payouts() -> Result<(), String> {

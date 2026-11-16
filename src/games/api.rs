@@ -17,6 +17,7 @@
 
 use super::service::{
     date_start, shift_date, ChessResultRequest, GamesError, GamesService, GridAnswerRequest,
+    RegistryResultRequest,
 };
 use crate::ultragrid;
 use actix_web::{http::StatusCode, web, App, HttpRequest, HttpResponse, HttpServer};
@@ -47,7 +48,19 @@ pub fn configure_routes(config: &mut web::ServiceConfig) {
         .route("/api/games/chess/results", web::post().to(chess_result))
         .route("/api/games/wallet/{address}", web::get().to(wallet))
         .route("/api/games/withdraw", web::post().to(withdraw))
-        .route("/api/games/payouts/{id}", web::get().to(payout));
+        .route("/api/games/payouts/{id}", web::get().to(payout))
+        // Third-party games. `/g/` keeps every game id clear of the fixed routes above.
+        .route("/api/games/g", web::get().to(registry_listed))
+        .route("/api/games/g/{id}", web::get().to(registry_game))
+        .route("/api/games/g/{id}/results", web::post().to(registry_result))
+        .route(
+            "/api/games/g/{id}/proof/{date}",
+            web::get().to(registry_proof),
+        )
+        .route(
+            "/api/games/registry/days/{date}",
+            web::get().to(registry_day),
+        );
 }
 
 pub async fn run_server(
@@ -246,6 +259,56 @@ async fn payout(service: web::Data<GamesService>, id: web::Path<String>) -> Http
     }
 }
 
+/// The API key from `Authorization: Bearer <key>`. The scheme is case-insensitive; anything else, or no
+/// header, is simply "no key", which the service answers exactly as it answers a wrong one.
+fn bearer_key(request: &HttpRequest) -> String {
+    request
+        .headers()
+        .get("Authorization")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            let (scheme, key) = value.split_once(' ')?;
+            scheme
+                .eq_ignore_ascii_case("bearer")
+                .then(|| key.trim().to_string())
+        })
+        .filter(|key| key.len() <= 128)
+        .unwrap_or_default()
+}
+
+async fn registry_result(
+    service: web::Data<GamesService>,
+    request: HttpRequest,
+    id: web::Path<String>,
+    body: web::Json<RegistryResultRequest>,
+) -> HttpResponse {
+    respond(service.submit_registry_result(&id, &bearer_key(&request), body.into_inner()))
+}
+
+async fn registry_listed(service: web::Data<GamesService>) -> HttpResponse {
+    respond(
+        service
+            .registry_listed()
+            .map(|games| json!({ "games": games })),
+    )
+}
+
+async fn registry_game(service: web::Data<GamesService>, id: web::Path<String>) -> HttpResponse {
+    respond(service.registry_game(&id))
+}
+
+async fn registry_proof(
+    service: web::Data<GamesService>,
+    path: web::Path<(String, String)>,
+) -> HttpResponse {
+    let (id, date) = path.into_inner();
+    respond(service.registry_proof(&id, &date))
+}
+
+async fn registry_day(service: web::Data<GamesService>, date: web::Path<String>) -> HttpResponse {
+    respond(service.registry_day_view(&date))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,6 +388,12 @@ mod tests {
                 "below_minimum",
             ),
             (GamesError::PayoutDailyCap, 429, "payout_daily_cap"),
+            (GamesError::InvalidKey, 401, "invalid_key"),
+            (GamesError::GameSuspended, 403, "game_suspended"),
+            (GamesError::ResultConflict, 409, "result_conflict"),
+            (GamesError::GameLimit, 429, "game_daily_limit"),
+            (GamesError::PlayerLimit, 429, "player_daily_limit"),
+            (GamesError::NotFound("x".into()), 404, "not_found"),
         ];
         for (error, status, code) in cases {
             assert_eq!(error.status(), status);

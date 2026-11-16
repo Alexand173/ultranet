@@ -466,8 +466,12 @@ pub struct RegistryDay {
     pub games: Vec<(String, [u8; 32])>,
     pub merkle_root: [u8; 32],
     pub day_root: [u8; 32],
+    /// `closed` (fixed, not yet anchored), `anchored` (submitted) or `confirmed` (seen on the ledger).
     pub state: String,
     pub anchor_tx: Option<String>,
+    pub attempts: u32,
+    pub last_error: Option<String>,
+    pub updated_at: u64,
 }
 
 impl RegistryDay {
@@ -815,7 +819,8 @@ impl GamesStore {
         let connection = self.lock()?;
         let row = connection
             .query_row(
-                "SELECT leaves, merkle_root, day_root, state, anchor_tx FROM registry_days WHERE day = ?1",
+                "SELECT leaves, merkle_root, day_root, state, anchor_tx, attempts, last_error, updated_at
+                 FROM registry_days WHERE day = ?1",
                 params![date],
                 |row| {
                     Ok((
@@ -824,11 +829,16 @@ impl GamesStore {
                         row.get::<_, Vec<u8>>(2)?,
                         row.get::<_, String>(3)?,
                         row.get::<_, Option<String>>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, i64>(7)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((leaves, merkle, day_root, state, anchor_tx)) = row else {
+        let Some((leaves, merkle, day_root, state, anchor_tx, attempts, last_error, updated_at)) =
+            row
+        else {
             return Ok(None);
         };
         let encoded: Vec<(String, String)> =
@@ -856,7 +866,41 @@ impl GamesStore {
             day_root: to32(day_root)?,
             state,
             anchor_tx,
+            attempts: u32::try_from(attempts)
+                .map_err(|_| RegistryError::Store("attempts out of range".into()))?,
+            last_error,
+            updated_at: to_u64(updated_at)?,
         }))
+    }
+
+    /// Record where a registry day's anchor stands. Never touches the roots.
+    pub fn set_registry_anchor(
+        &self,
+        date: &str,
+        tx_hash: Option<&str>,
+        state: &str,
+        now: u64,
+    ) -> Result<(), RegistryError> {
+        let connection = self.lock()?;
+        connection.execute(
+            "UPDATE registry_days SET state = ?2, anchor_tx = COALESCE(?3, anchor_tx), updated_at = ?4 WHERE day = ?1",
+            params![date, state, tx_hash, to_i64(now)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn record_registry_anchor_error(
+        &self,
+        date: &str,
+        error: &str,
+        now: u64,
+    ) -> Result<(), RegistryError> {
+        let connection = self.lock()?;
+        connection.execute(
+            "UPDATE registry_days SET attempts = attempts + 1, last_error = ?2, updated_at = ?3 WHERE day = ?1",
+            params![date, error, to_i64(now)?],
+        )?;
+        Ok(())
     }
 }
 
