@@ -5,7 +5,7 @@
 document applies it to one game and never overrides it. Where the two disagree, V2 wins.
 **Supersedes for mechanics:** the puzzle sketch in [`APPCHAIN_FIRST_GAME_PLAN.md`](./APPCHAIN_FIRST_GAME_PLAN.md).
 
-**Status:** the **engine is built and pinned** (this commit). The phone screen, the service, the daily
+**Status:** the **engine** and the **phone game** are built and pinned (G0, G1). The service, the daily
 anchor and payouts are **not built**; §9 says exactly what remains.
 
 ---
@@ -112,8 +112,8 @@ was human. `GET /api/appchain/ledger/1` is the public record; the result list is
 | Most one address can earn in a day | 3 × 10 = **30** (0.00003 `$ULTRA`) |
 | Days of full play to reach the 100-unit minimum | 4 (12 wins = 120) |
 | Pool cost of one rewarded win (10 + a tenth of the 1-unit fee per 100) | ≈ 10.1 |
-| Rewarded wins a **1 `$ULTRA`** pool pays | ≈ 99,000 |
-| Rewarded wins a **0.1 `$ULTRA`** pool pays (one faucet claim, V2 F-2) | ≈ 9,900 |
+| Rewarded wins a **0.1 `$ULTRA`** pool pays (one faucet claim, V2 F-2) — **the chosen pool** | ≈ 9,900 |
+| Rewarded wins a 1 `$ULTRA` pool would pay (not chosen) | ≈ 99,000 |
 | The chain's own daily ceiling | 2,000 × 10 = 20,000 = 0.02 `$ULTRA`/day |
 | Anchor, once a day | 1,000/day = **0.365 `$ULTRA`/year**, paid by the owner wallet |
 | Owner wallet today | 0.089 `$ULTRA` → **89 daily anchors** before it needs topping up |
@@ -166,15 +166,15 @@ with a reason, never a paid prize without a receipt. The same two-outcome honest
 
 ---
 
-## 7. Decisions for the owner
+## 7. Decisions
 
-| # | Decision | Recommendation |
+| # | Decision | Outcome |
 |---|---|---|
-| D1 | **Pool size and path.** Earlier you chose 1 `$ULTRA` from the faucet. V2 F-2 allows **one claim per chain**, and a claim is 0.1. | Keep the 1 `$ULTRA` pool but record it as a **named exception to F-2**, moved by the owner, or start with the 0.1 claim (≈ 9,900 wins is far more than a test needs) |
-| D2 | **Eligibility gate.** "Address must have a faucet claim" blocks anyone who got `$ULTRA` another way, and cannot survive the faucet closing. | Use it in phase 1 only; replace with "address has any confirmed transaction" |
-| D3 | **Win margin.** `par + max(2, par/4)` is a guess. | Keep for the test; tune from real solve data |
-| D4 | **Where it lives in the app.** The Games tile opens Ultra Chess today. | Make it a two-entry directory (Chess, UltraGrid); name the game **UltraGrid**, matching the registered chain |
-| D5 | **Top up the owner wallet.** 0.089 `$ULTRA` covers 89 daily anchors. | Fund ~1 `$ULTRA` (≈ 2.7 years) before the first daily anchor |
+| D1 | **Pool size and path** | **Decided 2026-11-16: start with the 0.1 `$ULTRA` claim.** The payout wallet claims once from the faucet (V2 F-2, one claim per chain), which funds ≈ 9,900 rewarded wins. No exception to F-2 is needed. A larger pool can follow once the loop has real data |
+| D2 | **Owner wallet** | **Decided: fund it.** It holds 0.089 `$ULTRA` = 89 daily anchors; about 1 `$ULTRA` covers ≈ 2.7 years. This is an owner action (the key is not in this repository); it is needed before the first daily anchor, which is G2 |
+| D3 | **Win margin** `par + max(2, par/4)` | Open. Kept for the test; tune from real solve data |
+| D4 | **Where it lives in the app** | **Done 2026-11-16.** The Applications tile is **Games**, a directory holding Ultra Chess and UltraGrid. Ultra Chess itself is unchanged; only the path to it (and Back from it) moved |
+| D5 | **Eligibility gate** for rewards ("has a faucet claim") | Open. Phase 1 only; replace with "has any confirmed transaction" before the faucet closes |
 
 ---
 
@@ -195,6 +195,12 @@ with a reason, never a paid prize without a receipt. The same two-outcome honest
 | `daily_seed_binds_chain_date_and_previous_root` | any of the three changes the seed; bad dates refused |
 | `a_day_has_ten_growing_puzzles_and_one_commitment` | sizes 4,4,5,5,6,6,7,7,8,8; ten distinct ids; order is committed |
 
+The Kotlin side (`GridEngineTest`, `GridGameTest`, `GridScreenTest`, `GamesDirectoryTest`) asserts the same
+pinned stream words, ten ids and pars, both daily seeds and both daily-set commitments, then adds the play
+state (taps, Undo, Reset, a full period of taps is no move), the screen on a fixed day (solve by tapping the
+reference route, practice progress kept apart from the official day) and the directory (both games listed,
+Ultra Chess still opens, Back returns).
+
 ---
 
 ## 9. Phases
@@ -202,7 +208,7 @@ with a reason, never a paid prize without a receipt. The same two-outcome honest
 | Phase | Deliverable | Exit criterion | State |
 |---|---|---|---|
 | **G0 engine** | `src/ultragrid`, CLI `ultragrid`, Python reference, pinned vectors | 15 tests green; Python `--check` agrees | **done** |
-| **G1 phone** | Kotlin port (same vectors) and a playable screen, no prizes | the Kotlin test asserts the same ten ids and commitment; ten levels playable on the emulator | next |
+| **G1 phone** | Kotlin port (same vectors), a playable screen, the Games directory; no prizes | the Kotlin test asserts the same ten ids and commitment; ten levels playable on the emulator | **done** — 95/95 instrumented tests; the live board matches the Rust CLI tile for tile |
 | **G2 service** | answer verification, receipts, day close + anchor via `appchain-cli`, no money | a day's `day_root` is anchored and recomputable from the public API | |
 | **G3 payouts** | payout wallet, ledger, withdrawals, caps | three wins pay, the fourth is `recorded`; a withdrawal returns a hash | |
 | **G4 phase 2** | entry fees or sponsors replace the owner's pool | legal review first; the pool is no longer the owner's | |
