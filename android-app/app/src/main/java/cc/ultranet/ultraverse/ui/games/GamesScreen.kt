@@ -19,6 +19,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import cc.ultranet.ultraverse.data.UltraNetGamesApi
+import androidx.compose.runtime.remember
 import cc.ultranet.ultraverse.ui.theme.UltraVerseColors
 import cc.ultranet.ultraverse.ui.tool.ToolActionRow
 import cc.ultranet.ultraverse.ui.tool.ToolSectionLabel
@@ -59,6 +61,9 @@ internal fun GamesScreen(
     onBack: () -> Unit,
     onOpen: (gameId: String) -> Unit,
     modifier: Modifier = Modifier,
+    /** The address rewards are credited to; null when the phone has no wallet. */
+    walletAddress: String? = null,
+    gamesApi: UltraNetGamesApi = remember { UltraNetGamesApi() },
 ) {
     Column(modifier = modifier.fillMaxSize().background(UltraVerseColors.background)) {
         ToolTopBar(title = "Games", subtitle = "Applications", onBack = onBack)
@@ -68,6 +73,12 @@ internal fun GamesScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(top = 12.dp),
         ) {
+            RewardsCard(
+                address = walletAddress,
+                api = gamesApi,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Spacer(Modifier.height(16.dp))
             ToolSectionLabel("${GameCatalog.entries.size} GAMES", modifier = Modifier.padding(horizontal = 16.dp))
             Spacer(Modifier.height(4.dp))
             GameCatalog.entries.forEachIndexed { position, game ->

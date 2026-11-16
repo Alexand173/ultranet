@@ -55,7 +55,9 @@ import cc.ultranet.ultraverse.data.ServiceCatalog
 import cc.ultranet.ultraverse.data.ServiceEntry
 import cc.ultranet.ultraverse.ui.appchains.AppChainsScreen
 import cc.ultranet.ultraverse.ui.chess.ChessScreen
+import cc.ultranet.ultraverse.data.UltraNetGamesApi
 import cc.ultranet.ultraverse.ui.games.GameCatalog
+import cc.ultranet.ultraverse.ui.games.submitChessReward
 import cc.ultranet.ultraverse.ui.games.GamesScreen
 import cc.ultranet.ultraverse.ui.grid.GridScreen
 import cc.ultranet.ultraverse.ui.contacts.ContactsScreen
@@ -103,6 +105,9 @@ internal fun UltraVerseApp(
     val scope = rememberCoroutineScope()
     val controller = remember { WalletController(context.applicationContext) }
     val contactBook = remember { ContactBook(ContactStore(context.applicationContext)) }
+    val gamesApi = remember { UltraNetGamesApi() }
+    // What became of the last chess win, shown under the result. Cleared whenever the screen is left.
+    var chessRewardNote by remember { mutableStateOf<String?>(null) }
     // An address handed to Pay from a contact; Pay consumes it after resetting its draft.
     var payRecipient by remember { mutableStateOf<String?>(null) }
     // Pay opened from a contact returns to Contacts on Back; opened from its tile, to the catalog.
@@ -342,6 +347,8 @@ internal fun UltraVerseApp(
             )
 
             HomeSection.Games -> GamesScreen(
+                walletAddress = controller.state.storedWallet?.address,
+                gamesApi = gamesApi,
                 onBack = { section = HomeSection.Apps },
                 onOpen = { gameId ->
                     when (gameId) {
@@ -354,13 +361,22 @@ internal fun UltraVerseApp(
 
             // Back from a game returns to the directory it was opened from, not to the catalogue.
             HomeSection.Chess -> ChessScreen(
-                onBack = { section = HomeSection.Games },
+                onBack = { chessRewardNote = null; section = HomeSection.Games },
                 modifier = Modifier.padding(scaffoldPadding),
+                rewardNote = chessRewardNote,
+                onPlayerWin = { win ->
+                    scope.launch {
+                        chessRewardNote = "Sending your win to the games service…"
+                        chessRewardNote = submitChessReward(gamesApi, controller.state.storedWallet?.address, win).text
+                    }
+                },
             )
 
             HomeSection.Grid -> GridScreen(
                 onBack = { section = HomeSection.Games },
                 modifier = Modifier.padding(scaffoldPadding),
+                walletAddress = controller.state.storedWallet?.address,
+                gamesApi = gamesApi,
             )
 
             HomeSection.Mining -> MiningScreen(

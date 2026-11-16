@@ -92,8 +92,8 @@ class GridScreenTest {
         compose.onNodeWithTag("grid-cell-16").assertDoesNotExist()
         compose.onNodeWithText("Today's set").assertExists()
         compose.onNodeWithText("Built from UltraGrid anchor #1 · root 01234567…89abcdef").assertExists()
-        // The screen must never look like a prize game: it says plainly that nothing is recorded or paid.
-        compose.onNodeWithText("A test game: nothing you play is recorded", substring = true).assertExists()
+        // It says plainly that this is a test game with small test rewards, not an income.
+        compose.onNodeWithText("A test game with small test rewards.", substring = true).assertExists()
     }
 
     @Test

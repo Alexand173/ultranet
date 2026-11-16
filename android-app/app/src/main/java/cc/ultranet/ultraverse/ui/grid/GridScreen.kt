@@ -22,6 +22,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -45,6 +47,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import cc.ultranet.ultraverse.data.AnswerTurn
+import cc.ultranet.ultraverse.data.UltraNetGamesApi
+import cc.ultranet.ultraverse.ui.games.RewardNote
+import cc.ultranet.ultraverse.ui.games.submitGridReward
 import cc.ultranet.ultraverse.ui.grid.GridEngine.Puzzle
 import cc.ultranet.ultraverse.ui.grid.GridEngine.Tile
 import cc.ultranet.ultraverse.ui.grid.GridEngine.TileKind
@@ -60,10 +66,10 @@ import kotlinx.coroutines.withContext
  * UltraGrid: ten puzzles a day, the same for everyone. Tap a tile to turn it a quarter turn clockwise
  * and light a path from S to T in as few turns as you can.
  *
- * This is the game and nothing else. It records nothing on the chain and pays nothing: the status line
- * says so, because a screen that looks like a prize game and is not one would be the lie here. Every
- * claim it makes about a position ("solved", "over the limit") comes from [GridEngine.verify], the
- * judge the server will use.
+ * Every claim the screen makes about a position ("solved", "over the limit") comes from
+ * [GridEngine.verify], the judge the server uses too. A win on the official day is sent to the games
+ * service, which replays it and decides the reward; this screen only shows what the server said, in the
+ * server's terms, and never decides or promises a reward itself.
  */
 @Composable
 internal fun GridScreen(
@@ -72,6 +78,9 @@ internal fun GridScreen(
     /** Where the day comes from. Tests pass a fixed day; the app reads the chain. */
     dayLoader: suspend () -> GridDay = { loadGridDay() },
     progress: GridProgressStore = GridProgressStore(LocalContext.current),
+    /** The wallet address that wins are credited to; null when the phone has no wallet. */
+    walletAddress: String? = null,
+    gamesApi: UltraNetGamesApi = remember { UltraNetGamesApi() },
 ) {
     var day by remember { mutableStateOf<GridDay?>(null) }
     LaunchedEffect(Unit) { day = dayLoader() }
@@ -104,13 +113,24 @@ internal fun GridScreen(
                 )
             }
         } else {
-            PlayArea(day = current, puzzles = set, progress = progress)
+            PlayArea(day = current, puzzles = set, progress = progress, walletAddress = walletAddress, api = gamesApi)
         }
     }
 }
 
+private sealed interface RewardState {
+    data object Sending : RewardState
+    data class Done(val note: RewardNote) : RewardState
+}
+
 @Composable
-private fun PlayArea(day: GridDay, puzzles: List<Puzzle>, progress: GridProgressStore) {
+private fun PlayArea(
+    day: GridDay,
+    puzzles: List<Puzzle>,
+    progress: GridProgressStore,
+    walletAddress: String?,
+    api: UltraNetGamesApi,
+) {
     val games = remember(puzzles) { puzzles.map { GridGame(it) } }
     var solved by remember(day) { mutableStateOf(progress.solved(day.progressKey)) }
     var level by rememberSaveable(day.progressKey) { mutableIntStateOf(-1) }
@@ -121,9 +141,30 @@ private fun PlayArea(day: GridDay, puzzles: List<Puzzle>, progress: GridProgress
     val game = games[level]
     val verdict = game.verdict()
 
-    // Ticking a level off is the only thing that is stored, and only on this phone.
+    // Ticking a level off is stored on this phone; the reward is the server's business, below.
     LaunchedEffect(game, verdict.win, verdict.moves) {
         if (verdict.win) solved = progress.record(day.progressKey, level, verdict.moves)
+    }
+
+    // The first win on a level is sent to the games service, once. The answer sent is the position at
+    // that moment; later taps on a solved board do not send it again. If the service could not be
+    // reached the note offers "Send again", which clears it and re-keys this effect.
+    val rewards = remember(day) { mutableStateMapOf<Int, RewardState>() }
+    var retry by remember { mutableIntStateOf(0) }
+    LaunchedEffect(game, verdict.win, retry) {
+        if (!verdict.win) return@LaunchedEffect
+        val thisLevel = level
+        val existing = rewards[thisLevel]
+        if (existing is RewardState.Sending) return@LaunchedEffect
+        if (existing is RewardState.Done && !existing.note.retryable) return@LaunchedEffect
+        rewards[thisLevel] = RewardState.Sending
+        try {
+            val answer = game.answer().map { AnswerTurn(it.cell, it.turns) }
+            rewards[thisLevel] = RewardState.Done(submitGridReward(api, walletAddress, day, thisLevel, answer))
+        } finally {
+            // A cancelled send must not leave "Sending…" on screen for ever.
+            if (rewards[thisLevel] is RewardState.Sending) rewards.remove(thisLevel)
+        }
     }
 
     Column(
@@ -150,6 +191,17 @@ private fun PlayArea(day: GridDay, puzzles: List<Puzzle>, progress: GridProgress
 
         Spacer(Modifier.height(12.dp))
         StatusBlock(game = game, verdict = verdict, best = solved[level])
+        val rewardState = rewards[level]
+        if (verdict.win && rewardState != null) {
+            Spacer(Modifier.height(8.dp))
+            RewardLine(
+                state = rewardState,
+                onRetry = {
+                    rewards.remove(level)
+                    retry += 1
+                },
+            )
+        }
 
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -178,13 +230,48 @@ private fun PlayArea(day: GridDay, puzzles: List<Puzzle>, progress: GridProgress
         )
         Spacer(Modifier.height(10.dp))
         Text(
-            text = "A test game: nothing you play is recorded on the chain, and nothing is paid yet. The ten " +
-                "puzzles are the same for everyone today and are rebuilt on your phone from the chain's last anchor.",
+            text = "A test game with small test rewards. The ten puzzles are the same for everyone today and are " +
+                "rebuilt on your phone from the chain's last anchor. Wins on today's official set are checked by " +
+                "the games service, and each day's results are anchored to AppChain #1 once the day has ended.",
             color = UltraVerseColors.dim,
             fontSize = 11.sp,
             lineHeight = 16.sp,
         )
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun RewardLine(state: RewardState, onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(UltraVerseColors.surface)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .testTag("grid-reward"),
+    ) {
+        when (state) {
+            RewardState.Sending -> Text(
+                text = "Sending your win to the games service…",
+                color = UltraVerseColors.muted,
+                fontSize = 12.sp,
+            )
+            is RewardState.Done -> {
+                Text(
+                    text = state.note.text,
+                    color = if (state.note.positive) UltraVerseColors.supported else UltraVerseColors.muted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    fontWeight = if (state.note.positive) FontWeight.SemiBold else FontWeight.Normal,
+                )
+                if (state.note.retryable) {
+                    TextButton(onClick = onRetry, modifier = Modifier.testTag("grid-reward-retry")) {
+                        Text("Send again", color = UltraVerseColors.cyan, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -60,9 +60,17 @@ private const val AI_BUDGET_MILLIS = 700L
 internal fun ChessScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Called once when the player wins a game. The screen reports; it never decides a reward. */
+    onPlayerWin: (ChessWin) -> Unit = {},
+    /** What became of the win, to show under the result. Null shows nothing. */
+    rewardNote: String? = null,
+    /** Lets a test begin one move from the end of a game. The app always starts from the normal position. */
+    startPosition: ChessPosition? = null,
 ) {
     var mode by remember { mutableStateOf(ChessMode.Classic) }
-    var position by remember { mutableStateOf(newPosition(ChessMode.Classic)) }
+    var position by remember { mutableStateOf(startPosition ?: newPosition(ChessMode.Classic)) }
+    // One id per game, so a win can be rewarded once however many times it is reported.
+    var gameId by remember { mutableStateOf(newChessGameId()) }
     var history by remember { mutableStateOf(listOf<ChessPosition>()) }
     var lastMove by remember { mutableStateOf<Move?>(null) }
     var lastMoveLabel by remember { mutableStateOf<String?>(null) }
@@ -78,6 +86,7 @@ internal fun ChessScreen(
 
     fun startGame(next: ChessMode) {
         mode = next
+        gameId = newChessGameId()
         position = newPosition(next)
         history = emptyList()
         lastMove = null
@@ -94,6 +103,12 @@ internal fun ChessScreen(
         lastMove = move
         position = ChessRules.apply(position, move)
         selected = null
+    }
+
+    // A win by the player is reported once per game: the effect is keyed on the game and the result.
+    val playerWon = (outcome as? ChessOutcome.Win)?.side == Side.White
+    LaunchedEffect(gameId, playerWon) {
+        if (playerWon) onPlayerWin(ChessWin(gameId = gameId, mode = mode, plies = history.size))
     }
 
     // The computer only ever moves when it is its turn and the game is still running; keying on the
@@ -161,6 +176,7 @@ internal fun ChessScreen(
                 check = position.sideToMove == Side.White && ChessRules.isInCheck(position, Side.White),
                 position = position,
                 lastMoveLabel = lastMoveLabel,
+                rewardNote = rewardNote,
             )
 
             Spacer(Modifier.height(10.dp))
@@ -226,6 +242,19 @@ internal fun ChessScreen(
 
 private fun newPosition(mode: ChessMode): ChessPosition =
     if (mode == ChessMode.Random) ChessPosition.random(Random.Default) else ChessPosition.standard()
+
+/** A win by the player: what the app reports to the games service. */
+internal data class ChessWin(val gameId: String, val mode: ChessMode, val plies: Int)
+
+/** The mode as the games service names it. */
+internal fun ChessMode.serverCode(): String = when (this) {
+    ChessMode.Classic -> "classic"
+    ChessMode.Random -> "random"
+    ChessMode.AntiChess -> "anti"
+}
+
+/** 36 characters of hex and hyphens: inside the server's 16 to 64 letters, digits, `-` and `_`. */
+internal fun newChessGameId(): String = java.util.UUID.randomUUID().toString()
 
 private fun subtitle(mode: ChessMode, position: ChessPosition, outcome: ChessOutcome): String = when (outcome) {
     is ChessOutcome.Win -> if (outcome.side == Side.White) "You won" else "The computer won"
@@ -386,6 +415,7 @@ private fun StatusRail(
     check: Boolean,
     position: ChessPosition,
     lastMoveLabel: String?,
+    rewardNote: String?,
 ) {
     val headline = when (outcome) {
         is ChessOutcome.Win -> when {
@@ -439,6 +469,16 @@ private fun StatusRail(
         }
         Spacer(Modifier.height(3.dp))
         Text(text = detail, color = UltraVerseColors.dim, fontSize = 11.sp)
+        if (rewardNote != null) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = rewardNote,
+                color = UltraVerseColors.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                modifier = Modifier.testTag("chess-reward"),
+            )
+        }
     }
 }
 
