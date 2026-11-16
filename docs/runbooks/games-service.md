@@ -191,6 +191,39 @@ loads the full configuration and the credentials the unit holds, so it is not a 
 `status`, `audit`, `payouts` and `backup` are the four that only open the database. `close-day` is safe to
 repeat: a day closes once, and the ledger is checked before anything is submitted.
 
+### 5.1 Third-party games (the registry)
+
+```bash
+ultranet-games game-register --id tetris --name "Tetris" --owner <64 hex>   # prints the API key ONCE
+ultranet-games game-list
+ultranet-games game-status --id tetris --status registered   # sandbox | registered | listed | suspended
+ultranet-games game-rotate-key --id tetris                   # prints the new key ONCE; the old one stops
+ultranet-games registry-close-day --date <yesterday>         # by hand; normally automatic
+```
+
+`game-register`, `game-list`, `game-status` and `game-rotate-key` open the database only, like `status`.
+`registry-close-day` loads the full configuration and credentials, like `close-day`.
+
+**The ladder.** A game starts in `sandbox`: private, unanchored, held to a small day. `registered` puts
+it in the daily root and gives it a public page and proofs. `listed` adds it to the public directory.
+`suspended` refuses its key and hides it; its past results stay in closed days, which are never
+rewritten. Promote only a game whose owner you can reach: the owner address is the contact of record, and
+nothing here pays or moves money for any game.
+
+**Ids and keys.** An id is 3 to 32 of `a-z 0-9 -`; `grid`, `chess`, `registry`, `admin` and similar
+names are reserved. The key is shown once and only its hash is stored. If a developer loses it, rotate:
+there is no way to read it back. Send the key over a channel you trust, never in a ticket.
+
+**Anchoring.** All games share one root per day. It is anchored only when `GAMES_REGISTRY_CHAIN_ID` is
+set and `GAMES_ANCHOR_CLI` is configured. Before that, days still close and their roots are fixed, and
+the anchor is made later: the service closes every unanchored day within its catch-up window (7 days), so a
+registry chain registered next week still anchors this week's days if they are inside it. A day with no
+registered game is not anchored. To register the chain, the owner runs the same `appchain-cli register`
+step as for Grid and Chess (§4), then sets the id in the env file and restarts.
+
+**Check a game's day yourself.** `GET /api/games/g/<id>/proof/<date>` returns an inclusion proof;
+`python3 tools/verify_registry_proof.py proof.json` checks it with the standard library only.
+
 ---
 
 ## 6. When something goes wrong
