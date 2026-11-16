@@ -285,7 +285,11 @@ struct Options {
 impl Default for Options {
     fn default() -> Options {
         Options {
-            policy: Policy::standard(),
+            // The shipped default is chess record-only (P1). Most tests here are about the payout
+            // machinery, which only runs when something is credited, so the harness turns chess on
+            // explicitly — `chess_is_record_only_by_default_and_still_records_and_anchors` is the
+            // test that guards the default itself.
+            policy: Policy::standard().with_chess_paying(),
             pool_balance: 100_000,
             anchor_games: vec![GAME_GRID.to_string()],
             with_signer: true,
@@ -726,11 +730,12 @@ async fn the_fourth_chess_win_is_recorded_and_the_games_limits_are_independent()
 }
 
 #[tokio::test]
-async fn a_game_switched_to_record_only_still_records_and_still_anchors() {
-    let mut policy = Policy::standard();
-    policy.chess.pays = false;
+async fn chess_is_record_only_by_default_and_still_records_and_anchors() {
+    // No environment line, no opt-in: exactly what an installation gets today. The win must still be
+    // recorded and still reach the day's anchor, and the player must be told why nothing was paid.
     let h = harness(Options {
-        policy,
+        policy: Policy::standard(),
+        anchor_games: vec![GAME_CHESS.to_string()],
         ..Options::default()
     });
     let response = h
@@ -744,6 +749,23 @@ async fn a_game_switched_to_record_only_still_records_and_still_anchors() {
         h.service.store().wins_for_day("chess", DAY).unwrap().len(),
         1
     );
+    assert_eq!(
+        h.service.wallet(A).unwrap().credited_units,
+        0,
+        "a record-only win credits nothing at all"
+    );
+
+    // The record still matters: it is what the day's anchor commits to. A game that does not pay yet
+    // still has to be checkable later.
+    h.next_day();
+    h.service.run_daily().await.unwrap();
+    let calls = h.anchorer.calls.lock().unwrap().clone();
+    assert_eq!(
+        calls.len(),
+        1,
+        "the recorded win still reaches the day's anchor"
+    );
+    assert_eq!(calls[0].0, 2, "on chess's own chain");
 }
 
 // --- withdrawals and payouts -----------------------------------------------------------------
@@ -1389,6 +1411,14 @@ async fn the_public_status_shows_the_rules_and_nothing_secret() {
         "the status says which game the server can prove"
     );
     assert_eq!((grid.reward_units, chess.reward_units), (10, 100));
+    assert!(
+        grid.pays,
+        "the harness turns chess on; Grid pays in every configuration"
+    );
+    assert!(
+        chess.pays,
+        "the harness enabled chess, so the status must say so"
+    );
     for secret in ["key", "password", "secret", "token", "envelope"] {
         assert!(
             !json.to_lowercase().contains(secret),
@@ -1532,10 +1562,8 @@ async fn when_the_pool_cannot_be_read_a_win_is_not_recorded_and_can_be_sent_agai
 
 #[tokio::test]
 async fn a_game_that_does_not_pay_does_not_need_the_pool() {
-    let mut policy = Policy::standard();
-    policy.chess.pays = false;
     let h = harness(Options {
-        policy,
+        policy: Policy::standard(),
         pool_balance: 0,
         ..Options::default()
     });
@@ -1596,20 +1624,16 @@ async fn a_payout_somehow_addressed_to_the_wallet_is_released_without_pausing_an
         verified: false,
         client_digest: None,
     };
+    // Chess paying, so the forged row really does carry a balance the payout can be made against.
+    let paying = Policy::standard().with_chess_paying();
     h.service
         .store()
-        .record_win_unlimited(&input, &Policy::standard(), true, h.service.now())
+        .record_win_unlimited(&input, &paying, true, h.service.now())
         .unwrap();
     let now = h.service.now();
     h.service
         .store()
-        .create_payout(
-            &wallet,
-            &Policy::standard(),
-            "bad-row",
-            now - now % 86_400,
-            now,
-        )
+        .create_payout(&wallet, &paying, "bad-row", now - now % 86_400, now)
         .unwrap();
     earn_chess_hundred(&h, A, GAME_ID_1).await;
     h.advance(1);

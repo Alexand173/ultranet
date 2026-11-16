@@ -19,15 +19,16 @@ numbers bound which loss, and which risks no number bounds.
 | | UltraGrid | Ultra Chess |
 |---|---|---|
 | What the server can prove | **Everything.** It replays the answer on the puzzle it generated itself | **Nothing.** The opponent runs on the phone; the server is told the result |
-| Reward per rewarded win | **10 units** (0.00001 `$ULTRA`), a *test* reward (V2 R4b) | **100 units** (0.0001 `$ULTRA`), the V2 standard |
-| Rewarded wins per address per day | 3 | 3 |
+| Reward per rewarded win | **10 units** (0.00001 `$ULTRA`), a *test* reward (V2 R4b) | **Nothing — record-only by default** (P1). 100 units (0.0001 `$ULTRA`) only once switched on |
+| Rewarded wins per address per day | 3 | none, while it pays nothing; 3 once switched on |
 | Recorded wins per address per day | unlimited (up to 10 levels) | unlimited |
 | What a win must be | connected within `par + max(2, par/4)` turns | a player win, 10 to 600 plies, a game id never seen before |
 | What the day anchors | the puzzle set **and** every accepted win | every accepted win |
 | Anchored to | AppChain #1 (live) | AppChain #2 (**register it first**) |
 | Marked in every receipt | `verified = true` | `verified = false`, and the app says so |
 
-Most one address can earn in a day: `3 × 10 + 3 × 100 =` **330 units = 0.00033 `$ULTRA`**.
+Most one address can earn in a day, as shipped: `3 × 10 =` **30 units = 0.00003 `$ULTRA`**. With chess
+switched on it becomes `30 + 300 =` **330 units = 0.00033 `$ULTRA`**, and never more than that.
 
 ---
 
@@ -53,19 +54,26 @@ Most one address can earn in a day: `3 × 10 + 3 × 100 =` **330 units = 0.00033
 
 ### 2.2 Ultra Chess
 
+- **It pays nothing by default, and that default lives in the code, not in a config file.**
+  `Policy::standard()` sets `chess.pays = false`, and only `GAMES_CHESS_PAYS=true` turns it on, so an
+  installation whose environment file is missing that line records and anchors every win and credits
+  none. `/api/games/status` reports `pays: false` for the game, and `check-config` prints
+  `RECORD ONLY`, so nothing has to guess.
 - The player is White, against a local engine, in Classic, Random or Anti-Chess.
 - The phone reports a **player win** with a game id (a fresh UUID per game), the mode and the ply count.
 - **The server cannot verify any of it.** It can check the report is *plausible* (a known mode, 10 to 600
   plies, a well-formed unused game id) and nothing more. A scripted client can report wins; a person at a
   desk with a chess engine can beat this opponent every time; one person can play both sides.
-- Because that is true, chess is protected **only by caps**: 3 rewarded wins per address per day, 2,000 a
-  day for the game, the chain-presence rule, the pool guard (§4), and one reward per game id. That is
-  V2 §5's stated position ("the L1 cannot verify any of it, so every protection has to be a cap"), and the
-  receipts and the screen say it plainly rather than imply otherwise.
-- **The honest recommendation:** keep chess paying only while you are content to lose what its caps allow,
-  and enlarge it only after a server-side opponent exists (replaying a game the server itself played is the
-  one sound fix). `GAMES_CHESS_PAYS=false` keeps recording and anchoring every win and stops paying for them,
-  with no code change.
+- Because that is true, chess can never be protected by *proof* — only by caps, and those only matter
+  once it is switched on: 3 rewarded wins per address per day, 200 a day for the game (the code default,
+  not only the environment file's), the client limit, the on-chain presence rule, the pool check (§3) and
+  one win per game id. V2 says the same thing in one line: the chain can verify none of it, so every
+  protection is a cap.
+- **If it is switched on, watch it rather than trust it.** The honest position is that chess should pay
+  only while you are willing to lose the daily ceiling, and should get a real prize only once a
+  server-side opponent exists — a server that replays its own game is the one thing that makes a chess
+  result checkable. Until then `GAMES_CHESS_PAYS=false` costs nothing: the wins are still recorded and
+  anchored, so the data is there the day the rule changes.
 
 ---
 
@@ -78,9 +86,9 @@ clamped. Tightening is always allowed.
 | Rule | Default | Ceiling | Why this number |
 |---|---:|---:|---|
 | Grid reward | 10 | 1,000 | V2 R4b: a test value until the pool ends |
-| Chess reward | 100 | 1,000 | V2 R4: a token of a win, not income |
+| Chess reward | 0 (record-only) | 1,000 | Not paid at all unless `GAMES_CHESS_PAYS=true` (P1). 100 is V2 R4's value for the day it is switched on |
 | Rewarded wins per address per day, per game | 3 | 10 | V2 R4; bounds one address's day at 330 units |
-| Rewarded wins per game per day | 2,000 | 10,000 | V2 R4; one game cannot monopolise the budget |
+| Rewarded wins per game per day | 2,000 Grid / 200 Chess | 10,000 | V2 R4; one game cannot monopolise the budget. Chess is 200 because that is the ceiling the review argues for (P1), and switching it on should not depend on remembering a second number |
 | Rewarded wins per day, all games | 20,000 | 100,000 | V2 R4: the backstop whatever the number of games |
 | Rewarded wins per client per day | 30 | 1,000 | A *flood* limit. Mobile carriers share addresses, so a tight per-IP cap punishes real players; the per-address cap does the farming work |
 | Reward only addresses on the chain | yes | — | Without it an attacker mints addresses and drains the day's budget |
@@ -158,7 +166,7 @@ whose outcome was unclear is settled without paying for a second one.
 
 | # | Risk | What bounds it | What does not |
 |---|---|---|---|
-| R1 | **Chess is unverifiable** (§2.2) | 330 units a day per address, the pool guard, one reward per game id | Nothing proves a human played. Cheap for a script |
+| R1 | **Chess is unverifiable** (§2.2) | **Nothing is paid for it today.** If it is switched on: 200 rewarded wins a day for the game, 3 per address, the pool guard, and one reward per game id | Nothing proves a human played. Cheap for a script |
 | R2 | **Anyone can automate Grid.** Routing a signal is an easy search | The same caps; one reward per level; chain presence | Verification stops *forged* wins, not *automated* ones |
 | R3 | **Sybil addresses.** Chain presence only needs a balance or a transaction, so each new address costs one faucet claim | The faucet's own Turnstile and per-source limits; one faucet claim is worth ~3,300 days of a wallet's maximum Grid earnings, so farming rewards is not the better use of a claim | If the faucet is ever the weak gate, this rule is only as strong as it |
 | R4 | **The owner key sits on the server (M2).** The chain's owner key and its passphrase are both credentials on the host | Encrypted at rest; a dedicated key per chain; `APPCHAIN_PROTOCOL.md` §5 | A compromised running host can anchor *and transfer* the chain. M3 (an anchor-only key) is not built |
@@ -176,7 +184,8 @@ whose outcome was unclear is settled without paying for a second one.
 Nothing here has been deployed and **no live payout has ever been made**. The only live traffic during
 development was read-only GETs to the public API. Before opening:
 
-1. **Decide** the open items in §6.
+1. **Decide** the open items in §6. P1 is now decided *in code* (chess record-only), so no step below
+   can accidentally start paying for it; P2, P3 and P7 are still open.
 2. **Create and fund the wallets.** The payout wallet (`ultranet-faucet keygen`) funded from the faucet's
    one-claim-per-chain allowance (V2 F-2: 0.1 `$ULTRA`, ≈ 9,900 Grid wins or 990 chess wins of capacity). The
    owner key (`appchain-cli generate-key`) funded for anchors: 0.001 a day per game.
@@ -196,9 +205,9 @@ development was read-only GETs to the public API. Before opening:
 
 | # | Decision | Recommendation |
 |---|---|---|
-| P1 | **Does chess pay?** | Yes only as a capped test: set `GAMES_CHESS_REWARDED_PER_DAY=200` (0.02 `$ULTRA`/day at most) so it cannot starve Grid in the shared pool, or `GAMES_CHESS_PAYS=false` until a server-side opponent exists |
+| P1 | **Does chess pay?** | **Decided 2026-11-16: no — and the decision is enforced in the code, not in a config file.** `Policy::standard()` has `chess.pays = false`; only an explicit `GAMES_CHESS_PAYS=true` turns it on, so a missing line cannot start it and a malformed one is refused rather than read as "on". It stays off because the server can prove nothing about a chess result (R1): every unit it paid would be collectable by a program without a human playing. Wins are still recorded and anchored, so chain #2 is useful the day a server-side opponent exists |
 | P2 | **Ratify V2 R4 / R4b** | Both are unsigned (☐) in the V2 sheet. The service follows them; sign them or change them there first |
-| P3 | **Rewarded wins: per game or in total?** V2 says "per address per day" without saying which | Built *per game* (a day's worst case 330 units). *In total* would be 3 wins across both games: say if you want it |
+| P3 | **Rewarded wins: per game or in total?** V2 says "per address per day" without saying which | Built *per game* (a day's worst case 330 units). *In total* would be 3 wins across both games: say if you want it. **While chess pays nothing this cannot bite** — the ceiling is 30 units a day either way — so it only needs answering the day chess is switched on |
 | P4 | **Pool** | 0.1 `$ULTRA` (decided). It is the binding limit, not the ceilings; plan the top-up (R6) |
 | P5 | **Key custody for the daily anchor** | M2 as chosen, with a dedicated key per chain and the offline backup. Revisit when M3 exists |
 | P6 | **Heartbeat anchors** (anchor an empty day) | Keep: 0.001 a day per game to stay "live". `GAMES_ANCHOR_EMPTY_DAYS=false` turns it off |
@@ -235,4 +244,5 @@ development was read-only GETs to the public API. Before opening:
 | An anchor of unclear outcome is checked before it is repeated | `an_anchor_of_unclear_outcome_is_checked_on_the_ledger_before_it_is_repeated` |
 | The roots match an independent computation | `the_roots_are_pinned` (Python-verified) |
 | The rules cannot be loosened past a ceiling | `a_rule_cannot_be_loosened_past_its_ceiling` |
+| A configuration without `GAMES_CHESS_PAYS` cannot start paying chess | `a_configuration_without_games_chess_pays_does_not_pay_chess`, `chess_is_record_only_by_default_and_still_records_and_anchors`, `chess_is_record_only_until_something_says_otherwise` |
 | The server and the phone build the same puzzles | `GridEngineTest` and the live check against `/api/games/grid/day` |

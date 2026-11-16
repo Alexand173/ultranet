@@ -1164,6 +1164,13 @@ mod tests {
         GamesStore::open(Path::new(":memory:")).unwrap()
     }
 
+    /// Most tests here credit a balance with a chess win, which is worth 100 units, so they run with
+    /// chess paying. Whether chess pays by default is a *rule*, proved in `rules.rs` and `config.rs`;
+    /// these tests are about what the store does once money exists.
+    fn paying() -> Policy {
+        Policy::standard().with_chess_paying()
+    }
+
     fn grid_win(address: &str, level: u32) -> WinInput {
         WinInput {
             game: "grid",
@@ -1193,7 +1200,7 @@ mod tests {
     #[test]
     fn a_rewarded_win_credits_the_balance_and_the_audit_agrees() {
         let store = store();
-        let policy = Policy::standard();
+        let policy = paying();
         let recorded = store
             .record_win_unlimited(&grid_win(A, 0), &policy, true, NOW)
             .unwrap();
@@ -1208,7 +1215,7 @@ mod tests {
     #[test]
     fn the_same_win_twice_is_replayed_and_paid_once() {
         let store = store();
-        let policy = Policy::standard();
+        let policy = paying();
         store
             .record_win_unlimited(&grid_win(A, 0), &policy, true, NOW)
             .unwrap();
@@ -1224,7 +1231,7 @@ mod tests {
     #[test]
     fn the_fourth_grid_win_of_a_day_is_recorded_and_unpaid() {
         let store = store();
-        let policy = Policy::standard();
+        let policy = paying();
         for level in 0..3 {
             let r = store
                 .record_win_unlimited(&grid_win(A, level), &policy, true, NOW)
@@ -1255,7 +1262,7 @@ mod tests {
     #[test]
     fn limits_are_per_game_so_chess_still_pays_after_grid_is_spent() {
         let store = store();
-        let policy = Policy::standard();
+        let policy = paying();
         for level in 0..4 {
             store
                 .record_win_unlimited(&grid_win(A, level), &policy, true, NOW)
@@ -1283,7 +1290,7 @@ mod tests {
     #[test]
     fn a_chess_game_id_pays_once_and_cannot_be_reused_by_someone_else() {
         let store = store();
-        let policy = Policy::standard();
+        let policy = paying();
         store
             .record_win_unlimited(&chess_win(A, "game-aaaa-0001"), &policy, true, NOW)
             .unwrap();
@@ -1376,7 +1383,7 @@ mod tests {
     #[test]
     fn the_pool_is_checked_against_everything_owed_inside_the_same_transaction() {
         let store = store();
-        let policy = Policy::standard();
+        let policy = paying();
         // The reserve is 1,000, so a wallet of 1,020 leaves room for exactly 20 units of promises.
         let pool = 1_020;
         let first = store
@@ -1407,7 +1414,7 @@ mod tests {
     #[test]
     fn a_new_day_resets_the_limits() {
         let store = store();
-        let policy = Policy::standard();
+        let policy = paying();
         for level in 0..4 {
             store
                 .record_win_unlimited(&grid_win(A, level), &policy, true, NOW)
@@ -1430,7 +1437,7 @@ mod tests {
     #[test]
     fn a_withdrawal_needs_the_minimum_and_pays_the_whole_balance() {
         let store = store();
-        let policy = Policy::standard();
+        let policy = paying();
         store
             .record_win_unlimited(&grid_win(A, 0), &policy, true, NOW)
             .unwrap();
@@ -1460,7 +1467,7 @@ mod tests {
     #[test]
     fn asking_again_returns_the_open_payout_and_reserves_nothing_twice() {
         let store = store();
-        let policy = Policy::standard();
+        let policy = paying();
         store
             .record_win_unlimited(&chess_win(A, "game-aaaa-0001"), &policy, true, NOW)
             .unwrap();
@@ -1475,7 +1482,7 @@ mod tests {
     #[test]
     fn a_confirmed_payout_moves_reserved_to_paid_and_new_wins_can_be_withdrawn_later() {
         let store = store();
-        let policy = Policy::standard();
+        let policy = paying();
         store
             .record_win_unlimited(&chess_win(A, "game-aaaa-0001"), &policy, true, NOW)
             .unwrap();
@@ -1509,7 +1516,7 @@ mod tests {
     #[test]
     fn a_failed_payout_releases_the_reservation() {
         let store = store();
-        let policy = Policy::standard();
+        let policy = paying();
         store
             .record_win_unlimited(&chess_win(A, "game-aaaa-0001"), &policy, true, NOW)
             .unwrap();
@@ -1540,7 +1547,7 @@ mod tests {
     #[test]
     fn a_payout_settles_once() {
         let store = store();
-        let policy = Policy::standard();
+        let policy = paying();
         store
             .record_win_unlimited(&chess_win(A, "game-aaaa-0001"), &policy, true, NOW)
             .unwrap();
@@ -1560,7 +1567,7 @@ mod tests {
     #[test]
     fn a_payout_is_signed_exactly_once() {
         let store = store();
-        let policy = Policy::standard();
+        let policy = paying();
         store
             .record_win_unlimited(&chess_win(A, "game-aaaa-0001"), &policy, true, NOW)
             .unwrap();
@@ -1584,7 +1591,7 @@ mod tests {
     #[test]
     fn the_daily_withdrawal_ceiling_holds() {
         let store = store();
-        let mut policy = Policy::standard();
+        let mut policy = paying();
         policy.payout_daily_cap_units = 150;
         store
             .record_win_unlimited(&chess_win(A, "game-aaaa-0001"), &policy, true, NOW)
@@ -1607,7 +1614,7 @@ mod tests {
     #[test]
     fn payouts_are_handled_oldest_first() {
         let store = store();
-        let policy = Policy::standard();
+        let policy = paying();
         store
             .record_win_unlimited(&chess_win(A, "game-aaaa-0001"), &policy, true, NOW)
             .unwrap();
@@ -1626,7 +1633,7 @@ mod tests {
     #[test]
     fn the_audit_catches_a_balance_that_money_does_not_explain() {
         let store = store();
-        let policy = Policy::standard();
+        let policy = paying();
         store
             .record_win_unlimited(&grid_win(A, 0), &policy, true, NOW)
             .unwrap();
@@ -1726,7 +1733,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let store = store();
-        let policy = Policy::standard();
+        let policy = paying();
         store
             .record_win_unlimited(&chess_win(A, "game-aaaa-0001"), &policy, true, NOW)
             .unwrap();

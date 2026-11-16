@@ -55,6 +55,12 @@ pub struct Policy {
 
 impl Policy {
     /// V2's standard parameters, with Grid's 10-unit test reward (R4b).
+    ///
+    /// **Chess is record-only here on purpose.** Its results are reported by the phone and the server
+    /// cannot verify them (§2.2 of `GAMES_RULES_AND_PAYOUTS.md`), so paying for them is an opt-in that
+    /// has to be written down, never a default: a configuration file missing one line must not be able
+    /// to start paying for wins nobody proved. `GAMES_CHESS_PAYS=true` is the only thing that turns it
+    /// on, and the rules review (§6, P1) records why it is off.
     pub fn standard() -> Policy {
         Policy {
             grid: GamePolicy {
@@ -70,8 +76,11 @@ impl Policy {
                 chain_id: 2,
                 reward_units: 100,
                 rewarded_per_address_per_day: 3,
-                rewarded_per_day: 2_000,
-                pays: true,
+                // The review's recommended ceiling for the game nobody can verify (§6, P1), not V2's
+                // 2,000. Turning chess on should give the exposure that was argued for, not ten times it
+                // because a second line was left out.
+                rewarded_per_day: 200,
+                pays: false,
             },
             rewarded_global_per_day: 20_000,
             rewarded_per_client_per_day: 30,
@@ -82,6 +91,14 @@ impl Policy {
             chess_max_plies: 600,
             payout_reserve_units: 1_000,
         }
+    }
+
+    /// The same rules with chess paying. Used by tests of the paid path, and it is the shape an
+    /// operator takes on the day P1 is revisited — one function call, so the fact that it was a
+    /// deliberate choice is in the code that chose it.
+    pub fn with_chess_paying(mut self) -> Policy {
+        self.chess.pays = true;
+        self
     }
 
     pub fn game(&self, game: &str) -> Option<&GamePolicy> {
@@ -276,10 +293,42 @@ mod tests {
             ),
             Verdict::Rewarded { units: 10 }
         );
+        let paying = policy.with_chess_paying();
+        assert_eq!(
+            decide(
+                &paying,
+                &paying.chess,
+                &Counters::default(),
+                true,
+                &Solvency::unlimited()
+            ),
+            Verdict::Rewarded { units: 100 }
+        );
+    }
+
+    #[test]
+    fn chess_is_record_only_until_something_says_otherwise() {
+        // The point of the default: an unconfigured installation records chess and pays nothing.
+        let policy = policy();
+        assert!(policy.grid.pays);
+        assert!(!policy.chess.pays, "chess must be opt-in, not opt-out");
         assert_eq!(
             decide(
                 &policy,
                 &policy.chess,
+                &Counters::default(),
+                true,
+                &Solvency::unlimited()
+            ),
+            Verdict::Recorded(RecordedReason::NotPaying)
+        );
+        // Turning it on is one named act, and the reward is then exactly R4's number.
+        let paying = policy.with_chess_paying();
+        assert!(paying.chess.pays);
+        assert_eq!(
+            decide(
+                &paying,
+                &paying.chess,
                 &Counters::default(),
                 true,
                 &Solvency::unlimited()
@@ -296,6 +345,10 @@ mod tests {
         assert_eq!(policy.grid.rewarded_per_address_per_day, 3);
         assert_eq!(policy.chess.rewarded_per_address_per_day, 3);
         assert_eq!(policy.grid.rewarded_per_day, 2_000);
+        assert_eq!(
+            policy.chess.rewarded_per_day, 200,
+            "chess's ceiling is the reviewed one, so switching it on cannot multiply the exposure"
+        );
         assert_eq!(policy.rewarded_global_per_day, 20_000);
         assert_eq!(policy.withdraw_min_units, 100);
     }
@@ -583,11 +636,16 @@ mod tests {
     fn the_worst_a_single_address_can_earn_in_a_day_is_small_and_known() {
         let policy = policy();
         let grid_max = policy.grid.reward_units * policy.grid.rewarded_per_address_per_day as u64;
-        let chess_max =
-            policy.chess.reward_units * policy.chess.rewarded_per_address_per_day as u64;
         assert_eq!(grid_max, 30);
+        // As shipped an address can be credited 30 base units a day, because chess pays nothing until
+        // it is turned on. Reporting a prize it would not pay would be the lie here.
+        assert!(!policy.chess.pays);
+        assert_eq!(format_units(grid_max), "0.000030");
+        // If P1 is revisited, the ceiling on one address is 30 + 300 = 330 units and no more.
+        let paying = policy.with_chess_paying();
+        let chess_max =
+            paying.chess.reward_units * paying.chess.rewarded_per_address_per_day as u64;
         assert_eq!(chess_max, 300);
-        // 330 base units = 0.00033 $ULTRA a day across both games.
         assert_eq!(format_units(grid_max + chess_max), "0.000330");
     }
 

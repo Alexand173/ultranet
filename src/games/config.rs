@@ -338,15 +338,47 @@ mod tests {
     fn a_rule_can_be_tightened() {
         let config = config(&[
             ("GAMES_GRID_REWARD_UNITS", "5"),
-            ("GAMES_CHESS_PAYS", "false"),
+            ("GAMES_CHESS_REWARDED_PER_DAY", "50"),
             ("GAMES_CHESS_REWARDED_PER_ADDRESS_PER_DAY", "1"),
             ("GAMES_WITHDRAW_MIN_UNITS", "500"),
         ])
         .unwrap();
         assert_eq!(config.policy.grid.reward_units, 5);
-        assert!(!config.policy.chess.pays);
+        assert_eq!(config.policy.chess.rewarded_per_day, 50);
         assert_eq!(config.policy.chess.rewarded_per_address_per_day, 1);
         assert_eq!(config.policy.withdraw_min_units, 500);
+        assert!(
+            !config.policy.chess.pays,
+            "tightening a rule must not quietly turn chess's payouts on"
+        );
+    }
+
+    #[test]
+    fn a_configuration_without_games_chess_pays_does_not_pay_chess() {
+        // P1 in code, and the whole reason it is in code: a configuration file missing this line is
+        // record-only. Chess results come from the phone and nothing proves them, so "on" has to be
+        // written down by someone, not inherited from a default.
+        let unconfigured = config(&[]).unwrap();
+        assert!(!unconfigured.policy.chess.pays);
+        assert!(
+            unconfigured.policy.grid.pays,
+            "Grid is verified by replay, so it pays unless switched off"
+        );
+
+        let enabled = config(&[("GAMES_CHESS_PAYS", "true")]).unwrap();
+        assert!(enabled.policy.chess.pays);
+
+        for off in ["false", "0", "no"] {
+            assert!(
+                !config(&[("GAMES_CHESS_PAYS", off)])
+                    .unwrap()
+                    .policy
+                    .chess
+                    .pays
+            );
+        }
+        // A malformed value is refused rather than read as "on" — the failure mode that would matter.
+        assert!(config(&[("GAMES_CHESS_PAYS", "yes please")]).is_err());
     }
 
     #[test]
