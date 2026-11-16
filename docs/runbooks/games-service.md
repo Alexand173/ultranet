@@ -107,6 +107,12 @@ instead of starting it half-configured. When it passes, the journal shows the ru
 (`check-config` can also be run on a development machine with `CREDENTIALS_DIRECTORY` pointing at a folder
 of *throwaway* plaintext credentials; never do that with real keys.)
 
+**Read the two game lines and check they say what you meant.** `Ultra Chess: … RECORD ONLY` is the
+correct line today: chess pays nothing unless the environment says `GAMES_CHESS_PAYS=true`, because the
+server cannot verify a chess result (`../GAMES_RULES_AND_PAYOUTS.md` §2.2, §6 P1). Wins are still
+recorded and anchored, so leaving it alone loses nothing but the prizes. If that line says `paying` and
+you did not mean it, stop and remove the line.
+
 ### 2.5 Time
 
 Days are UTC days by this host's clock. Run time synchronisation and check it: a wrong clock moves the
@@ -140,14 +146,21 @@ written): run `caddy validate` on the host before reloading.
 1. [ ] Credentials created, encrypted, offline copies made, plaintext shredded (§2).
 2. [ ] `check-config` is clean; the rules printed are the ones you ratified.
 3. [ ] Owner key funded; chain #1 handed over and **verified on the ledger** (anchoring only).
-4. [ ] Chess chain registered (0.01 `$ULTRA`); `GAMES_ANCHOR_GAMES=grid,chess` (anchoring only).
+4. [ ] Chess chain registered (0.01 `$ULTRA`); `GAMES_ANCHOR_GAMES=grid,chess` (anchoring only —
+   registering the chain does **not** turn chess's prizes on; `GAMES_CHESS_PAYS` does, and P1 says leave
+   it false).
 5. [ ] Payout wallet funded: 0.1 `$ULTRA` from the faucet's one claim per chain (V2 F-2).
 6. [ ] Service started (§2.4). It listens on loopback only, so nothing outside can reach it yet.
 7. [ ] Reverse proxy route and Cloudflare limits in place; `curl https://<api>/api/games/status` answers.
 8. [ ] `ultranet-games backup --to …` works, and a copy was restored somewhere and passed `audit`.
 9. [ ] Monitoring is wired for the signals in `GAMES_RULES_AND_PAYOUTS.md` §7.
-10. [ ] `enable`, then **one real round trip with your own address**: solve a level, win a chess game,
-    reach 100 units, withdraw, watch it go `queued → submitted → confirmed`, and compare the amount that
+10. [ ] `enable`, then **one real round trip with your own address**. Watch the arithmetic first: the
+    withdrawal minimum is 100 units, Grid pays 10 units for each of 3 rewarded wins a day, and chess
+    pays nothing while it is record-only — so at the shipped numbers one address needs **four days of
+    play** to reach a first withdrawal. To test the payout path today instead of in four days, run a
+    throwaway database (`GAMES_DB_PATH` at a scratch file) with `GAMES_GRID_REWARD_UNITS=100` — inside
+    the ceiling — and discard it afterwards; never point a test at the production database. Then
+    withdraw your own address, watch it go `queued → submitted → confirmed`, and compare the amount that
     arrived with the amount owed.
 11. [ ] Only then ship the app build that shows the rewards screens.
 
@@ -171,9 +184,12 @@ service. Run `audit` and a backup daily. A backup is only a backup once it has b
 drifts below the balance it is promised against. When `owed + the 1,000-unit reserve` nears the wallet's
 balance, rewards stop (safely: wins are recorded as `pool_low`), so top the wallet up before then.
 
-**Chain days.** The service anchors yesterday every ten minutes until it is on the ledger. To do it by
-hand: `ultranet-games close-day --game grid --date 2026-11-15`. It is safe to repeat: a day closes once
-and the ledger is checked before anything is submitted.
+**Chain days.** The service anchors yesterday every ten minutes until it is on the ledger, so normally
+you watch rather than run anything: `journalctl -u ultranet-games -f` and
+`GET /api/appchain/ledger/1/anchors`. `close-day --game grid --date <yesterday>` does it by hand, but it
+loads the full configuration and the credentials the unit holds, so it is not a plain-shell command —
+`status`, `audit`, `payouts` and `backup` are the four that only open the database. `close-day` is safe to
+repeat: a day closes once, and the ledger is checked before anything is submitted.
 
 ---
 
