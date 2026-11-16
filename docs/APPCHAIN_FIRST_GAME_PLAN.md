@@ -1,6 +1,7 @@
 # First AppChain: daily skill puzzle — plan
 
-**Date:** 2026-11-14 · **Status:** plan, no code yet
+**Date:** 2026-11-14 · **Status:** plan. The puzzle itself is now specified and built (engine only) in
+[`ULTRAGRID_GAME_SPEC.md`](./ULTRAGRID_GAME_SPEC.md); read that for the game, this for the AppChain model.
 **Agreed with the owner:** an original daily skill puzzle ("UltraNet Grid", working name) as AppChain #1. Test rewards of 0.00001 `$ULTRA` per win, withdrawable from 0.0001 `$ULTRA`, from a 1 `$ULTRA` pool funded from the faucet wallet.
 **Horizon:** UltraNet is built for 10–100 years and thousands of AppChains. Everything below is designed as a **generic primitive that any AppChain can use**. Only the puzzle itself is specific to this game.
 
