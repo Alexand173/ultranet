@@ -15,13 +15,18 @@ api.example.com {
     # hostname, so the app needs no new DNS name or certificate. Enable only after the service has been
     # installed from deploy/ultranet-games.service and docs/runbooks/games-service.md. Add the
     # Cloudflare rate limits from that runbook (§6) before opening it: the service has caps, not a login.
-    handle /api/games/* {
+    # The generic registry routes (/api/records, /api/apps) are served by the same process.
+    # `Authorization` is deliberately NOT stripped: it carries a game's API key (Bearer) on result
+    # submission, and removing it would answer every submission with 401. The service reads it only on
+    # the registry's result routes and never forwards it. Bodies may reach ~15 KB (a signed registration
+    # carries a post-quantum public key and signature), so the cap is the service's own 32 KB.
+    @games path /api/games/* /api/records /api/records/* /api/apps /api/apps/*
+    handle @games {
         request_body {
-            max_size 16KB
+            max_size 32KB
         }
         reverse_proxy 127.0.0.1:8095 {
             import cloudflare-trusted-proxy
-            header_up -Authorization
             header_up -Cookie
             header_up -CF-Connecting-IP
             header_up -Forwarded

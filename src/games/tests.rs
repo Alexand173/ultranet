@@ -3055,3 +3055,383 @@ mod self_service {
         assert_ne!(rotated["api_key"], created["api_key"]);
     }
 }
+
+/// The generic `/api/records` and `/api/apps` routes: adapters over the registry the `/api/games/g`
+/// routes already serve. These tests pin that they are the same registry under other names.
+mod generic_api {
+    use super::*;
+    use crate::games::{
+        ownership::{self, ACTION_REGISTER, ACTION_ROTATE_KEY},
+        registry::GameStatus,
+    };
+    use actix_web::{
+        dev::ServiceResponse,
+        http::StatusCode,
+        test::{call_service, init_service, read_body_json, TestRequest},
+        web, App,
+    };
+    use serde_json::{json, Value};
+
+    macro_rules! app {
+        ($harness:expr) => {
+            init_service(
+                App::new()
+                    .app_data(web::Data::from($harness.service.clone()))
+                    .configure(crate::games::api::configure_routes),
+            )
+            .await
+        };
+    }
+
+    async fn json_of(response: ServiceResponse) -> (StatusCode, Value) {
+        let status = response.status();
+        (status, read_body_json(response).await)
+    }
+
+    macro_rules! post {
+        ($app:expr, $uri:expr, $key:expr, $body:expr $(,)?) => {
+            async {
+                let mut request = TestRequest::post().uri($uri).set_json($body);
+                let key: Option<&str> = $key;
+                if let Some(key) = key {
+                    request = request.insert_header(("Authorization", format!("Bearer {key}")));
+                }
+                json_of(call_service(&$app, request.to_request()).await).await
+            }
+        };
+    }
+
+    macro_rules! get {
+        ($app:expr, $uri:expr $(,)?) => {
+            async { json_of(call_service(&$app, TestRequest::get().uri($uri).to_request()).await).await }
+        };
+    }
+
+    fn register_body(pair: &QuantumKeyPair, id: &str, name: &str, ts: u64, generic: bool) -> Value {
+        let digest = ownership::proof_digest(ACTION_REGISTER, id, name, ts);
+        let id_field = if generic { "app_id" } else { "id" };
+        json!({
+            id_field: id, "name": name, "public_key": hex::encode(&pair.public_key),
+            "timestamp": ts, "signature": hex::encode(pair.sign(&digest)),
+        })
+    }
+
+    fn rotate_body(pair: &QuantumKeyPair, id: &str, ts: u64) -> Value {
+        let digest = ownership::proof_digest(ACTION_ROTATE_KEY, id, "", ts);
+        json!({
+            "public_key": hex::encode(&pair.public_key), "timestamp": ts,
+            "signature": hex::encode(pair.sign(&digest)),
+        })
+    }
+
+    fn game(h: &Harness, id: &str) -> String {
+        let (_, key) = h
+            .service
+            .store()
+            .register_game(id, id, A, h.service.now())
+            .unwrap();
+        h.service
+            .store()
+            .set_game_status(id, GameStatus::Registered, h.service.now())
+            .unwrap();
+        key
+    }
+
+    fn without(mut value: Value, key: &str) -> Value {
+        if let Value::Object(map) = &mut value {
+            map.remove(key);
+        }
+        value
+    }
+
+    #[actix_web::test]
+    async fn every_generic_route_works_and_answers_in_both_vocabularies() {
+        let h = harness(Options::default());
+        let app = app!(h);
+        let owner = QuantumKeyPair::generate();
+
+        // POST /api/apps: a signed registration, with the generic field name.
+        let (status, created) = post!(app,
+            "/api/apps",
+            None,
+            &register_body(&owner, "tetris", "Tetris", h.service.now(), true),
+        )
+        .await;
+        assert_eq!(status, 200, "{created}");
+        assert_eq!(created["game"]["id"], "tetris");
+        assert_eq!(created["game"]["app_id"], "tetris");
+        assert_eq!(created["game"]["owner"], json!(owner.address()));
+        let key = created["api_key"].as_str().unwrap().to_string();
+        h.service
+            .store()
+            .set_game_status("tetris", GameStatus::Registered, h.service.now())
+            .unwrap();
+
+        // POST /api/records
+        let (status, record) = post!(app,
+            "/api/records",
+            Some(&key),
+            &json!({"app_id": "tetris", "record_id": "match-0001", "subject": A, "value": 5,
+                    "data_hash": "01".repeat(32)}),
+        )
+        .await;
+        assert_eq!(status, 200, "{record}");
+        assert_eq!(
+            (record["app_id"].clone(), record["record_id"].clone()),
+            (json!("tetris"), json!("match-0001"))
+        );
+        assert_eq!(record["game_id"], "tetris", "the old names are still there");
+        assert_eq!(record["result_id"], "match-0001");
+        assert_eq!((record["duplicate"].clone(), record["anchored"].clone()), (json!(false), json!(true)));
+
+        // GET /api/apps/{id}
+        let (status, page) = get!(app, "/api/apps/tetris").await;
+        assert_eq!(status, 200, "{page}");
+        assert_eq!((page["id"].clone(), page["app_id"].clone()), (json!("tetris"), json!("tetris")));
+        assert_eq!(get!(app, "/api/apps/nothing").await.0, 404);
+
+        // POST /api/apps/{id}/rotate-key (a later second, as the replay rule requires)
+        h.advance(10);
+        let (status, rotated) = post!(app,
+            "/api/apps/tetris/rotate-key",
+            None,
+            &rotate_body(&owner, "tetris", h.service.now()),
+        )
+        .await;
+        assert_eq!(status, 200, "{rotated}");
+        assert_eq!(rotated["game"]["app_id"], "tetris");
+        assert_ne!(rotated["api_key"].as_str().unwrap(), key);
+
+        // GET /api/records/days/{date} and GET /api/apps/{id}/proof/{date}, once the day is closed.
+        h.next_day();
+        h.service.close_registry_day(DAY).await.unwrap();
+        let (status, day) = get!(app, &format!("/api/records/days/{DAY}")).await;
+        assert_eq!(status, 200, "{day}");
+        assert_eq!(day["games"][0]["id"], "tetris");
+        assert_eq!(day["games"][0]["app_id"], "tetris");
+        let (status, proof) = get!(app, &format!("/api/apps/tetris/proof/{DAY}")).await;
+        assert_eq!(status, 200, "{proof}");
+        assert_eq!((proof["game_id"].clone(), proof["app_id"].clone()), (json!("tetris"), json!("tetris")));
+        assert_eq!(proof["merkle_root"], day["merkle_root"]);
+        assert_eq!(get!(app, &format!("/api/apps/snake/proof/{DAY}")).await.0, 404);
+    }
+
+    #[actix_web::test]
+    async fn the_old_routes_are_unchanged_and_never_grow_the_generic_names() {
+        let h = harness(Options::default());
+        let app = app!(h);
+        let key = game(&h, "tetris");
+        let (status, record) = post!(app,
+            "/api/games/g/tetris/results",
+            Some(&key),
+            &json!({"player": A, "result_id": "match-0001", "score": 5}),
+        )
+        .await;
+        assert_eq!(status, 200);
+        for generic in ["app_id", "record_id"] {
+            assert!(record.get(generic).is_none(), "{generic} leaked into the old reply: {record}");
+        }
+        let (_, page) = get!(app, "/api/games/g/tetris").await;
+        assert!(page.get("app_id").is_none() && page["id"] == "tetris", "{page}");
+        // The old routes refuse the new vocabulary, exactly as they refuse any unknown field.
+        let (status, error) = post!(app,
+            "/api/games/g/tetris/results",
+            Some(&key),
+            &json!({"subject": A, "record_id": "match-0002", "value": 5}),
+        )
+        .await;
+        assert_eq!((status, error["code"].clone()), (StatusCode::BAD_REQUEST, json!("invalid_request")));
+    }
+
+    #[actix_web::test]
+    async fn a_record_is_the_same_record_whichever_route_wrote_it_and_proofs_are_equivalent() {
+        let h = harness(Options::default());
+        let app = app!(h);
+        let key = game(&h, "tetris");
+        let new = |id: &str, subject: &str, value: u64| {
+            json!({"app_id": "tetris", "record_id": id, "subject": subject, "value": value})
+        };
+        let old = |id: &str, subject: &str, value: u64| {
+            json!({"player": subject, "result_id": id, "score": value})
+        };
+
+        // Written by the new route, replayed by the old one; and the other way round.
+        assert_eq!(post!(app, "/api/records", Some(&key), &new("match-0001", A, 5)).await.1["duplicate"], false);
+        let (status, replay) =
+            post!(app, "/api/games/g/tetris/results", Some(&key), &old("match-0001", A, 5)).await;
+        assert_eq!((status, replay["duplicate"].clone()), (StatusCode::OK, json!(true)));
+        assert_eq!(
+            post!(app, "/api/games/g/tetris/results", Some(&key), &old("match-0002", B, 9)).await.1["duplicate"],
+            false
+        );
+        let (status, replay) = post!(app, "/api/records", Some(&key), &new("match-0002", B, 9)).await;
+        assert_eq!((status, replay["duplicate"].clone()), (StatusCode::OK, json!(true)));
+
+        // The underlying store holds exactly two records, with the mapped fields.
+        let rows = h.service.store().results_for_day("tetris", DAY).unwrap();
+        assert_eq!(rows.len(), 2);
+        let mut seen: Vec<(String, String, u64)> = rows
+            .iter()
+            .map(|r| (r.player.clone(), r.result_id.clone(), r.score))
+            .collect();
+        seen.sort();
+        let mut expected = vec![
+            (A.to_string(), "match-0001".to_string(), 5),
+            (B.to_string(), "match-0002".to_string(), 9),
+        ];
+        expected.sort();
+        assert_eq!(seen, expected);
+
+        // Both routes serve the same day and the same proof; the generic reply only adds names.
+        h.next_day();
+        h.service.close_registry_day(DAY).await.unwrap();
+        let (_, old_proof) = get!(app, &format!("/api/games/g/tetris/proof/{DAY}")).await;
+        let (_, new_proof) = get!(app, &format!("/api/apps/tetris/proof/{DAY}")).await;
+        assert_eq!(old_proof, without(new_proof, "app_id"));
+        let (_, old_day) = get!(app, &format!("/api/games/registry/days/{DAY}")).await;
+        let (_, mut new_day) = get!(app, &format!("/api/records/days/{DAY}")).await;
+        for game in new_day["games"].as_array_mut().unwrap() {
+            *game = without(game.clone(), "app_id");
+        }
+        assert_eq!(old_day, new_day);
+        // And the proof verifies: the leaf climbs to the merkle root under the frozen tags.
+        assert_eq!(old_proof["steps"].as_array().unwrap().len(), 0);
+    }
+
+    #[actix_web::test]
+    async fn identical_records_stay_idempotent_and_conflicting_ones_stay_409_across_routes() {
+        let h = harness(Options::default());
+        let app = app!(h);
+        let key = game(&h, "tetris");
+        let body = json!({"app_id": "tetris", "record_id": "match-0001", "subject": A, "value": 5});
+        let (s1, r1) = post!(app, "/api/records", Some(&key), &body).await;
+        let (s2, r2) = post!(app, "/api/records", Some(&key), &body).await;
+        assert_eq!((s1, s2), (StatusCode::OK, StatusCode::OK));
+        assert_eq!((r1["duplicate"].clone(), r2["duplicate"].clone()), (json!(false), json!(true)));
+        assert_eq!(h.service.store().results_for_day("tetris", DAY).unwrap().len(), 1);
+
+        // Different contents under the same record id: refused, on the new route and on the old.
+        let different = json!({"app_id": "tetris", "record_id": "match-0001", "subject": A, "value": 6});
+        let (status, error) = post!(app, "/api/records", Some(&key), &different).await;
+        assert_eq!((status, error["code"].clone()), (StatusCode::CONFLICT, json!("result_conflict")));
+        let (status, error) = post!(app,
+            "/api/games/g/tetris/results",
+            Some(&key),
+            &json!({"player": B, "result_id": "match-0001", "score": 5}),
+        )
+        .await;
+        assert_eq!((status, error["code"].clone()), (StatusCode::CONFLICT, json!("result_conflict")));
+        let rows = h.service.store().results_for_day("tetris", DAY).unwrap();
+        assert_eq!((rows.len(), rows[0].score), (1, 5), "nothing was overwritten");
+    }
+
+    #[actix_web::test]
+    async fn bad_keys_bad_signatures_and_unknown_fields_are_refused_on_every_generic_route() {
+        let h = harness(Options::default());
+        let app = app!(h);
+        let key = game(&h, "tetris");
+        let record = json!({"app_id": "tetris", "record_id": "match-0001", "subject": A});
+
+        // Authentication: no key, a wrong key, a key for another app, and an unknown app read the same.
+        let other = game(&h, "snake");
+        for presented in [None, Some("ugk_wrong"), Some(other.as_str())] {
+            let (status, error) = post!(app, "/api/records", presented, &record).await;
+            assert_eq!((status, error["code"].clone()), (StatusCode::UNAUTHORIZED, json!("invalid_key")));
+        }
+        let unknown_app = json!({"app_id": "nothing", "record_id": "match-0001", "subject": A});
+        assert_eq!(post!(app, "/api/records", Some(&key), &unknown_app).await.0, 401);
+        assert_eq!(h.service.store().results_for_day("tetris", DAY).unwrap().len(), 0);
+
+        // Validation is the registry's: a malformed subject or record id is a 400, nothing is stored.
+        for body in [
+            json!({"app_id": "tetris", "record_id": "match-0001", "subject": "not-hex"}),
+            json!({"app_id": "tetris", "record_id": "x", "subject": A}),
+        ] {
+            let (status, _) = post!(app, "/api/records", Some(&key), &body).await;
+            assert_eq!(status, 400, "{body}");
+        }
+
+        // The registry trims and lowercases a subject, exactly as it does a player on the old route, so
+        // the same address in capitals is the same record, not a second one.
+        let capitals = json!({"app_id": "tetris", "record_id": "match-0009", "subject": A.to_uppercase()});
+        assert_eq!(post!(app, "/api/records", Some(&key), &capitals).await.0, 200);
+        let (_, replay) = post!(
+            app,
+            "/api/games/g/tetris/results",
+            Some(&key),
+            &json!({"player": A, "result_id": "match-0009"}),
+        )
+        .await;
+        assert_eq!(replay["duplicate"], true);
+        let stored = h.service.store().results_for_day("tetris", DAY).unwrap();
+        assert_eq!((stored.len(), stored[0].player.as_str()), (1, A));
+        let rows_before = stored.len();
+
+        // Unknown fields, including the old vocabulary and an `owner` slipped beside a proof.
+        for body in [
+            json!({"app_id": "tetris", "record_id": "match-0001", "subject": A, "score": 5}),
+            json!({"app_id": "tetris", "result_id": "match-0001", "player": A}),
+            json!({"app_id": "tetris", "record_id": "match-0001", "subject": A, "extra": 1}),
+        ] {
+            let (status, error) = post!(app, "/api/records", Some(&key), &body).await;
+            assert_eq!((status, error["code"].clone()), (StatusCode::BAD_REQUEST, json!("invalid_request")), "{body}");
+        }
+        assert_eq!(h.service.store().results_for_day("tetris", DAY).unwrap().len(), rows_before);
+
+        // Owner signatures on /api/apps: forged, for other terms, stale, and with unknown or old fields.
+        let owner = QuantumKeyPair::generate();
+        let now = h.service.now();
+        let mut forged = register_body(&owner, "newgame", "New Game", now, true);
+        forged["name"] = json!("Another Name");
+        let stale = register_body(&owner, "newgame", "New Game", now - 400, true);
+        for body in [forged, stale] {
+            let (status, error) = post!(app, "/api/apps", None, &body).await;
+            assert_eq!((status, error["code"].clone()), (StatusCode::UNAUTHORIZED, json!("invalid_key")));
+        }
+        let mut with_owner = register_body(&owner, "newgame", "New Game", now, true);
+        with_owner["owner"] = json!(A);
+        assert_eq!(post!(app, "/api/apps", None, &with_owner).await.0, 400);
+        let old_vocabulary = register_body(&owner, "newgame", "New Game", now, false);
+        assert_eq!(post!(app, "/api/apps", None, &old_vocabulary).await.0, 400, "`id` is not an /api/apps field");
+        assert!(h.service.store().game("newgame").unwrap().is_none(), "nothing was registered");
+
+        // Rotation: a stranger's signature is refused, and a replayed one cannot replace the new key.
+        let created = post!(app, "/api/apps", None, &register_body(&owner, "newgame", "New Game", now, true)).await.1;
+        let first_key = created["api_key"].as_str().unwrap().to_string();
+        h.advance(10);
+        let stranger = QuantumKeyPair::generate();
+        let (status, error) = post!(app,
+            "/api/apps/newgame/rotate-key",
+            None,
+            &rotate_body(&stranger, "newgame", h.service.now()),
+        )
+        .await;
+        assert_eq!((status, error["code"].clone()), (StatusCode::UNAUTHORIZED, json!("invalid_key")));
+        let rotation = rotate_body(&owner, "newgame", h.service.now());
+        let (status, rotated) = post!(app, "/api/apps/newgame/rotate-key", None, &rotation).await;
+        assert_eq!(status, 200);
+        assert_ne!(rotated["api_key"].as_str().unwrap(), first_key);
+        let (status, _) = post!(app, "/api/apps/newgame/rotate-key", None, &rotation).await;
+        assert_eq!(status, 401, "a captured rotation cannot be replayed, on either route");
+        let (status, _) = post!(app, "/api/games/g/newgame/rotate-key", None, &rotation).await;
+        assert_eq!(status, 401);
+    }
+
+    #[actix_web::test]
+    async fn one_signature_registers_on_either_route_with_the_same_result() {
+        // The digest names the id and the name only, so the same signed terms are valid on both
+        // routes: they differ only in the id's field name.
+        let owner = QuantumKeyPair::generate();
+        let mut outcomes = Vec::new();
+        for (uri, generic) in [("/api/games/g", false), ("/api/apps", true)] {
+            let h = harness(Options::default());
+            let app = app!(h);
+            let body = register_body(&owner, "tetris", "Tetris", h.service.now(), generic);
+            let (status, reply) = post!(app, uri, None, &body).await;
+            assert_eq!(status, 200, "{uri}: {reply}");
+            outcomes.push((reply["game"]["owner"].clone(), reply["game"]["status"].clone(), reply["game"]["name"].clone()));
+        }
+        assert_eq!(outcomes[0], outcomes[1]);
+        assert_eq!(outcomes[0].0, json!(owner.address()));
+    }
+}

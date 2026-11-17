@@ -97,6 +97,38 @@ The script uses only the Python standard library and is an independent implement
 the top of `src/games/registry.rs`, checked against the Rust code's fixed test vectors. To verify in
 another language, port those layouts and compare against the same vectors.
 
+## The generic names: `/api/records` and `/api/apps`
+
+Applications that are not games can use the same registry under neutral names. The two sets of routes are
+the same registry: a record written through one is the same record through the other, and a proof is the
+same proof. The `/api/games/…` routes are unchanged and stay.
+
+| Generic route | Same as | Body or reply |
+|---|---|---|
+| `POST /api/records` | `POST /api/games/g/{id}/results` | `{"app_id","record_id","subject","value"?,"data_hash"?}`, `Authorization: Bearer <key>` |
+| `POST /api/apps` | `POST /api/games/g` | `{"app_id","name","public_key","timestamp","signature"}` |
+| `POST /api/apps/{id}/rotate-key` | `POST /api/games/g/{id}/rotate-key` | unchanged body |
+| `GET /api/apps/{id}` | `GET /api/games/g/{id}` | page of a registered app |
+| `GET /api/apps/{id}/proof/{date}` | `GET /api/games/g/{id}/proof/{date}` | the same proof |
+| `GET /api/records/days/{date}` | `GET /api/games/registry/days/{date}` | the same day |
+
+| Generic field | Internal field | Rule |
+|---|---|---|
+| `app_id` | game id | 3–32 of `a-z 0-9 -` |
+| `record_id` | `result_id` | 3–64 of letters, digits, `- _ .`; your idempotency key |
+| `subject` | `player` | 64 hex characters: an address, **or the SHA3-256 of any identifier you choose** (a student number, a serial). Capitals are lowercased, as on the old route |
+| `value` | `score` | optional integer, default 0; its meaning is yours |
+| `data_hash` | `data_hash` | unchanged |
+
+Generic replies carry the old names too, plus `app_id` and `record_id`, so a client can read either. Each
+route refuses the other vocabulary's request fields as unknown (`400 invalid_request`). The owner's
+signature is over the same digest on both routes (action, id, name, time), so a signature made for one is
+valid on the other. Authentication, limits, idempotency (`duplicate: true`) and conflicts (`409
+result_conflict`) are the registry's and are identical.
+
+The hash layouts and domain tags (`UltraRecord/*`) are unchanged by the renaming; it is a renaming of
+request and reply fields only.
+
 ## Node.js SDK
 
 `sdk/typescript/ultranet-games.mjs` is one file with no dependencies (Node 18+) for your game **server**:

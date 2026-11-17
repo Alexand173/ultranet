@@ -63,7 +63,15 @@ pub fn configure_routes(config: &mut web::ServiceConfig) {
         .route(
             "/api/games/registry/days/{date}",
             web::get().to(registry_day),
-        );
+        )
+        // The generic names for the same registry. These are adapters: they rename fields (see the
+        // table above `RecordRequest`) and call the very same service methods as the routes above.
+        .route("/api/records", web::post().to(records_submit))
+        .route("/api/records/days/{date}", web::get().to(records_day))
+        .route("/api/apps", web::post().to(apps_register))
+        .route("/api/apps/{id}", web::get().to(apps_get))
+        .route("/api/apps/{id}/rotate-key", web::post().to(registry_rotate_generic))
+        .route("/api/apps/{id}/proof/{date}", web::get().to(apps_proof));
 }
 
 pub async fn run_server(
@@ -301,6 +309,157 @@ async fn registry_rotate(
     body: web::Json<RegistryRotateRequest>,
 ) -> HttpResponse {
     respond(service.self_rotate_key(&id, body.into_inner()))
+}
+
+// --- The generic API: /api/records and /api/apps -----------------------------------------------------
+//
+// One registry, two vocabularies. These routes exist so that applications that are not games (quizzes,
+// certificates, votes) do not have to speak "game" and "player". They hold no logic of their own:
+// each handler renames fields, calls the service method the `/api/games/g` route calls, and adds the
+// generic names to the reply. Nothing is removed from a reply, so a client can read either vocabulary.
+//
+//   request (generic)   internal field        meaning
+//   app_id              game id               3-32 of a-z 0-9 -
+//   record_id           result_id             3-64 of letters, digits, - _ .  (the idempotency key)
+//   subject             player                32 bytes as 64 lowercase hex: an address, or the SHA3-256
+//                                             of any identifier the application chooses
+//   value               score                 optional unsigned integer, default 0
+//   data_hash           data_hash             unchanged
+//
+//   reply (added)       copied from
+//   app_id              game_id, or id, or game.id
+//   record_id           result_id
+//
+// Authentication, the API-key hash, owner signatures (the signed digest still names the id and the
+// name, so a signature is valid on either route), replay protection, idempotency and every limit are
+// the service's and are unchanged. A generic route refuses the old field names, and an old route refuses
+// the new ones: `deny_unknown_fields` on both sides.
+
+/// What `POST /api/records` accepts. The key travels as `Authorization: Bearer`, as on the old route.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordRequest {
+    app_id: String,
+    record_id: String,
+    subject: String,
+    #[serde(default)]
+    value: u64,
+    #[serde(default)]
+    data_hash: Option<String>,
+}
+
+/// What `POST /api/apps` accepts. The signature is over the same digest as `POST /api/games/g`
+/// (action, id, name, time), with `app_id` as the id.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AppRegisterRequest {
+    app_id: String,
+    name: String,
+    public_key: String,
+    timestamp: u64,
+    signature: String,
+}
+
+/// Copy `from` to `to` inside one JSON object, leaving `from` in place.
+fn copy_field(object: &mut Value, from: &str, to: &str) {
+    if let Some(value) = object.get(from).cloned() {
+        if let Value::Object(map) = object {
+            map.insert(to.to_string(), value);
+        }
+    }
+}
+
+fn to_value<T: Serialize>(result: Result<T, GamesError>) -> Result<Value, GamesError> {
+    result.map(|value| serde_json::to_value(value).unwrap_or(Value::Null))
+}
+
+async fn records_submit(
+    service: web::Data<GamesService>,
+    request: HttpRequest,
+    body: web::Json<RecordRequest>,
+) -> HttpResponse {
+    let record = body.into_inner();
+    let internal = RegistryResultRequest {
+        player: record.subject,
+        result_id: record.record_id,
+        score: record.value,
+        data_hash: record.data_hash,
+    };
+    let reply = to_value(service.submit_registry_result(
+        &record.app_id,
+        &bearer_key(&request),
+        internal,
+    ))
+    .map(|mut value| {
+        copy_field(&mut value, "game_id", "app_id");
+        copy_field(&mut value, "result_id", "record_id");
+        value
+    });
+    respond(reply)
+}
+
+async fn apps_register(
+    service: web::Data<GamesService>,
+    body: web::Json<AppRegisterRequest>,
+) -> HttpResponse {
+    let app = body.into_inner();
+    let internal = RegistryRegisterRequest {
+        id: app.app_id,
+        name: app.name,
+        public_key: app.public_key,
+        timestamp: app.timestamp,
+        signature: app.signature,
+    };
+    let reply = to_value(service.self_register(internal).await).map(|mut value| {
+        if let Some(game) = value.get_mut("game") {
+            copy_field(game, "id", "app_id");
+        }
+        value
+    });
+    respond(reply)
+}
+
+async fn registry_rotate_generic(
+    service: web::Data<GamesService>,
+    id: web::Path<String>,
+    body: web::Json<RegistryRotateRequest>,
+) -> HttpResponse {
+    let reply = to_value(service.self_rotate_key(&id, body.into_inner())).map(|mut value| {
+        if let Some(game) = value.get_mut("game") {
+            copy_field(game, "id", "app_id");
+        }
+        value
+    });
+    respond(reply)
+}
+
+async fn apps_get(service: web::Data<GamesService>, id: web::Path<String>) -> HttpResponse {
+    respond(to_value(service.registry_game(&id)).map(|mut value| {
+        copy_field(&mut value, "id", "app_id");
+        value
+    }))
+}
+
+async fn apps_proof(
+    service: web::Data<GamesService>,
+    path: web::Path<(String, String)>,
+) -> HttpResponse {
+    let (id, date) = path.into_inner();
+    respond(to_value(service.registry_proof(&id, &date)).map(|mut value| {
+        copy_field(&mut value, "game_id", "app_id");
+        value
+    }))
+}
+
+async fn records_day(service: web::Data<GamesService>, date: web::Path<String>) -> HttpResponse {
+    respond(to_value(service.registry_day_view(&date)).map(|mut value| {
+        if let Some(Value::Array(games)) = value.get_mut("games") {
+            for game in games {
+                copy_field(game, "id", "app_id");
+            }
+        }
+        value
+    }))
 }
 
 async fn registry_listed(service: web::Data<GamesService>) -> HttpResponse {

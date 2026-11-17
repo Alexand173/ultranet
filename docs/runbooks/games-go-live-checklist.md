@@ -71,6 +71,9 @@ HOST: journalctl -u ultranet-games -n 40 --no-pager
 
 - [ ] Add the Caddy route from `deploy/Caddyfile.example`; run `caddy validate --config <file>` **before** reloading.
 - [ ] Add every Cloudflare limit in the §3 table, including the new register, rotate-key and results rows.
+- [ ] The proxy forwards the `Authorization` header to the games service (the example does; a copy that
+  still strips it makes every result submission a 401). Prove it through the proxy, not on loopback:
+  a rehearsal game's key must get `200` from `POST https://api.ultranetwork.cc/api/records`.
 - [ ] From outside: `curl https://api.ultranetwork.cc/api/games/status` answers, and
   `curl -s -o /dev/null -w '%{http_code}' -X POST https://api.ultranetwork.cc/api/games/g -d '{}'` is `400`,
   not `5xx`.

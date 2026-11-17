@@ -1,6 +1,6 @@
 # UltraNet AppChain Service — architecture and migration plan
 
-**Status: proposal for review, except phase P0 (§6, §10), which the owner approved and which is done.
+**Status: proposal for review, except phases P0 and P1 (§6, §7, §10), which the owner approved and which are done.
 Everything else here is unbuilt, and nothing in production changes until the owner approves it.** It describes how the existing `ultranet-games` service grows into a general
 record-anchoring service without breaking anything that already exists.
 
@@ -224,7 +224,7 @@ and the previous API unchanged.
 | Phase | What | Needs approval of |
 |---|---|---|
 | **P0 (done)** | Decide D1. If yes: rename the registry tags, recompute and re-pin every vector (Rust, Python, Node), update the docs. **Before** any registry anchor | D1 |
-| **P1** | Add `/api/records` and `/api/apps` as aliases over the existing registry. Add `subject`/`value` naming and the "hash any identifier" rule to the docs. Old routes untouched | §7 |
+| **P1 (done)** | Add `/api/records` and `/api/apps` as aliases over the existing registry. Add `subject`/`value` naming and the "hash any identifier" rule to the docs. Old routes untouched | §7 |
 | **P2** | Split the process: a records service with the anchor key only. The games service calls it. Database: one registry file per service, migrated in place by the existing upgrade path | D2 |
 | **P3** | Usage reporting per application per day (§9). Read-only | D3 |
 | **P4** | Model B: per-application chain id, cadence and owner; on-demand anchoring; a paid-tier switch | D3, D4 |
