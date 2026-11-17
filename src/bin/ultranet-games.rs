@@ -1,4 +1,6 @@
-//! `ultranet-games` — the games service and the operator's commands for it.
+//! `ultranet-games` — the Games Reward Service: checks answers, records wins and pays rewards. It holds
+//! the payout key and **no chain owner's key**; days are anchored by asking the Records Service
+//! (`ultranet-records`). Third-party games and the generic records API are served by that other process.
 //!
 //! ```text
 //! ultranet-games serve            run the API, the payout worker and the daily anchor
@@ -9,14 +11,8 @@
 //! ultranet-games enable  [--accepting] [--paying]                    (no flag = both)
 //! ultranet-games payouts          list unfinished payouts
 //! ultranet-games payout-resolve --id <id> (--confirmed | --failed) --note "..."
-//! ultranet-games close-day --game grid|chess --date YYYY-MM-DD
+//! ultranet-games close-day --game grid|chess --date YYYY-MM-DD    (asks the Records Service to anchor)
 //! ultranet-games backup --to /var/backups/ultranet-games/games-YYYYMMDD.db
-//!
-//! ultranet-games game-register --id tetris --name "Tetris" --owner <64 hex>    # prints the API key ONCE
-//! ultranet-games game-list
-//! ultranet-games game-status --id tetris --status sandbox|registered|listed|suspended
-//! ultranet-games game-rotate-key --id tetris                                   # prints the new key ONCE
-//! ultranet-games registry-close-day --date YYYY-MM-DD                          # close (and anchor) a registry day
 //! ```
 //!
 //! Only `serve`, `check-config` and `close-day` read credentials or touch the network. The rest open
@@ -34,7 +30,7 @@ use zeroize::Zeroizing;
 use UltraNet::{
     faucet::{node_client::NodeClient, signer::FaucetSigner},
     games::{
-        anchor::{Anchorer, CliAnchorer},
+        anchor::{Anchorer, RemoteAnchorer},
         api,
         chain::HttpChain,
         config::GamesConfig,
@@ -60,12 +56,7 @@ async fn main() {
         "payout-resolve" => payout_resolve(&args[1..]),
         "close-day" => close_day(&args[1..]).await,
         "backup" => backup(&args[1..]),
-        "game-register" => game_register(&args[1..]),
-        "game-list" => game_list(),
-        "game-status" => game_status(&args[1..]),
-        "game-rotate-key" => game_rotate_key(&args[1..]),
-        "registry-close-day" => registry_close_day(&args[1..]).await,
-        _ => Err("use serve, check-config, status, audit, disable, enable, payouts, payout-resolve, close-day, backup, game-register, game-list, game-status, game-rotate-key or registry-close-day".into()),
+        _ => Err("use serve, check-config, status, audit, disable, enable, payouts, payout-resolve, close-day or backup".into()),
     };
     if let Err(error) = result {
         eprintln!("ultranet-games: {error}");
@@ -129,7 +120,25 @@ fn payout_signer_error(config: &GamesConfig, error: &str) -> String {
     )
 }
 
+/// The Games Reward Service must not hold the chain owner's key. Refusing to start when one is in its
+/// credentials directory turns a separation of duties from a convention into a check.
+fn refuse_foreign_credentials(config: &GamesConfig) -> Result<(), String> {
+    let present = config.foreign_credentials_present();
+    if present.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "this service must not hold the chain owner's key, but found: {}. Those belong to ultranet-records; remove them from this unit's credentials",
+        present
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
 fn build_service(config: &GamesConfig) -> Result<Arc<GamesService>, String> {
+    refuse_foreign_credentials(config)?;
     let store = GamesStore::open(&config.db_path).map_err(|e| e.to_string())?;
     let signer = FaucetSigner::load(
         &config.credential_path(&config.payout_signer_credential),
@@ -140,15 +149,20 @@ fn build_service(config: &GamesConfig) -> Result<Arc<GamesService>, String> {
     let node =
         Arc::new(NodeClient::new(config.node_api_base_url.clone()).map_err(|e| e.to_string())?);
     let chain = Arc::new(HttpChain::new(&config.node_api_base_url).map_err(|e| e.to_string())?);
-    let anchorer: Option<Arc<dyn Anchorer>> = config.anchor.as_ref().map(|anchor| {
-        Arc::new(CliAnchorer {
-            cli_path: anchor.cli_path.clone(),
-            key_file: config.credential_path(&anchor.key_credential),
-            password_file: config.credential_path(&anchor.password_credential),
-            node_url: config.node_api_base_url.clone(),
-            timeout: Duration::from_secs(anchor.timeout_seconds),
-        }) as Arc<dyn Anchorer>
-    });
+    let anchorer: Option<Arc<dyn Anchorer>> = match config.anchor.as_ref() {
+        None => None,
+        Some(anchor) => {
+            let secret = read_secret(
+                &config.credential_path(&anchor.credential),
+                UltraNet::games::peer::MIN_SECRET_BYTES,
+            )?;
+            Some(Arc::new(RemoteAnchorer::new(
+                &anchor.records_url,
+                secret.to_vec(),
+                Duration::from_secs(anchor.timeout_seconds),
+            )?) as Arc<dyn Anchorer>)
+        }
+    };
     Ok(Arc::new(GamesService::new(
         store,
         config.policy.clone(),
@@ -171,7 +185,7 @@ async fn serve() -> Result<(), String> {
         );
     }
     if config.anchor.is_none() {
-        tracing::warn!("GAMES_ANCHOR_CLI is not set: days will not be anchored automatically");
+        tracing::warn!("GAMES_RECORDS_URL is not set: days will not be anchored automatically");
     }
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let worker = tokio::spawn(service.clone().run_worker(shutdown_rx.clone()));
@@ -237,24 +251,18 @@ fn check_config() -> Result<(), String> {
     println!("Payout signer:     loaded, address matches");
     read_secret(&config.credential_path(&config.abuse_key_credential), 32)?;
     println!("Abuse key:         present");
+    refuse_foreign_credentials(&config)?;
+    println!("Owner key:         not held here (correct)");
     match &config.anchor {
-        None => println!("Anchoring:         DISABLED (GAMES_ANCHOR_CLI not set)"),
+        None => println!("Anchoring:         DISABLED (GAMES_RECORDS_URL not set)"),
         Some(anchor) => {
-            if !anchor.cli_path.exists() {
-                return Err(format!(
-                    "GAMES_ANCHOR_CLI {} does not exist",
-                    anchor.cli_path.display()
-                ));
-            }
-            for name in [&anchor.key_credential, &anchor.password_credential] {
-                let path = config.credential_path(name);
-                if !path.exists() {
-                    return Err(format!("anchor credential {} is missing", path.display()));
-                }
-            }
+            read_secret(
+                &config.credential_path(&anchor.credential),
+                UltraNet::games::peer::MIN_SECRET_BYTES,
+            )?;
             println!(
-                "Anchoring:         enabled via {}",
-                anchor.cli_path.display()
+                "Anchoring:         through the Records Service at {} (peer secret present)",
+                anchor.records_url
             );
         }
     }
@@ -340,105 +348,6 @@ fn backup(args: &[String]) -> Result<(), String> {
         }
         Err("the backup was written but it does not pass the audit; the live database has the same problem".into())
     }
-}
-
-/// Create a third-party game in the sandbox. The key is printed here and never stored: lose it and the
-/// only remedy is `game-rotate-key`. Only the database is opened.
-fn game_register(args: &[String]) -> Result<(), String> {
-    let id = flag(args, "--id").ok_or("--id is required")?;
-    let name = flag(args, "--name").ok_or("--name is required")?;
-    let owner = flag(args, "--owner").ok_or("--owner <64 hex address> is required")?;
-    let store = open_store()?;
-    let (game, key) = store
-        .register_game(&id, &name, &owner, UltraNet::auth::now_seconds())
-        .map_err(|e| e.to_string())?;
-    println!(
-        "registered {} ({}) for {} in the {} state",
-        game.id,
-        game.name,
-        game.owner,
-        game.status.code()
-    );
-    println!();
-    println!("API KEY (shown once, store it now): {key}");
-    println!();
-    println!(
-        "Results go to POST /api/games/g/{}/results with `Authorization: Bearer <key>`.",
-        game.id
-    );
-    println!("A sandbox game is private and never anchored: promote it with `game-status --status registered`.");
-    Ok(())
-}
-
-fn game_list() -> Result<(), String> {
-    let games = open_store()?.games().map_err(|e| e.to_string())?;
-    if games.is_empty() {
-        println!("no registered games");
-    }
-    for game in games {
-        println!(
-            "{:<32} {:<11} {}  {}",
-            game.id,
-            game.status.code(),
-            game.owner,
-            game.name
-        );
-    }
-    Ok(())
-}
-
-fn game_status(args: &[String]) -> Result<(), String> {
-    use UltraNet::games::registry::GameStatus;
-    let id = flag(args, "--id").ok_or("--id is required")?;
-    let status = flag(args, "--status")
-        .and_then(|value| GameStatus::parse(&value))
-        .ok_or("--status must be sandbox, registered, listed or suspended")?;
-    open_store()?
-        .set_game_status(&id, status, UltraNet::auth::now_seconds())
-        .map_err(|e| e.to_string())?;
-    println!("{id} is now {}", status.code());
-    if status == GameStatus::Suspended {
-        println!("It takes no new results. Days already closed and anchored are unchanged.");
-    }
-    Ok(())
-}
-
-fn game_rotate_key(args: &[String]) -> Result<(), String> {
-    let id = flag(args, "--id").ok_or("--id is required")?;
-    let key = open_store()?
-        .rotate_key(&id, UltraNet::auth::now_seconds())
-        .map_err(|e| e.to_string())?;
-    println!("the old key for {id} no longer works");
-    println!();
-    println!("NEW API KEY (shown once, store it now): {key}");
-    Ok(())
-}
-
-/// Close a finished registry day and anchor it if the configuration has a registry chain. Like
-/// `close-day` it loads the full configuration and the unit's credentials, so it is not a plain-shell command.
-async fn registry_close_day(args: &[String]) -> Result<(), String> {
-    let date = flag(args, "--date").ok_or("--date YYYY-MM-DD is required")?;
-    let config = GamesConfig::from_env()?;
-    let service = build_service(&config)?;
-    let day = service
-        .close_registry_day(&date)
-        .await
-        .map_err(|e| e.to_string())?;
-    println!(
-        "registry {} -> {} ({} game(s))",
-        day.date,
-        day.state,
-        day.games.len()
-    );
-    println!("merkle root: {}", hex::encode(day.merkle_root));
-    println!("day root:    {}", hex::encode(day.day_root));
-    if let Some(tx) = &day.anchor_tx {
-        println!("anchor tx:   {tx}");
-    }
-    if let Some(error) = &day.last_error {
-        println!("last error:  {error}");
-    }
-    Ok(())
 }
 
 fn payouts() -> Result<(), String> {

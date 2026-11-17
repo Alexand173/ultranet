@@ -32,11 +32,6 @@ pub const MAX_PAYOUT_DAILY_CAP_UNITS: u64 = 5_000_000;
 /// cover a burst of withdrawals, and the solvency rule would promise money the fees then eat.
 pub const MIN_PAYOUT_RESERVE_UNITS: u64 = 100;
 pub const MAX_PAYOUT_RESERVE_UNITS: u64 = 1_000_000_000;
-pub const MAX_REGISTRY_RESULTS_PER_GAME_PER_DAY: u64 = 1_000_000;
-pub const MAX_REGISTRY_RESULTS_PER_PLAYER_PER_DAY: u64 = 100_000;
-pub const MAX_REGISTRY_SANDBOX_RESULTS_PER_DAY: u64 = 10_000;
-pub const MAX_REGISTRY_GAMES_PER_OWNER: u64 = 20;
-pub const MAX_REGISTRY_SELF_REGISTRATIONS_PER_DAY: u64 = 5_000;
 pub const MIN_CHESS_PLIES: u32 = 10;
 pub const MAX_CHESS_PLIES: u32 = 1_000;
 
@@ -103,24 +98,6 @@ pub fn validate_policy(policy: &Policy) -> Result<(), String> {
             "the payout reserve must be {MIN_PAYOUT_RESERVE_UNITS} to {MAX_PAYOUT_RESERVE_UNITS} base units"
         ));
     }
-    let registry = &policy.registry;
-    if registry.results_per_game_per_day == 0
-        || registry.results_per_game_per_day > MAX_REGISTRY_RESULTS_PER_GAME_PER_DAY
-        || registry.results_per_player_per_game_per_day == 0
-        || registry.results_per_player_per_game_per_day > MAX_REGISTRY_RESULTS_PER_PLAYER_PER_DAY
-        || registry.sandbox_results_per_game_per_day == 0
-        || registry.sandbox_results_per_game_per_day > MAX_REGISTRY_SANDBOX_RESULTS_PER_DAY
-        || registry.games_per_owner == 0
-        || registry.games_per_owner > MAX_REGISTRY_GAMES_PER_OWNER
-        || registry.self_registrations_per_day == 0
-        || registry.self_registrations_per_day > MAX_REGISTRY_SELF_REGISTRATIONS_PER_DAY
-    {
-        return Err(format!(
-            "registry limits must be within {MAX_REGISTRY_RESULTS_PER_GAME_PER_DAY} results per game, \
-             {MAX_REGISTRY_RESULTS_PER_PLAYER_PER_DAY} per player and {MAX_REGISTRY_SANDBOX_RESULTS_PER_DAY} per sandbox, per day; \
-             {MAX_REGISTRY_GAMES_PER_OWNER} games per owner and {MAX_REGISTRY_SELF_REGISTRATIONS_PER_DAY} self-registrations per day"
-        ));
-    }
     if policy.chess_min_plies < MIN_CHESS_PLIES
         || policy.chess_max_plies > MAX_CHESS_PLIES
         || policy.chess_min_plies >= policy.chess_max_plies
@@ -134,13 +111,22 @@ pub fn validate_policy(policy: &Policy) -> Result<(), String> {
 
 // --- configuration ----------------------------------------------------------------------------
 
+/// How this service reaches the Records Service to have a day anchored.
 #[derive(Clone, Debug)]
-pub struct AnchorConfig {
-    pub cli_path: PathBuf,
-    pub key_credential: String,
-    pub password_credential: String,
+pub struct PeerAnchorConfig {
+    pub records_url: String,
+    pub credential: String,
     pub timeout_seconds: u64,
 }
+
+/// Credentials this service must never hold: the chain owner's key and its passphrase, under every name
+/// the Records Service might know them by. `check-config` and `serve` refuse to start if one is present.
+pub const FOREIGN_CREDENTIALS: &[&str] = &[
+    "games-anchor-owner.key.enc",
+    "games-anchor.pass",
+    "records-anchor-owner.key.enc",
+    "records-anchor.pass",
+];
 
 #[derive(Clone, Debug)]
 pub struct GamesConfig {
@@ -152,7 +138,7 @@ pub struct GamesConfig {
     pub payout_signer_credential: String,
     pub abuse_key_credential: String,
     /// None means days are closed by an operator command but never anchored automatically.
-    pub anchor: Option<AnchorConfig>,
+    pub anchor: Option<PeerAnchorConfig>,
 }
 
 pub const DEFAULT_NODE_API_BASE_URL: &str = "http://127.0.0.1:8081";
@@ -229,28 +215,6 @@ impl GamesConfig {
                 "GAMES_PAYOUT_RESERVE_UNITS",
                 standard.payout_reserve_units,
             )?,
-            registry: super::registry::RegistryCaps {
-                results_per_game_per_day: number(
-                    "GAMES_REGISTRY_RESULTS_PER_GAME_PER_DAY",
-                    standard.registry.results_per_game_per_day,
-                )?,
-                results_per_player_per_game_per_day: number(
-                    "GAMES_REGISTRY_RESULTS_PER_PLAYER_PER_DAY",
-                    standard.registry.results_per_player_per_game_per_day,
-                )?,
-                sandbox_results_per_game_per_day: number(
-                    "GAMES_REGISTRY_SANDBOX_RESULTS_PER_DAY",
-                    standard.registry.sandbox_results_per_game_per_day,
-                )?,
-                games_per_owner: number(
-                    "GAMES_REGISTRY_GAMES_PER_OWNER",
-                    standard.registry.games_per_owner,
-                )?,
-                self_registrations_per_day: number(
-                    "GAMES_REGISTRY_SELF_REGISTRATIONS_PER_DAY",
-                    standard.registry.self_registrations_per_day,
-                )?,
-            },
         };
         validate_policy(&policy)?;
 
@@ -279,20 +243,6 @@ impl GamesConfig {
         service.anchor_empty_days = boolean("GAMES_ANCHOR_EMPTY_DAYS", service.anchor_empty_days)?;
         service.anchor_retry_seconds =
             number("GAMES_ANCHOR_RETRY_SECONDS", service.anchor_retry_seconds)?;
-        service.registry_chain_id = match lookup("GAMES_REGISTRY_CHAIN_ID") {
-            None => None,
-            Some(value) => {
-                let id: u32 = value.trim().parse().map_err(|_| {
-                    "GAMES_REGISTRY_CHAIN_ID must be an unsigned integer".to_string()
-                })?;
-                if id == 0 || id == policy.grid.chain_id || id == policy.chess.chain_id {
-                    return Err(
-                        "GAMES_REGISTRY_CHAIN_ID must be an AppChain of its own: not 0 (the L1) and not a game's chain".into(),
-                    );
-                }
-                Some(id)
-            }
-        };
         service.anchor_games = text("GAMES_ANCHOR_GAMES", "grid")
             .split(',')
             .map(|name| name.trim().to_string())
@@ -306,23 +256,23 @@ impl GamesConfig {
             return Err("GAMES_ANCHOR_GAMES may list only grid and chess".into());
         }
 
-        let anchor = match lookup("GAMES_ANCHOR_CLI") {
+        // Anchoring is delegated: this service holds no owner key and runs no signing tool. It asks the
+        // Records Service, over loopback, with a signed request (see `peer.rs`).
+        let anchor = match lookup("GAMES_RECORDS_URL") {
             None => None,
-            Some(cli) => {
-                let cli_path = PathBuf::from(cli.trim());
-                if !cli_path.is_absolute() {
-                    return Err("GAMES_ANCHOR_CLI must be an absolute path".into());
+            Some(url) => {
+                let url = url.trim().trim_end_matches('/').to_string();
+                let loopback = ["http://127.0.0.1:", "http://localhost:", "http://[::1]:"]
+                    .iter()
+                    .any(|prefix| url.starts_with(prefix));
+                if !loopback {
+                    return Err(
+                        "GAMES_RECORDS_URL must be a loopback http URL such as http://127.0.0.1:8096: the request is authenticated but not encrypted".into(),
+                    );
                 }
-                Some(AnchorConfig {
-                    cli_path,
-                    key_credential: text(
-                        "GAMES_ANCHOR_KEY_CREDENTIAL",
-                        "games-anchor-owner.key.enc",
-                    ),
-                    password_credential: text(
-                        "GAMES_ANCHOR_PASSWORD_CREDENTIAL",
-                        "games-anchor.pass",
-                    ),
+                Some(PeerAnchorConfig {
+                    records_url: url,
+                    credential: text("GAMES_RECORDS_PEER_CREDENTIAL", "games-records-peer.key"),
                     timeout_seconds: number("GAMES_ANCHOR_TIMEOUT_SECONDS", 60)?,
                 })
             }
@@ -343,6 +293,24 @@ impl GamesConfig {
             abuse_key_credential: text("GAMES_ABUSE_KEY_CREDENTIAL", "games-abuse.key"),
             anchor,
         })
+    }
+
+    /// Any credential this service must not hold that is present in its credentials directory.
+    pub fn foreign_credentials_present(&self) -> Vec<PathBuf> {
+        FOREIGN_CREDENTIALS
+            .iter()
+            .map(|name| self.credential_path(name))
+            .filter(|path| path.exists())
+            .collect()
+    }
+
+    /// The same check against an explicit directory (so a test need not touch the environment).
+    pub fn foreign_credentials_in(directory: &std::path::Path) -> Vec<PathBuf> {
+        FOREIGN_CREDENTIALS
+            .iter()
+            .map(|name| directory.join(name))
+            .filter(|path| path.exists())
+            .collect()
     }
 
     /// Where a named credential lives: inside `$CREDENTIALS_DIRECTORY` under systemd.
@@ -483,66 +451,6 @@ mod tests {
     }
 
     #[test]
-    fn the_registry_is_not_anchored_unless_it_is_given_a_chain_of_its_own() {
-        assert_eq!(config(&[]).unwrap().service.registry_chain_id, None);
-        assert_eq!(
-            config(&[("GAMES_REGISTRY_CHAIN_ID", "3")])
-                .unwrap()
-                .service
-                .registry_chain_id,
-            Some(3)
-        );
-        for bad in ["0", "1", "2", "-1", "three", ""] {
-            assert!(
-                config(&[("GAMES_REGISTRY_CHAIN_ID", bad)]).is_err(),
-                "{bad:?} must be refused"
-            );
-        }
-        // The games may be moved to other chains, and then those ids are the ones the registry must avoid.
-        assert!(config(&[
-            ("GAMES_GRID_CHAIN_ID", "7"),
-            ("GAMES_REGISTRY_CHAIN_ID", "7")
-        ])
-        .is_err());
-        assert!(config(&[
-            ("GAMES_GRID_CHAIN_ID", "7"),
-            ("GAMES_REGISTRY_CHAIN_ID", "1")
-        ])
-        .is_ok());
-    }
-
-    #[test]
-    fn a_third_party_games_daily_limits_cannot_be_loosened_past_their_ceilings() {
-        let ok = config(&[
-            ("GAMES_REGISTRY_RESULTS_PER_GAME_PER_DAY", "1000000"),
-            ("GAMES_REGISTRY_RESULTS_PER_PLAYER_PER_DAY", "100000"),
-            ("GAMES_REGISTRY_SANDBOX_RESULTS_PER_DAY", "10000"),
-        ]);
-        assert!(ok.is_ok(), "{:?}", ok.err());
-        for (name, value) in [
-            ("GAMES_REGISTRY_RESULTS_PER_GAME_PER_DAY", "1000001"),
-            ("GAMES_REGISTRY_RESULTS_PER_PLAYER_PER_DAY", "100001"),
-            ("GAMES_REGISTRY_SANDBOX_RESULTS_PER_DAY", "10001"),
-            ("GAMES_REGISTRY_RESULTS_PER_GAME_PER_DAY", "0"),
-            ("GAMES_REGISTRY_SANDBOX_RESULTS_PER_DAY", "0"),
-        ] {
-            assert!(
-                config(&[(name, value)]).is_err(),
-                "{name}={value} must be refused"
-            );
-        }
-        let defaults = config(&[]).unwrap().policy.registry;
-        assert_eq!(
-            (
-                defaults.results_per_game_per_day,
-                defaults.results_per_player_per_game_per_day,
-                defaults.sandbox_results_per_game_per_day
-            ),
-            (50_000, 1_000, 500)
-        );
-    }
-
-    #[test]
     fn the_two_games_must_have_their_own_chains() {
         assert!(config(&[("GAMES_CHESS_CHAIN_ID", "1")])
             .unwrap_err()
@@ -560,12 +468,21 @@ mod tests {
     }
 
     #[test]
-    fn anchoring_needs_an_absolute_cli_path_and_known_games() {
-        assert!(config(&[("GAMES_ANCHOR_CLI", "appchain-cli")])
-            .unwrap_err()
-            .contains("absolute"));
+    fn anchoring_goes_through_a_loopback_records_service_and_names_known_games() {
+        for bad in [
+            "https://records.example.com",
+            "http://10.0.0.5:8096",
+            "http://records.internal:8096",
+            "127.0.0.1:8096",
+            "http://127.0.0.1.evil.example:8096",
+        ] {
+            assert!(
+                config(&[("GAMES_RECORDS_URL", bad)]).is_err(),
+                "{bad} must be refused"
+            );
+        }
         let ok = config(&[
-            ("GAMES_ANCHOR_CLI", "/opt/ultranet-games/appchain-cli"),
+            ("GAMES_RECORDS_URL", "http://127.0.0.1:8096/"),
             ("GAMES_ANCHOR_GAMES", "grid, chess"),
         ])
         .unwrap();
@@ -573,8 +490,27 @@ mod tests {
             ok.service.anchor_games,
             vec!["grid".to_string(), "chess".to_string()]
         );
-        assert_eq!(ok.anchor.unwrap().timeout_seconds, 60);
+        let anchor = ok.anchor.unwrap();
+        assert_eq!(anchor.records_url, "http://127.0.0.1:8096");
+        assert_eq!(anchor.credential, "games-records-peer.key");
+        assert_eq!(anchor.timeout_seconds, 60);
         assert!(config(&[("GAMES_ANCHOR_GAMES", "grid,poker")]).is_err());
+    }
+
+    #[test]
+    fn this_service_has_no_setting_for_an_owner_key_or_the_registry() {
+        // The old variables are not silently honoured: setting them changes nothing, and the
+        // service holds no anchor tool or key because there is nothing here that reads one.
+        let with_old = config(&[
+            ("GAMES_ANCHOR_CLI", "/opt/ultranet-games/appchain-cli"),
+            ("GAMES_REGISTRY_CHAIN_ID", "3"),
+            ("GAMES_REGISTRY_GAMES_PER_OWNER", "9"),
+        ])
+        .unwrap();
+        assert!(with_old.anchor.is_none(), "GAMES_ANCHOR_CLI is ignored here");
+        assert_eq!(with_old.policy, Policy::standard());
+        assert!(FOREIGN_CREDENTIALS.contains(&"games-anchor-owner.key.enc"));
+        assert!(FOREIGN_CREDENTIALS.contains(&"records-anchor.pass"));
     }
 
     #[test]

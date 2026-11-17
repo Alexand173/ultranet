@@ -34,6 +34,81 @@ pub trait Anchorer: Send + Sync {
     async fn anchor(&self, chain_id: u32, root: &[u8; 32]) -> Result<String, AnchorError>;
 }
 
+/// Anchoring by asking the Records Service, which holds the owner key. This is what the Games Reward
+/// Service uses: it never holds a signing key for any chain. The request is signed with the shared peer
+/// secret (see `peer.rs`) and sent over loopback.
+///
+/// Any error is *ambiguous*, exactly as for the CLI: the Records Service may have submitted the anchor
+/// before the connection failed. The caller looks at the ledger before it asks again, and so does the
+/// Records Service, so an ambiguous failure never becomes a second anchor.
+pub struct RemoteAnchorer {
+    pub records_url: String,
+    pub secret: Vec<u8>,
+    pub client: reqwest::Client,
+    pub clock: std::sync::Arc<dyn Fn() -> u64 + Send + Sync>,
+}
+
+impl RemoteAnchorer {
+    pub fn new(records_url: &str, secret: Vec<u8>, timeout: Duration) -> Result<RemoteAnchorer, String> {
+        let client = reqwest::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(|e| e.to_string())?;
+        Ok(RemoteAnchorer {
+            records_url: records_url.trim_end_matches('/').to_string(),
+            secret,
+            client,
+            clock: std::sync::Arc::new(crate::auth::now_seconds),
+        })
+    }
+
+    /// Sign with another clock (tests give both services the same one).
+    pub fn with_clock(mut self, clock: std::sync::Arc<dyn Fn() -> u64 + Send + Sync>) -> RemoteAnchorer {
+        self.clock = clock;
+        self
+    }
+}
+
+#[async_trait]
+impl Anchorer for RemoteAnchorer {
+    async fn anchor(&self, chain_id: u32, root: &[u8; 32]) -> Result<String, AnchorError> {
+        const PATH: &str = "/internal/v1/anchor";
+        let body = serde_json::json!({ "chain_id": chain_id, "root": hex::encode(root) }).to_string();
+        let signed = super::peer::sign_request(&self.secret, "games", "POST", PATH, body.as_bytes(), (self.clock)());
+        let response = self
+            .client
+            .post(format!("{}{PATH}", self.records_url))
+            .header(super::peer::HEADER_PEER, &signed.peer)
+            .header(super::peer::HEADER_TIMESTAMP, signed.timestamp.to_string())
+            .header(super::peer::HEADER_NONCE, &signed.nonce)
+            .header(super::peer::HEADER_SIGNATURE, &signed.signature)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| {
+                if error.is_timeout() {
+                    AnchorError::TimedOut
+                } else {
+                    AnchorError::Spawn(format!("the Records Service could not be reached: {error}"))
+                }
+            })?;
+        let status = response.status();
+        let reply: serde_json::Value = response.json().await.unwrap_or(serde_json::Value::Null);
+        if !status.is_success() {
+            let message = reply["message"].as_str().unwrap_or("no message");
+            let code = reply["code"].as_str().unwrap_or("error");
+            return Err(AnchorError::Failed(format!("{code} ({status}): {message}").chars().take(200).collect()));
+        }
+        let hash = reply["tx_hash"].as_str().ok_or(AnchorError::Unparsed)?;
+        if hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            Ok(hash.to_ascii_lowercase())
+        } else {
+            Err(AnchorError::Unparsed)
+        }
+    }
+}
+
 pub struct CliAnchorer {
     pub cli_path: PathBuf,
     pub key_file: PathBuf,

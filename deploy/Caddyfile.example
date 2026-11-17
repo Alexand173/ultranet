@@ -11,22 +11,46 @@
 }
 
 api.example.com {
-    # The games service (UltraGrid, Ultra Chess) answers everything under /api/games on this same
-    # hostname, so the app needs no new DNS name or certificate. Enable only after the service has been
-    # installed from deploy/ultranet-games.service and docs/runbooks/games-service.md. Add the
-    # Cloudflare rate limits from that runbook (§6) before opening it: the service has caps, not a login.
-    # The generic registry routes (/api/records, /api/apps) are served by the same process.
-    # `Authorization` is deliberately NOT stripped: it carries a game's API key (Bearer) on result
-    # submission, and removing it would answer every submission with 401. The service reads it only on
-    # the registry's result routes and never forwards it. Bodies may reach ~15 KB (a signed registration
-    # carries a post-quantum public key and signature), so the cap is the service's own 32 KB.
-    @games path /api/games/* /api/records /api/records/* /api/apps /api/apps/*
-    handle @games {
+    # Both services share this hostname, so the app needs no new DNS name or certificate.
+    # Two services answer under this hostname, and the proxy sends each path to the one that owns it:
+    #   Records Service (127.0.0.1:8096): third-party games and the generic records API.
+    #   Games Reward Service (127.0.0.1:8095): UltraGrid, Ultra Chess, wallets, withdrawals.
+    # /internal/* is deliberately not routed at all: it is the Records Service's signed route for the
+    # Games service and is reachable only on loopback.
+    # `Authorization` is NOT stripped on the Records Service's routes: it carries a game's API key
+    # (Bearer) on result submission, and removing it would answer every submission with 401. Bodies there
+    # may reach ~15 KB (a signed registration carries a post-quantum public key and signature), so the
+    # cap is the service's own 32 KB. The Games Reward Service has no login and takes no Authorization.
+    @records path /api/games/g /api/games/g/* /api/games/registry/* /api/records /api/records/* /api/apps /api/apps/*
+    handle @records {
         request_body {
             max_size 32KB
         }
+        reverse_proxy 127.0.0.1:8096 {
+            import cloudflare-trusted-proxy
+            header_up -Cookie
+            header_up -CF-Connecting-IP
+            header_up -Forwarded
+            header_up -X-Forwarded-Host
+            header_up -X-Forwarded-Proto
+            header_up -X-Real-IP
+            transport http {
+                dial_timeout 2s
+                response_header_timeout 20s
+            }
+        }
+    }
+
+    # The games service (UltraGrid, Ultra Chess) answers everything else under /api/games. Enable only
+    # after it has been installed from deploy/ultranet-games.service and docs/runbooks/games-service.md.
+    # Add the Cloudflare rate limits from that runbook before opening it: the service has caps, not a login.
+    handle /api/games/* {
+        request_body {
+            max_size 16KB
+        }
         reverse_proxy 127.0.0.1:8095 {
             import cloudflare-trusted-proxy
+            header_up -Authorization
             header_up -Cookie
             header_up -CF-Connecting-IP
             header_up -Forwarded

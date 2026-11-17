@@ -1,7 +1,7 @@
 [Unit]
-Description=UltraNet games service (UltraGrid and Ultra Chess: results, rewards, daily anchors)
+Description=UltraNet Games Reward Service (UltraGrid and Ultra Chess: results and rewards; days are anchored by the Records Service)
 Documentation=https://github.com/Alexand173/ultranet/blob/main/docs/runbooks/games-service.md
-After=network-online.target ultranet.service
+After=network-online.target ultranet.service ultranet-records.service
 Wants=network-online.target
 
 StartLimitIntervalSec=5min
@@ -17,13 +17,13 @@ EnvironmentFile=-/etc/ultranet-games/games.env
 # Secrets are supplied as systemd credentials, never through the general env file.
 #   games-payout-signer.json  the payout wallet's Dilithium key (its OWN key: not the faucet's, not a chain owner's)
 #   games-abuse.key           32+ random bytes that key the privacy digests of client addresses
-#   games-anchor-owner.key.enc  the chain owner's key file made by `appchain-cli generate-key`
-#   games-anchor.pass         that key file's passphrase
-# Drop the two games-anchor lines, and leave GAMES_ANCHOR_CLI unset, to run without automatic anchoring.
+#   games-records-peer.key    the secret shared with the Records Service, used to ask it to anchor a day
+# This service holds NO chain owner's key: the owner key and its passphrase belong to ultranet-records, and
+# `check-config` refuses to start if either is in this unit's credentials. Drop the peer line, and leave
+# GAMES_RECORDS_URL unset, to run without automatic anchoring.
 LoadCredentialEncrypted=games-payout-signer.json:/etc/ultranet-games/secrets/games-payout-signer.json.cred
 LoadCredentialEncrypted=games-abuse.key:/etc/ultranet-games/secrets/games-abuse.key.cred
-LoadCredentialEncrypted=games-anchor-owner.key.enc:/etc/ultranet-games/secrets/games-anchor-owner.key.enc.cred
-LoadCredentialEncrypted=games-anchor.pass:/etc/ultranet-games/secrets/games-anchor.pass.cred
+LoadCredentialEncrypted=games-records-peer.key:/etc/ultranet-games/secrets/games-records-peer.key.cred
 
 ExecStartPre=/opt/ultranet-games/ultranet-games check-config
 ExecStart=/opt/ultranet-games/ultranet-games serve
@@ -44,7 +44,7 @@ TimeoutStartSec=30s
 # A payout step that is mid-way between signing and saving is allowed to finish.
 TimeoutStopSec=30s
 
-# The service talks to the local node API only. The anchor command it runs does the same.
+# The service talks to the local node API and to the Records Service on loopback. It runs no other program.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 NoNewPrivileges=true
 PrivateTmp=true
@@ -52,7 +52,7 @@ PrivateDevices=true
 ProtectHome=true
 ProtectSystem=strict
 ProtectKernelTunables=true
-InaccessiblePaths=/var/lib/ultranet /etc/ultranet /etc/ultranet-faucet /var/lib/ultranet-faucet /etc/ultranet-games/secrets /opt/ultranet /opt/ultranet-faucet /root
+InaccessiblePaths=/var/lib/ultranet /etc/ultranet /etc/ultranet-faucet /var/lib/ultranet-faucet /etc/ultranet-games/secrets /opt/ultranet /opt/ultranet-faucet /etc/ultranet-records /var/lib/ultranet-records /opt/ultranet-records /root
 ReadOnlyPaths=/etc/ultranet-games/games.env
 ProtectKernelModules=true
 ProtectKernelLogs=true

@@ -1,6 +1,6 @@
 # UltraNet AppChain Service — architecture and migration plan
 
-**Status: proposal for review, except phases P0 and P1 (§6, §7, §10), which the owner approved and which are done.
+**Status: proposal for review, except phases P0, P1 and P2 (§3, §6, §7, §10), which the owner approved and which are built locally (P2 is not deployed).
 Everything else here is unbuilt, and nothing in production changes until the owner approves it.** It describes how the existing `ultranet-games` service grows into a general
 record-anchoring service without breaking anything that already exists.
 
@@ -67,8 +67,55 @@ from strangers' input. So:
 | **Records service** (new name for the registry half) | anchor-owner key only | applications and developers |
 | **Games service** (stays as `ultranet-games`) | payout key; calls the records service | the Android app |
 
-Until the split is built, the combined service keeps running as it is; the split changes where code runs,
-not what it does.
+**As built (P2).** The split is implemented, tested and documented; it has not been deployed. The code is in
+`src/games/records*.rs`, `peer.rs` and `bin/ultranet-records.rs`; the Games Reward Service is `bin/ultranet-games.rs`.
+
+*Process and trust boundaries*
+
+| | Records Service `ultranet-records` | Games Reward Service `ultranet-games` |
+|---|---|---|
+| Port | `127.0.0.1:8096` | `127.0.0.1:8095` |
+| Unix user, unit | `ultranet-records`, `ultranet-records.service` | `ultranet-games`, `ultranet-games.service` |
+| Database | `records.db` (its own file) | `games.db` (its own file) |
+| Configuration | `records.env`, variables `RECORDS_*` | `games.env`, variables `GAMES_*` |
+| Credentials | the **owner key** + passphrase, the peer secret | the **payout key**, the abuse key, the peer secret |
+| Refuses to start if it finds | `games-payout-signer.json` or `games-abuse.key` | an owner key or passphrase, under either service's names |
+| Filesystem | the unit makes the other service's `/etc`, `/var/lib` and `/opt` directories inaccessible | the same, the other way round |
+| Moves money | no code path does | yes (payouts) |
+| Signs anchors | yes, through `appchain-cli` | no code path does |
+
+*Which service owns each credential:* the chain owner's key and its passphrase belong to the Records Service
+alone; the payout key and the abuse key belong to the Games Reward Service alone; the peer secret is held by
+both and does one thing, authenticate the Games service's anchor requests. A compromised Games service can
+therefore never sign an anchor or read, add or alter a registry record, and a compromised Records service can
+never sign a payout.
+
+*Data flow.* Applications and developers call the Records Service (`/api/records`, `/api/apps`, and the
+registry under `/api/games/g…`). The phone calls the Games Reward Service (`/api/games/…`). The reverse proxy
+routes each path to the service that owns it and routes nothing under `/internal`. The only call between the
+services is one-way, Games → Records: `POST /internal/v1/anchor {chain_id, root}`, over loopback. The Records
+Service never calls the Games service, so its failure can never depend on the other's.
+
+*Authenticated service-to-service communication* (`peer.rs`): an HMAC-SHA3-256 over
+`peer id, method, path, timestamp, nonce, SHA3-256(body)`, keyed by the shared secret (at least 32 bytes), with
+a 60-second window and a one-time nonce. Method, path and body are inside the signature, so a captured request
+cannot be replayed or redirected; an unauthenticated caller cannot fill the replay cache; every failure is the
+same answer. The format is documented in the module and verified against Python's `hmac`. It gives
+authentication, not confidentiality, which is why the Games service accepts only a loopback URL.
+
+*What an authenticated peer may ask for.* Anchor a root on chains in `RECORDS_PEER_ANCHOR_CHAINS` (default
+`1,2`), and at most `RECORDS_PEER_ANCHORS_PER_DAY` (default 8) distinct roots per UTC day, so a compromised peer
+cannot drain the owner wallet. Never the registry's chain, never the L1 (`403 forbidden`). The Records Service looks at the ledger
+before it submits (a root already there is answered, not re-signed) and remembers a submission for the resubmit
+window, so a retry, a duplicate request or a restart cannot produce a second anchor.
+
+*Failure behaviour.* If the Records Service is down, the Games service keeps recording wins and paying; the
+day's anchor fails, the error is recorded on the day, and the next pass anchors it once. If the Games service
+is down, the registry is unaffected. Neither stops the other's payouts or intake.
+
+*Database split without a schema change.* Both databases are created by the same schema code, so each also
+contains the other's (empty, unused) tables. Nothing in either binary reads them: the Games service has no
+registry code path, the Records service no payout code path.
 
 **Modules are not built into the service.** The earlier sketch lists a Quiz module, a DAO module and a
 Certificates module inside the service. This proposal does not build them there. A quiz needs answer rules, a
@@ -225,15 +272,23 @@ and the previous API unchanged.
 |---|---|---|
 | **P0 (done)** | Decide D1. If yes: rename the registry tags, recompute and re-pin every vector (Rust, Python, Node), update the docs. **Before** any registry anchor | D1 |
 | **P1 (done)** | Add `/api/records` and `/api/apps` as aliases over the existing registry. Add `subject`/`value` naming and the "hash any identifier" rule to the docs. Old routes untouched | §7 |
-| **P2** | Split the process: a records service with the anchor key only. The games service calls it. Database: one registry file per service, migrated in place by the existing upgrade path | D2 |
+| **P2 (done, not deployed)** | Split the process: a records service with the anchor key only. The games service calls it. Database: one registry file per service | D2 |
 | **P3** | Usage reporting per application per day (§9). Read-only | D3 |
 | **P4** | Model B: per-application chain id, cadence and owner; on-demand anchoring; a paid-tier switch | D3, D4 |
 | **P5** | Rename the binary, the unit and the directory to `ultranet-appchain-service`, leaving `ultranet-games` as the games service and keeping the old unit name working for one release | last |
 | **P6** | Application modules, only when a real second operator asks for one | demand |
 
-**Rollback.** P0–P1 are code-only and revert with git. P2 keeps the combined binary until the split has run a
-full day on the checklist; the database upgrade is transactional and `backup` is taken first. P5 is a rename
+**Rollback.** P0–P1 are code-only and revert with git. P2 has not been deployed anywhere, so reverting it is a git
+revert to the last combined build (`d1e6be5`); there is no data to migrate back, because no registry database
+exists yet. Once P2 is deployed, rolling back means restoring the combined binary *and* copying the Records
+database's registry tables into the Games database, which is a deliberate act, not a switch. P5 is a rename
 with the old names kept as aliases, so reverting it changes nothing on disk.
+
+**Configuration compatibility under P2.** The route and response contracts are unchanged. The *environment
+variable names* of the registry are not: `GAMES_REGISTRY_*` and the anchor settings for the registry moved to
+`RECORDS_*` in a separate file, and `GAMES_ANCHOR_CLI` became `GAMES_RECORDS_URL`. The old names are not
+silently honoured (a test pins that), so a stale `games.env` cannot quietly leave a service without its limits.
+Nothing is live, so no operator has a file to migrate.
 
 ### The compatibility checklist (a release is blocked if any line is false)
 

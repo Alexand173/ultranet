@@ -1,10 +1,31 @@
-# The games service — installing and running it
+# The Games Reward Service — installing and running it
 
-**Service:** `ultranet-games` (UltraGrid and Ultra Chess: checks answers, records wins, pays rewards, anchors
-each game's day) · **Port:** `127.0.0.1:8095`, published as `/api/games` on the API host
+**Service:** `ultranet-games` (UltraGrid and Ultra Chess: checks answers, records wins, pays rewards) ·
+**Port:** `127.0.0.1:8095`, published as `/api/games/*` (except the registry paths) on the API host
+**Its sibling:** the Records Service (`ultranet-records`, [`records-service.md`](./records-service.md)) holds
+the chain owner's key, serves third-party games and the generic records API, and **anchors this service's
+days when it asks**. The two are separate processes with separate users, credentials, configuration and
+databases. Nothing is shared but one secret that lets this service ask for an anchor; read §0.
 **Rules and the reasoning behind every number:** [`../GAMES_RULES_AND_PAYOUTS.md`](../GAMES_RULES_AND_PAYOUTS.md)
 **State of this runbook:** written and its commands exercised against a local build and the live public
 API (read-only). **It has not been run on the production host, and no live payout has been made.**
+
+## 0. The boundary between the two services
+
+| | Games Reward Service (this) | Records Service |
+|---|---|---|
+| Holds | the **payout key**, the abuse key, the peer secret | the **chain owner's key** and passphrase, the peer secret |
+| Never holds | any chain owner's key | any payout key |
+| Database | `/var/lib/ultranet-games/games.db` | `/var/lib/ultranet-records/records.db` |
+| Unix user | `ultranet-games` | `ultranet-records` |
+| Serves | `/api/games/status`, `grid/*`, `chess/*`, `wallet/*`, `withdraw`, `payouts/*` | the registry (`/api/games/g…`, `/api/games/registry/…`), `/api/records…`, `/api/apps…`, and the signed `/internal/v1/anchor` |
+| Anchoring | asks the Records Service (a signed request over loopback) | signs, with `appchain-cli` |
+
+`check-config` and `serve` **refuse to start** if the owner key or its passphrase is in this unit's
+credentials directory (`games-anchor-owner.key.enc`, `games-anchor.pass`, or their `records-` names). That
+turns "this service does not hold the owner key" from a convention into a check. If the Records Service is
+down, this service goes on recording wins and paying: the day's anchor fails, the error is recorded, and
+the next pass anchors it once the Records Service is back. A day is never anchored twice (§5).
 
 The shape is the faucet's: a loopback service, its own user, secrets as systemd credentials, a SQLite
 file, a kill switch. It runs as a *separate* service from both the faucet and the node, and it must never
@@ -16,7 +37,7 @@ share a key with either.
 
 | Thing | Path | Notes |
 |---|---|---|
-| Binaries | `/opt/ultranet-games/ultranet-games`, `/opt/ultranet-games/appchain-cli` | built from the **same source revision** |
+| Binary | `/opt/ultranet-games/ultranet-games` | built from the **same source revision** as the Records Service |
 | Unit | `/etc/systemd/system/ultranet-games.service` | from `deploy/ultranet-games.service` |
 | Policy | `/etc/ultranet-games/games.env` | `root:ultranet-games`, `0640`; policy and endpoints only, **no secrets** |
 | Secrets | `/etc/ultranet-games/secrets/*.cred` | systemd encrypted credentials |
@@ -27,11 +48,10 @@ share a key with either.
 |---|---|---|
 | `games-payout-signer.json` | the **payout wallet's** key: pays players. Its own key | `ultranet-faucet keygen --output …` |
 | `games-abuse.key` | 32+ random bytes keying the privacy digests of client addresses | `openssl rand -base64 48` |
-| `games-anchor-owner.key.enc` | the chain owner's key file | `appchain-cli generate-key --out …` |
-| `games-anchor.pass` | that file's passphrase | you choose it; a long random string |
+| `games-records-peer.key` | the secret shared with the Records Service (the same bytes as its `records-peer-games.key`) | `head -c 48 /dev/urandom \| base64 \| tr -d '\n'` |
 
-**Three keys, three jobs, never mixed:** the payout wallet pays players; the owner key anchors chains; the
-faucet key funds newcomers. A compromise of one must not be a compromise of the others, so each is its
+**Three keys, three jobs, never mixed:** the payout wallet pays players (this service); the owner key anchors
+chains (the Records Service); the faucet key funds newcomers. A compromise of one must not be a compromise of the others, so each is its
 own file, its own address and its own balance.
 
 ---
@@ -40,13 +60,13 @@ own file, its own address and its own balance.
 
 ```bash
 # Build from one revision.
-cargo build --release --bin ultranet-games --bin appchain-cli --bin ultranet-faucet
+cargo build --release --bin ultranet-games --bin ultranet-faucet
 
 sudo useradd --system --home-dir /var/lib/ultranet-games --shell /usr/sbin/nologin ultranet-games
 sudo install -d -o ultranet-games -g ultranet-games -m 0700 /var/lib/ultranet-games
 sudo install -d -o root -g ultranet-games -m 0750 /etc/ultranet-games /etc/ultranet-games/secrets
 sudo install -d -o root -g root -m 0750 /opt/ultranet-games
-sudo install -o root -g root -m 0755 target/release/ultranet-games target/release/appchain-cli /opt/ultranet-games/
+sudo install -o root -g root -m 0755 target/release/ultranet-games /opt/ultranet-games/
 sudo install -o root -g ultranet-games -m 0640 deploy/games.env.example /etc/ultranet-games/games.env
 sudo install -o root -g root -m 0644 deploy/ultranet-games.service /etc/systemd/system/ultranet-games.service
 ```
@@ -63,38 +83,38 @@ Put that address in `GAMES_PAYOUT_ADDRESS`. Never run `keygen` over `sovereign_k
 key or the faucet's signer. **Do not use this wallet for anything else:** every payout uses its nonce
 sequence, and a transfer from elsewhere would break it.
 
-### 2.2 The owner key (only if the service will anchor)
+### 2.2 The peer secret (only if days are to be anchored)
+
+This service holds **no** owner key. To have a day anchored it asks the Records Service, and proves who
+it is with a shared secret:
 
 ```bash
-/opt/ultranet-games/appchain-cli generate-key --out games-anchor-owner.key.enc   # prints its address
-printf '%s' 'a long random passphrase' > games-anchor.pass && chmod 600 games-anchor.pass
+head -c 48 /dev/urandom | base64 | tr -d '\n' > games-records-peer.key && chmod 600 games-records-peer.key
 ```
 
-This key owns nothing yet. **Hand the chain to it** with the procedure in
-[`appchain-owner-key.md`](./appchain-owner-key.md) §2 and verify on the ledger that the owner is now this
-address. Until then the service cannot anchor: it will log the rejection and retry.
+Give the *same bytes* to the Records Service as its `records-peer-games.key` (see `records-service.md`
+§2.2), then forget them here. The owner key, its generation and the hand-over of chain #1 are the Records
+Service's: [`appchain-owner-key.md`](./appchain-owner-key.md).
 
 ### 2.3 Encrypt every credential, then destroy the plaintext
 
 ```bash
 head -c 48 /dev/urandom | base64 > games-abuse.key
 sudo systemd-creds setup
-for name in games-payout-signer.json games-abuse.key games-anchor-owner.key.enc games-anchor.pass; do
+for name in games-payout-signer.json games-abuse.key games-records-peer.key; do
   sudo systemd-creds encrypt --with-key=host --name="$name" "$name" "/etc/ultranet-games/secrets/$name.cred"
 done
-sudo shred --remove games-payout-signer.json games-abuse.key games-anchor-owner.key.enc games-anchor.pass
+sudo shred --remove games-payout-signer.json games-abuse.key games-records-peer.key
 ```
 
-**Make an offline, encrypted copy of `games-anchor-owner.key.enc` and of its passphrase, in two different
-places, before you shred anything.** Once the chain is handed over, that file *is* the chain: lose it and
-nobody can ever anchor it again. The passphrase is stored beside the key on the host, so credential
-encryption protects a stolen disk or backup, **not** a compromised running service. That is the cost of
-anchoring unattended (mode M2), and it is why the chain key is separate from the payout key.
+**Make an offline, encrypted copy of `games-payout-signer.json` before you shred anything**: it is the key to
+the payout wallet and its balance. The owner key is not here; its offline copies are the Records Service's
+duty (`records-service.md` §2.3).
 
 ### 2.4 Configure and verify, before anything is started
 
 ```bash
-sudoedit /etc/ultranet-games/games.env      # set GAMES_PAYOUT_ADDRESS; GAMES_ANCHOR_CLI and GAMES_ANCHOR_GAMES to anchor
+sudoedit /etc/ultranet-games/games.env      # set GAMES_PAYOUT_ADDRESS; GAMES_RECORDS_URL and GAMES_ANCHOR_GAMES to have days anchored
 sudo systemctl daemon-reload
 sudo systemctl start ultranet-games
 journalctl -u ultranet-games -n 40 --no-pager
@@ -126,17 +146,16 @@ timedatectl show -p NTPSynchronized      # NTPSynchronized=yes
 
 ## 3. The reverse proxy and the rate limits
 
-`deploy/Caddyfile.example` routes `/api/games/*`, `/api/records*` and `/api/apps*` to `127.0.0.1:8095` on the same API host, so the app needs
+`deploy/Caddyfile.example` routes `/api/games/*` to `127.0.0.1:8095` on the same API host, except the registry paths
+(`/api/games/g…`, `/api/games/registry/…`) and `/api/records*` / `/api/apps*`, which go to the Records Service at
+`127.0.0.1:8096`, and `/internal/*`, which is not routed at all. The app needs
 no new name or certificate, and strips the headers a client could forge. The service has **caps, not a
-login**, so put these limits at the edge (Cloudflare, per `deploy/CLOUDFLARE_RULES.md`) before opening it:
+login**, so put these limits at the edge (the Records Service's own limits are in `records-service.md` §3) (Cloudflare, per `deploy/CLOUDFLARE_RULES.md`) before opening it:
 
 | Path | Method | Suggested limit per client |
 |---|---|---|
 | `/api/games/grid/answers`, `/api/games/chess/results` | POST | 30 / minute |
 | `/api/games/withdraw` | POST | 6 / minute |
-| `/api/games/g` and `/api/apps` (register), `/api/games/g/*/rotate-key` and `/api/apps/*/rotate-key` | POST | 5 / hour (each is a post-quantum signature check) |
-| `/api/games/g/*/results` and `/api/records` | POST | 600 / minute (a game's server sends many; the key is its login, the per-game daily cap is the real bound) |
-| `/api/games/g`, `/api/games/g/*`, `/api/games/registry/*`, `/api/apps/*`, `/api/records/days/*` | GET | 120 / minute |
 | `/api/games/wallet/*`, `/api/games/payouts/*`, `/api/games/status`, `/api/games/grid/day` | GET | 120 / minute |
 
 The Caddyfile edit in this repository was **not machine-validated** (Caddy is not installed where it was
@@ -187,59 +206,20 @@ service. Run `audit` and a backup daily. A backup is only a backup once it has b
 drifts below the balance it is promised against. When `owed + the 1,000-unit reserve` nears the wallet's
 balance, rewards stop (safely: wins are recorded as `pool_low`), so top the wallet up before then.
 
-**Chain days.** The service anchors yesterday every ten minutes until it is on the ledger, so normally
-you watch rather than run anything: `journalctl -u ultranet-games -f` and
+**Chain days.** The service closes yesterday and asks the Records Service to anchor it, every ten minutes
+until it is on the ledger, so normally you watch rather than run anything: `journalctl -u ultranet-games -f` and
 `GET /api/appchain/ledger/1/anchors`. `close-day --game grid --date <yesterday>` does it by hand, but it
 loads the full configuration and the credentials the unit holds, so it is not a plain-shell command —
 `status`, `audit`, `payouts` and `backup` are the four that only open the database. `close-day` is safe to
-repeat: a day closes once, and the ledger is checked before anything is submitted.
+repeat: a day closes once, and the ledger is checked before anything is submitted, by this service and again by
+the Records Service, so an anchor is never paid for twice. If the Records Service is down the command says so
+in `last error` and nothing is lost: run it again when it is back.
 
-### 5.1 Third-party games (the registry)
+### 5.1 Third-party games
 
-```bash
-ultranet-games game-register --id tetris --name "Tetris" --owner <64 hex>   # prints the API key ONCE
-ultranet-games game-list
-ultranet-games game-status --id tetris --status registered   # sandbox | registered | listed | suspended
-ultranet-games game-rotate-key --id tetris                   # prints the new key ONCE; the old one stops
-ultranet-games registry-close-day --date <yesterday>         # by hand; normally automatic
-```
-
-`game-register`, `game-list`, `game-status` and `game-rotate-key` open the database only, like `status`.
-`registry-close-day` loads the full configuration and credentials, like `close-day`.
-
-**The ladder.** A game starts in `sandbox`: private, unanchored, held to a small day. `registered` puts
-it in the daily root and gives it a public page and proofs. `listed` adds it to the public directory.
-`suspended` refuses its key and hides it; its past results stay in closed days, which are never
-rewritten. Promote only a game whose owner you can reach: the owner address is the contact of record, and
-nothing here pays or moves money for any game.
-
-**Self-service.** Developers can register their own game, and rotate a lost key, without you:
-`POST /api/games/g` and `POST /api/games/g/<id>/rotate-key`, normally through `ultranet-game-dev`. The
-request carries the developer's public key and a signature over the action, id, name and time
-(layout at the top of `src/games/ownership.rs`); the owner is the address that key hashes to, so nobody
-can register a game as someone else. Every self-registered game starts in `sandbox` and only you promote
-it. Three things bound it, because it is free: an owner holds at most `GAMES_REGISTRY_GAMES_PER_OWNER`
-games (3), the whole platform takes at most `GAMES_REGISTRY_SELF_REGISTRATIONS_PER_DAY` (100) per UTC
-day, and the owner address must already be active on the chain (as it is for rewards), so a farm of
-games costs a farm of faucet claims. Add a Cloudflare rate limit on `POST /api/games/g` beside the others
-in §3. A rotation request is refused if its timestamp is not later than the game's last change, so a
-captured request cannot be replayed; rotating twice within one second is therefore refused once.
-A game id taken by a squatter is an operator decision: `game-status --status suspended` frees nothing
-(a suspended game keeps its id), so decide before promoting, and check names against trademarks.
-
-**Ids and keys.** An id is 3 to 32 of `a-z 0-9 -`; `grid`, `chess`, `registry`, `admin` and similar
-names are reserved. The key is shown once and only its hash is stored. If a developer loses it, rotate:
-there is no way to read it back. Send the key over a channel you trust, never in a ticket.
-
-**Anchoring.** All games share one root per day. It is anchored only when `GAMES_REGISTRY_CHAIN_ID` is
-set and `GAMES_ANCHOR_CLI` is configured. Before that, days still close and their roots are fixed, and
-the anchor is made later: the service closes every unanchored day within its catch-up window (7 days), so a
-registry chain registered next week still anchors this week's days if they are inside it. A day with no
-registered game is not anchored. To register the chain, the owner runs the same `appchain-cli register`
-step as for Grid and Chess (§4), then sets the id in the env file and restarts.
-
-**Check a game's day yourself.** `GET /api/games/g/<id>/proof/<date>` returns an inclusion proof;
-`python3 tools/verify_registry_proof.py proof.json` checks it with the standard library only.
+Not here. The registry, self-service registration, `game-register` and its siblings, and the generic records
+API belong to the Records Service: [`records-service.md`](./records-service.md). This binary has no registry
+commands.
 
 ---
 
@@ -253,7 +233,7 @@ step as for Grid and Chess (§4), then sets the id in the env file and restarts.
 | …reason: the node returned a different hash / answered about a different transaction | Something between the service and the node is wrong | Do not resolve anything yet. Check the node, the proxy and the payout hash by hand |
 | …reason: the node rejected a signed payout | The node refused a request this service signed | Check the node's logs. Not on the chain: `--failed`. Then investigate before enabling |
 | `audit` prints `PROBLEM:` | The books disagree | `disable --paying`. Keep the database. Do not restore over it: copy it away, then compare with the last audited backup |
-| A day stays `closing` or `anchored` for hours | The anchor is not landing | `close-day` for the day shows `last error`. Common: owner key not yet the chain's owner; owner wallet empty; node unreachable |
+| A day stays `closing` or `anchored` for hours | The anchor is not landing | `close-day` for the day shows `last error`. Common: the Records Service is down or its peer secret differs from this one's (`peer_unauthenticated`); owner key not yet the chain's owner; owner wallet empty; node unreachable (check `journalctl -u ultranet-records`) |
 | Players report `pool_low` | Owed + reserve exceeds the wallet | Top up |
 | Players report a date error | The phone's clock or the server's differs | Check `timedatectl` on the host first |
 | **The payout key is leaked** | Whoever holds it can drain the wallet | `disable --paying` at once; move the remaining balance out with the key while you still control it; generate a new key; point `GAMES_PAYOUT_ADDRESS` at it |

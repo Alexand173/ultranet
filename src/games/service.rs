@@ -14,8 +14,7 @@
 use super::{
     anchor::Anchorer,
     chain::{ChainError, GamesChain},
-    ownership,
-    registry::{self, RegistryDay, RegistryError, ResultInput},
+    registry::RegistryError,
     roots::{self, ChessResult, GridResult},
     rules::{self, Policy, RecordedReason, GAME_CHESS, GAME_GRID},
     store::{
@@ -67,9 +66,6 @@ pub struct ServiceConfig {
     pub catch_up_days: u32,
     /// An anchor submitted but not seen on the ledger after this long is submitted again.
     pub anchor_resubmit_after_seconds: u64,
-    /// The AppChain the registry's daily root is anchored to. Unset: registry days are closed (so a
-    /// developer can still be given a proof) but not anchored.
-    pub registry_chain_id: Option<u32>,
 }
 
 impl ServiceConfig {
@@ -83,7 +79,6 @@ impl ServiceConfig {
             anchor_retry_seconds: 600,
             catch_up_days: 7,
             anchor_resubmit_after_seconds: 3_600,
-            registry_chain_id: None,
         }
     }
 }
@@ -123,6 +118,14 @@ pub enum GamesError {
     #[error("too many games were registered today; try again tomorrow")]
     RegistrationLimit,
     #[error("{0}")]
+    Forbidden(String),
+    #[error("anchoring is not enabled on this service")]
+    AnchoringDisabled,
+    #[error("the anchor was not accepted: {0}")]
+    AnchorFailed(String),
+    #[error("the peer could not be authenticated")]
+    PeerUnauthenticated,
+    #[error("{0}")]
     NotFound(String),
     #[error("internal error: {0}")]
     Internal(String),
@@ -147,6 +150,10 @@ impl GamesError {
             GamesError::PlayerLimit => "player_daily_limit",
             GamesError::OwnerLimit => "owner_game_limit",
             GamesError::RegistrationLimit => "registration_limit",
+            GamesError::Forbidden(_) => "forbidden",
+            GamesError::AnchoringDisabled => "anchoring_disabled",
+            GamesError::AnchorFailed(_) => "anchor_failed",
+            GamesError::PeerUnauthenticated => "peer_unauthenticated",
             GamesError::NotFound(_) => "not_found",
             GamesError::Internal(_) => "internal_error",
         }
@@ -158,8 +165,9 @@ impl GamesError {
             | GamesError::DateMismatch { .. }
             | GamesError::AnswerRefused(_) => 400,
             GamesError::Conflict | GamesError::ResultConflict => 409,
-            GamesError::InvalidKey => 401,
-            GamesError::GameSuspended => 403,
+            GamesError::InvalidKey | GamesError::PeerUnauthenticated => 401,
+            GamesError::GameSuspended | GamesError::Forbidden(_) => 403,
+            GamesError::AnchorFailed(_) => 502,
             GamesError::NotFound(_) => 404,
             GamesError::BelowMinimum { .. }
             | GamesError::PayoutDailyCap
@@ -167,7 +175,10 @@ impl GamesError {
             | GamesError::PlayerLimit
             | GamesError::OwnerLimit
             | GamesError::RegistrationLimit => 429,
-            GamesError::Disabled | GamesError::PayoutsPaused | GamesError::ChainUnavailable => 503,
+            GamesError::Disabled
+            | GamesError::PayoutsPaused
+            | GamesError::ChainUnavailable
+            | GamesError::AnchoringDisabled => 503,
             GamesError::Internal(_) => 500,
         }
     }
@@ -1296,9 +1307,6 @@ impl GamesService {
         };
         let today = self.today();
         let now = self.now();
-        // The registry's days are closed (and anchored if a chain and an anchorer are configured) first:
-        // closing is local, so it must not wait on the first-party games' anchoring being set up.
-        self.registry_daily(&mut report, &today, now).await?;
         if self.anchorer.is_none() {
             return Ok(report);
         }
@@ -1343,419 +1351,5 @@ impl GamesService {
             }
         }
         Ok(report)
-    }
-}
-
-// --- the registry: third-party games ----------------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RegistryResultRequest {
-    pub player: String,
-    pub result_id: String,
-    #[serde(default)]
-    pub score: u64,
-    /// 64 hex characters: a hash of whatever the game wants to be able to prove later. Optional.
-    #[serde(default)]
-    pub data_hash: Option<String>,
-}
-
-/// A developer registering their own game. The owner is not named: it is the address the public key
-/// hashes to, so naming one that is not yours is not possible.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RegistryRegisterRequest {
-    pub id: String,
-    pub name: String,
-    pub public_key: String,
-    pub timestamp: u64,
-    pub signature: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RegistryRotateRequest {
-    pub public_key: String,
-    pub timestamp: u64,
-    pub signature: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct RegistryKeyResponse {
-    pub game: RegistryGameView,
-    /// Shown once. Only its hash is stored.
-    pub api_key: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct RegistryResultResponse {
-    pub game_id: String,
-    pub result_id: String,
-    pub day: String,
-    /// The same result had already been recorded; nothing was added.
-    pub duplicate: bool,
-    pub status: &'static str,
-    /// Whether this result will be part of the day's anchored root. A sandbox game's never is.
-    pub anchored: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct RegistryGameView {
-    pub id: String,
-    pub name: String,
-    pub owner: String,
-    pub status: &'static str,
-}
-
-#[derive(Debug, Serialize)]
-pub struct RegistryGameRootView {
-    pub id: String,
-    pub root: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct RegistryDayView {
-    pub date: String,
-    pub merkle_root: String,
-    /// The 32 bytes the chain's owner key anchors.
-    pub day_root: String,
-    pub state: String,
-    pub anchor_tx: Option<String>,
-    pub chain_id: Option<u32>,
-    pub games: Vec<RegistryGameRootView>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ProofStepView {
-    pub sibling: String,
-    /// `left` or `right`: which side the sibling is on when the two are hashed together.
-    pub side: &'static str,
-}
-
-#[derive(Debug, Serialize)]
-pub struct RegistryProofView {
-    pub game_id: String,
-    pub date: String,
-    pub game_root: String,
-    pub leaf: String,
-    pub steps: Vec<ProofStepView>,
-    pub merkle_root: String,
-    pub day_root: String,
-    pub state: String,
-    pub anchor_tx: Option<String>,
-    pub chain_id: Option<u32>,
-}
-
-impl GamesService {
-    /// Record a result a third-party game reports. The game proves who it is with its API key, which
-    /// may submit results for **that game only**. No money moves here: a result is recorded, and a
-    /// registered game's results are folded into the day's anchored root.
-    pub fn submit_registry_result(
-        &self,
-        game_id: &str,
-        key: &str,
-        request: RegistryResultRequest,
-    ) -> Result<RegistryResultResponse, GamesError> {
-        self.require_accepting()?;
-        let game = self.store.authenticate(game_id, key)?;
-        let data_hash = match request.data_hash.as_deref() {
-            None => [0u8; 32],
-            Some(text) => hex::decode(text)
-                .ok()
-                .and_then(|bytes| bytes.try_into().ok())
-                .ok_or_else(|| {
-                    GamesError::Invalid("data_hash must be 64 hexadecimal characters".into())
-                })?,
-        };
-        let input = ResultInput {
-            player: request.player.trim().to_ascii_lowercase(),
-            result_id: request.result_id,
-            score: request.score,
-            data_hash,
-        };
-        let day = self.today();
-        let (row, duplicate) =
-            self.store
-                .record_result(&game.id, &input, &day, &self.policy.registry, self.now())?;
-        Ok(RegistryResultResponse {
-            game_id: game.id,
-            result_id: row.result_id,
-            day: row.day,
-            duplicate,
-            status: game.status.code(),
-            anchored: game.status.is_anchored(),
-        })
-    }
-
-    fn game_view(game: registry::GameRecord) -> RegistryGameView {
-        RegistryGameView {
-            id: game.id,
-            name: game.name,
-            owner: game.owner,
-            status: game.status.code(),
-        }
-    }
-
-    /// Register a game on the owner's signed request. The game starts in the sandbox, as every game
-    /// does; the operator decides when it is promoted. Costs the developer nothing but is bounded per
-    /// owner and per day, and the owner's address must already exist on the chain, so each game costs
-    /// its maker at least one faucet claim or a payment received.
-    pub async fn self_register(
-        &self,
-        request: RegistryRegisterRequest,
-    ) -> Result<RegistryKeyResponse, GamesError> {
-        let now = self.now();
-        let name = registry::validate_game_name(&request.name)?;
-        registry::validate_game_id(&request.id)?;
-        let owner = ownership::verify_owner_proof(
-            ownership::ACTION_REGISTER,
-            &request.id,
-            &name,
-            request.timestamp,
-            &request.public_key,
-            &request.signature,
-            now,
-        )?;
-        if self.policy.require_chain_presence && !self.chain.address_active(&owner).await? {
-            return Err(GamesError::Invalid(
-                "the owner address has no activity on UltraNet yet: claim from the faucet first".into(),
-            ));
-        }
-        let day_start = now - now % 86_400;
-        let (game, api_key) = self.store.register_game_self_service(
-            &request.id,
-            &name,
-            &owner,
-            day_start,
-            &self.policy.registry,
-            now,
-        )?;
-        Ok(RegistryKeyResponse {
-            game: Self::game_view(game),
-            api_key,
-        })
-    }
-
-    /// Replace a game's key on its owner's signed request: the recovery path for a lost key, with no
-    /// operator involved. The old key stops working at once.
-    pub fn self_rotate_key(
-        &self,
-        id: &str,
-        request: RegistryRotateRequest,
-    ) -> Result<RegistryKeyResponse, GamesError> {
-        let now = self.now();
-        let owner = ownership::verify_owner_proof(
-            ownership::ACTION_ROTATE_KEY,
-            id,
-            "",
-            request.timestamp,
-            &request.public_key,
-            &request.signature,
-            now,
-        )?;
-        let api_key = self.store.rotate_key_signed(id, &owner, request.timestamp, now)?;
-        let game = self.store.game(id)?.ok_or(GamesError::InvalidKey)?;
-        Ok(RegistryKeyResponse {
-            game: Self::game_view(game),
-            api_key,
-        })
-    }
-
-    /// A game's public page. A sandbox game is private and a suspended one is gone from view: both read
-    /// as "no such game", so a stranger cannot learn that an unreleased game exists.
-    pub fn registry_game(&self, id: &str) -> Result<RegistryGameView, GamesError> {
-        match self.store.game(id)? {
-            Some(game) if game.status.is_anchored() => Ok(Self::game_view(game)),
-            _ => Err(GamesError::NotFound("no such game".into())),
-        }
-    }
-
-    /// The curated directory: only games the operator has listed.
-    pub fn registry_listed(&self) -> Result<Vec<RegistryGameView>, GamesError> {
-        Ok(self
-            .store
-            .games()?
-            .into_iter()
-            .filter(|game| game.status == registry::GameStatus::Listed)
-            .map(Self::game_view)
-            .collect())
-    }
-
-    fn day_arg(date: &str) -> Result<(), GamesError> {
-        if ultragrid::valid_date(date) {
-            Ok(())
-        } else {
-            Err(GamesError::Invalid("date must look like 2026-11-16".into()))
-        }
-    }
-
-    pub fn registry_day_view(&self, date: &str) -> Result<RegistryDayView, GamesError> {
-        Self::day_arg(date)?;
-        let day = self
-            .store
-            .registry_day(date)?
-            .ok_or_else(|| GamesError::NotFound("that day has not been closed yet".into()))?;
-        Ok(RegistryDayView {
-            date: day.date,
-            merkle_root: hex::encode(day.merkle_root),
-            day_root: hex::encode(day.day_root),
-            state: day.state,
-            anchor_tx: day.anchor_tx,
-            chain_id: self.config.registry_chain_id,
-            games: day
-                .games
-                .iter()
-                .map(|(id, root)| RegistryGameRootView {
-                    id: id.clone(),
-                    root: hex::encode(root),
-                })
-                .collect(),
-        })
-    }
-
-    /// The short proof that one game's day is inside the day's anchored root.
-    pub fn registry_proof(
-        &self,
-        game_id: &str,
-        date: &str,
-    ) -> Result<RegistryProofView, GamesError> {
-        Self::day_arg(date)?;
-        let day = self
-            .store
-            .registry_day(date)?
-            .ok_or_else(|| GamesError::NotFound("that day has not been closed yet".into()))?;
-        let (leaf, steps) = day.proof_for(game_id).ok_or_else(|| {
-            GamesError::NotFound("that game has no results in that day's root".into())
-        })?;
-        let game_root = day
-            .games
-            .iter()
-            .find(|(id, _)| id == game_id)
-            .map(|(_, root)| *root)
-            .unwrap_or_default();
-        Ok(RegistryProofView {
-            game_id: game_id.to_string(),
-            date: day.date,
-            game_root: hex::encode(game_root),
-            leaf: hex::encode(leaf),
-            steps: steps
-                .iter()
-                .map(|step| ProofStepView {
-                    sibling: hex::encode(step.sibling),
-                    side: if step.sibling_on_left {
-                        "left"
-                    } else {
-                        "right"
-                    },
-                })
-                .collect(),
-            merkle_root: hex::encode(day.merkle_root),
-            day_root: hex::encode(day.day_root),
-            state: day.state,
-            anchor_tx: day.anchor_tx,
-            chain_id: self.config.registry_chain_id,
-        })
-    }
-
-    /// Close a finished registry day, then anchor it if a chain and an anchorer are configured.
-    pub async fn close_registry_day(&self, date: &str) -> Result<RegistryDay, GamesError> {
-        let _guard = self.anchor_lock.lock().await;
-        self.close_registry_locked(date).await
-    }
-
-    async fn close_registry_locked(&self, date: &str) -> Result<RegistryDay, GamesError> {
-        Self::day_arg(date)?;
-        if date >= self.today().as_str() {
-            return Err(GamesError::Invalid(
-                "only a finished day can be closed".into(),
-            ));
-        }
-        let now = self.now();
-        let day = self.store.close_registry_day(date, now)?;
-        let (Some(chain_id), Some(anchorer)) = (self.config.registry_chain_id, &self.anchorer)
-        else {
-            return Ok(day);
-        };
-        // Nothing to anchor for a day no registered game played in, and nothing more to do once confirmed.
-        if day.games.is_empty() || day.state == "confirmed" {
-            return Ok(day);
-        }
-        // Look before submitting, exactly as the first-party days do: an anchor of unclear outcome is
-        // settled by finding its root on the ledger, never by paying for a second one.
-        match self.chain.find_anchor(chain_id, &day.day_root).await {
-            Ok(Some(point)) => {
-                self.store
-                    .set_registry_anchor(date, Some(&point.tx_hash), "confirmed", now)?
-            }
-            Ok(None) => {
-                let recent = day.state == "anchored"
-                    && now.saturating_sub(day.updated_at)
-                        < self.config.anchor_resubmit_after_seconds;
-                if !recent {
-                    match anchorer.anchor(chain_id, &day.day_root).await {
-                        Ok(transaction) => self.store.set_registry_anchor(
-                            date,
-                            Some(&transaction),
-                            "anchored",
-                            now,
-                        )?,
-                        Err(error) => self.store.record_registry_anchor_error(
-                            date,
-                            &error.to_string(),
-                            now,
-                        )?,
-                    }
-                }
-            }
-            Err(_) => self.store.record_registry_anchor_error(
-                date,
-                "the ledger could not be read to check the anchor",
-                now,
-            )?,
-        }
-        Ok(self
-            .store
-            .registry_day(date)?
-            .ok_or_else(|| GamesError::Internal("registry day vanished".into()))?)
-    }
-
-    /// The registry's part of the daily run: close each finished day that has results, anchor it where
-    /// possible, and never retry a failing day faster than the retry interval.
-    async fn registry_daily(
-        &self,
-        report: &mut DailyReport,
-        today: &str,
-        now: u64,
-    ) -> Result<(), GamesError> {
-        for ago in (1..=self.config.catch_up_days as i64).rev() {
-            let Some(date) = shift_date(today, -ago) else {
-                continue;
-            };
-            if let Some(day) = self.store.registry_day(&date)? {
-                if day.state == "confirmed" || day.games.is_empty() {
-                    continue;
-                }
-                if day.last_error.is_some()
-                    && now.saturating_sub(day.updated_at) < self.config.anchor_retry_seconds
-                {
-                    continue;
-                }
-            }
-            match self.close_registry_locked(&date).await {
-                Ok(day) => match day.state.as_str() {
-                    "confirmed" => report.confirmed.push(("registry".into(), date)),
-                    "anchored" => report.anchored.push(("registry".into(), date)),
-                    _ => {
-                        if let Some(error) = day.last_error {
-                            report.errors.push(("registry".into(), date, error));
-                        }
-                    }
-                },
-                Err(error) => report
-                    .errors
-                    .push(("registry".into(), date, error.to_string())),
-            }
-        }
-        Ok(())
     }
 }

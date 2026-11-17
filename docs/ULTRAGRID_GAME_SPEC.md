@@ -213,7 +213,7 @@ Ultra Chess still opens, Back returns).
 |---|---|---|---|
 | **G0 engine** | `src/ultragrid`, CLI `ultragrid`, Python reference, pinned vectors | 15 tests green; Python `--check` agrees | **done** |
 | **G1 phone** | Kotlin port (same vectors), a playable screen, the Games directory; no prizes | the Kotlin test asserts the same ten ids and commitment; ten levels playable on the emulator | **done** — 95/95 instrumented tests; the live board matches the Rust CLI tile for tile |
-| **G2 service** | answer verification, receipts, day close + anchor via `appchain-cli` | a day's `day_root` is anchored and recomputable from the public API | **built and tested** (fake chain, fake node, and a live read-only smoke test); **not deployed** — needs the owner key handed over and funded |
+| **G2 service** | answer verification, receipts, day close + anchor via `appchain-cli` (in the Records Service) | a day's `day_root` is anchored and recomputable from the public API | **built and tested** (fake chain, fake node, and a live read-only smoke test); **not deployed** — needs the owner key handed over and funded |
 | **G3 payouts** | payout wallet, ledger, withdrawals, caps | three wins pay, the fourth is `recorded`; a withdrawal returns a hash | **built and tested** (every failure path pauses rather than guesses); **no live payout yet** — needs the funded payout wallet and the go-live checklist |
 | **G4 phase 2** | entry fees or sponsors replace the owner's pool | legal review first; the pool is no longer the owner's | |
 

@@ -130,7 +130,7 @@ withdraw ─► queued ─► signed ─► submitted ─► confirmed        (p
 
 ### 3.3 Anchoring
 
-One anchor per game per day, signed by the chain's owner key through `appchain-cli`, at 1,000 units (0.001
+One anchor per game per day, signed by the chain's owner key through `appchain-cli` **in the Records Service** (this service asks it, over a signed loopback request, and holds no owner key), at 1,000 units (0.001
 `$ULTRA`) from the **owner's** wallet, not from the pool. The day's root is a hash over a canonical, sorted
 list of results (and, for Grid, the puzzle set), so anyone holding the same list recomputes and compares it.
 Yesterday is anchored even when nobody won, so a listed chain stays "live" (V2 C-2). A day closes once and
@@ -188,7 +188,7 @@ development was read-only GETs to the public API. Before opening:
    can accidentally start paying for it; P2, P3 and P7 are still open.
 2. **Create and fund the wallets.** The payout wallet (`ultranet-faucet keygen`) funded from the faucet's
    one-claim-per-chain allowance (V2 F-2: 0.1 `$ULTRA`, ≈ 9,900 Grid wins or 990 chess wins of capacity). The
-   owner key (`appchain-cli generate-key`) funded for anchors: 0.001 a day per game.
+   owner key (`appchain-cli generate-key`, held by the Records Service) funded for anchors: 0.001 a day per game.
 3. **Hand over chain #1** to the server key (`runbooks/appchain-owner-key.md`), verify the owner on the ledger,
    and keep an encrypted offline copy of the key file and the passphrase **separately**. After the handover
    that file *is* the chain.
@@ -222,7 +222,7 @@ development was read-only GETs to the public API. Before opening:
 | `ERROR … payouts paused` | journal | A human is needed. The log line says why; `ultranet-games status` and `payouts` show the rest |
 | `audit` exits non-zero | cron, daily | The books disagree. Stop paying (`disable --paying`), investigate, do not restore blindly |
 | Payout wallet balance vs `still owed` | `status` and the node | `owed + reserve` approaching the balance means rewards are about to stop: top up |
-| Yesterday's `day` row not `confirmed` by 06:00 UTC | `ultranet-games close-day` output | The anchor did not land; the service retries every 10 minutes |
+| Yesterday's `day` row not `confirmed` by 06:00 UTC | `ultranet-games close-day` output | The anchor did not land (check `journalctl -u ultranet-records` too); the service retries every 10 minutes |
 | Owner key wallet balance | the node | Below ~30 days of anchors: top up |
 | Server clock offset | `timedatectl` | R7 |
 

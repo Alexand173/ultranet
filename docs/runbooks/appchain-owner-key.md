@@ -12,19 +12,20 @@ one answer per chain at any moment.
 | | Phone key | Server key |
 |---|---|---|
 | What it is | The wallet in the UltraVerse app: a 32-byte seed, encrypted with the wallet password, held in the Android Keystore | A Dilithium key file created by `appchain-cli`, encrypted with a passphrase (Argon2id + ChaCha20-Poly1305) |
-| Who uses it | A person, by tapping | A process: the games service, once a day, for years |
-| Where it lives | The phone's secure storage | Staged at `/root/games-staging/games-anchor-owner.key.enc` (`0600`), installed encrypted as `/etc/ultranet-games/secrets/games-anchor-owner.key.enc.cred`, and seen by the service as the credential `games-anchor-owner.key.enc` |
-| How it signs | In the app, one transaction at a time | `appchain-cli anchor …`, run by `ultranet-games` |
+| Who uses it | A person, by tapping | A process: the Records Service, once a day, for years |
+| Where it lives | The phone's secure storage | Staged at `/root/records-staging/records-anchor-owner.key.enc` (`0600`), installed encrypted as `/etc/ultranet-records/secrets/records-anchor-owner.key.enc.cred`, and seen by the service as the credential `records-anchor-owner.key.enc` |
+| How it signs | In the app, one transaction at a time | `appchain-cli anchor …`, run by `ultranet-records` (the Games Reward Service asks it to anchor Grid's and Chess's days; it never holds this key) |
 | Can it anchor daily? | Only if someone opens the app | Yes — this is what it is for |
 
 Both are just addresses on L1. The chain does not know or care which one is "yours"; it knows which one
 signed the registration, and it will keep asking that one.
 
-**The path above is the games service's, not a convention.** `ultranet-games.service` loads the four
-credentials by name, `GamesConfig` resolves them inside `$CREDENTIALS_DIRECTORY` (defaults
-`games-anchor-owner.key.enc` and `games-anchor.pass`, overridable with
-`GAMES_ANCHOR_KEY_CREDENTIAL` / `GAMES_ANCHOR_PASSWORD_CREDENTIAL`), and hands the key to
-`appchain-cli anchor` as `--key-file` with the passphrase as `--password-file`. A key left at some other
+**The path above is the Records Service's, not a convention.** `ultranet-records.service` loads the owner key
+and its passphrase by name, `RecordsServiceConfig` resolves them inside `$CREDENTIALS_DIRECTORY` (defaults
+`records-anchor-owner.key.enc` and `records-anchor.pass`, overridable with
+`RECORDS_ANCHOR_KEY_CREDENTIAL` / `RECORDS_ANCHOR_PASSWORD_CREDENTIAL`), and hands the key to
+`appchain-cli anchor` as `--key-file` with the passphrase as `--password-file`. **The Games Reward Service
+never has this key**, and refuses to start if it finds it in its own credentials directory. A key left at some other
 path is a key the service never finds, however good its permissions are.
 
 ## 2. Handing chain #1 to the server key
@@ -41,16 +42,16 @@ in a directory only root can read. `generate-key` refuses to overwrite an existi
 behaviour you want: a second run must never replace the chain's owner.
 
 ```bash
-sudo install -d -o root -g root -m 0700 /root/games-staging
-cd /root/games-staging
-sudo bash -c 'head -c 48 /dev/urandom | base64 > games-anchor.pass && chmod 600 games-anchor.pass'
-sudo ULTRANET_APPCHAIN_KEY_PASSWORD="$(sudo cat /root/games-staging/games-anchor.pass)" \
-  /opt/ultranet-games/appchain-cli generate-key --out /root/games-staging/games-anchor-owner.key.enc
+sudo install -d -o root -g root -m 0700 /root/records-staging
+cd /root/records-staging
+sudo bash -c 'head -c 48 /dev/urandom | base64 > records-anchor.pass && chmod 600 records-anchor.pass'
+sudo ULTRANET_APPCHAIN_KEY_PASSWORD="$(sudo cat /root/records-staging/records-anchor.pass)" \
+  /opt/ultranet-records/appchain-cli generate-key --out /root/records-staging/records-anchor-owner.key.enc
 ```
 
 It prints the address on stdout (`wrote …; this key owns nothing until a transfer names it` goes to
 stderr). Note that address; confirm it with
-`appchain-cli address --key-file …/games-anchor-owner.key.enc --password-file …/games-anchor.pass`, which
+`appchain-cli address --key-file …/records-anchor-owner.key.enc --password-file …/records-anchor.pass`, which
 prints the address and public key in clear and needs the passphrase.
 
 Nothing owns anything yet. An address with no history is harmless until a transfer names it.
@@ -107,12 +108,12 @@ handover survives until the first day that must be anchored.
 
 ```bash
 sudo systemd-creds setup
-sudo install -d -o root -g ultranet-games -m 0750 /etc/ultranet-games/secrets
-for name in games-anchor-owner.key.enc games-anchor.pass; do
+sudo install -d -o root -g ultranet-records -m 0750 /etc/ultranet-records/secrets
+for name in records-anchor-owner.key.enc records-anchor.pass; do
   sudo systemd-creds encrypt --with-key=host --name="$name" \
-    "/root/games-staging/$name" "/etc/ultranet-games/secrets/$name.cred"
+    "/root/records-staging/$name" "/etc/ultranet-records/secrets/$name.cred"
 done
-sudo shred --remove /root/games-staging/games-anchor-owner.key.enc /root/games-staging/games-anchor.pass
+sudo shred --remove /root/records-staging/records-anchor-owner.key.enc /root/records-staging/records-anchor.pass
 ```
 
 **Before running the shred, take the offline copies** — the encrypted key file and its passphrase, in two
@@ -125,17 +126,21 @@ dedicated to anchoring and to nothing else.
 ### 2.5 Start the service and watch the first day close
 
 ```bash
-# /etc/ultranet-games/games.env
-GAMES_ANCHOR_CLI=/opt/ultranet-games/appchain-cli
+# /etc/ultranet-records/records.env   (the Records Service holds the owner key)
+RECORDS_ANCHOR_CLI=/opt/ultranet-records/appchain-cli
+RECORDS_PEER_CREDENTIAL=records-peer-games.key
+# /etc/ultranet-games/games.env       (the Games Reward Service asks it; it holds no owner key)
+GAMES_RECORDS_URL=http://127.0.0.1:8096
 GAMES_ANCHOR_GAMES=grid
 ```
 
-Then `sudo systemctl start ultranet-games`, read the rules it prints, and watch the first day close. The
-service closes yesterday by itself and retries every ten minutes until the anchor lands, so no command is
-needed — only attention:
+Start the Records Service first (`sudo systemctl start ultranet-records`), then the Games Reward Service
+(`sudo systemctl start ultranet-games`), read the rules each prints, and watch the first day close. The
+Games service closes yesterday by itself, asks the Records Service to anchor it, and retries every ten
+minutes until the anchor lands, so no command is needed — only attention:
 
 ```bash
-journalctl -u ultranet-games -f | grep -i -e anchor -e "day "
+journalctl -u ultranet-games -u ultranet-records -f | grep -i -e anchor -e "day "
 curl -s https://api.ultranetwork.cc/api/appchain/ledger/1/anchors | python3 -m json.tool
 ```
 
@@ -185,15 +190,15 @@ you computed elsewhere, because the ledger must agree with the record the servic
 
 ```bash
 # with the key file still in hand (before step 2.4's shred):
-appchain-cli anchor --key-file /root/games-staging/games-anchor-owner.key.enc \
+appchain-cli anchor --key-file /root/records-staging/records-anchor-owner.key.enc \
   --chain-id 1 --hash <the day root> \
-  --password-file /root/games-staging/games-anchor.pass
+  --password-file /root/records-staging/records-anchor.pass
 
 # once both are credentials, decrypt each to a root-only file, anchor, and shred the two files:
-sudo systemd-creds decrypt --with-key=host --name=games-anchor-owner.key.enc \
-  /etc/ultranet-games/secrets/games-anchor-owner.key.enc.cred /root/owner-key.tmp
-sudo systemd-creds decrypt --with-key=host --name=games-anchor.pass \
-  /etc/ultranet-games/secrets/games-anchor.pass.cred /root/owner-key.pass.tmp
+sudo systemd-creds decrypt --with-key=host --name=records-anchor-owner.key.enc \
+  /etc/ultranet-records/secrets/records-anchor-owner.key.enc.cred /root/owner-key.tmp
+sudo systemd-creds decrypt --with-key=host --name=records-anchor.pass \
+  /etc/ultranet-records/secrets/records-anchor.pass.cred /root/owner-key.pass.tmp
 sudo chmod 600 /root/owner-key.tmp /root/owner-key.pass.tmp
 appchain-cli anchor --key-file /root/owner-key.tmp --chain-id 1 --hash <the day root> \
   --password-file /root/owner-key.pass.tmp
@@ -216,7 +221,7 @@ could send would be rejected; it reads the fee from the node's own terms rather 
 | Both keys lost | Nobody can anchor the chain again; this is final | The chain's history stays readable and its anchors stay verifiable. There is no recovery, which is why the transfer exists |
 | Transferred by mistake | The recipient owns it now | Only that recipient can transfer it back — ask them |
 | `wrong passphrase for this key file` | The file is intact, the passphrase is not | Find the passphrase. Do not regenerate over the file — `generate-key` refuses to overwrite, so a second attempt is a second identity |
-| Anchors fail but the transfer landed | Usually the owner wallet is empty, or the service cannot read the key | Check the balance (2.2), then `journalctl -u ultranet-games` for the credential error |
+| Anchors fail but the transfer landed | Usually the owner wallet is empty, or the service cannot read the key | Check the balance (2.2), then `journalctl -u ultranet-records` for the credential error |
 
 The one habit that prevents the worst row: **keeping the phone key is the backup for the server key.**
 Transfer to the server, but keep the phone wallet and its recovery phrase until the server has anchored
@@ -227,7 +232,7 @@ successfully at least once.
 - **No delegation.** An owner cannot grant "anchor only" rights to a second key and keep ownership.
   Owning and anchoring are the same right, so an automated signer has to *be* the owner. This is why a
   leaked server key is also the ability to hand the chain away.
-- **No generic anchor timer.** The games service anchors its own chains, which covers UltraGrid; a
+- **No generic anchor timer.** The Records Service anchors the chains, UltraGrid and Chess on the Games service's request; a
   standalone `deploy/ultranet-appchain-anchor.{service,timer}` for chains with no service still does not
   exist.
 - **No key import from the phone.** The app derives its key from a 32-byte seed through PQClean's seeded
