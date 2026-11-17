@@ -1,7 +1,7 @@
 # UltraNet AppChain Service — architecture and migration plan
 
-**Status: proposal for review. Nothing in this document is built, and nothing in production changes until
-the owner approves it.** It describes how the existing `ultranet-games` service grows into a general
+**Status: proposal for review, except phase P0 (§6, §10), which the owner approved and which is done.
+Everything else here is unbuilt, and nothing in production changes until the owner approves it.** It describes how the existing `ultranet-games` service grows into a general
 record-anchoring service without breaking anything that already exists.
 
 **Decisions it asks for are in §11.** Everything else is the reasoning behind them.
@@ -122,7 +122,7 @@ Model B is deliberately a later phase (§10 P4).
 that must not depend on the platform's honesty uses Model B and its own chain. The documentation says this
 plainly (§8).
 
-## 6. Decision D1 — the domain tags, and why it cannot wait
+## 6. Decision D1 — the domain tags, and why it could not wait (approved and applied)
 
 Every hash in the registry begins with a fixed label ("domain tag"), so that a hash made for one purpose can
 never be mistaken for another. The registry's labels contain the word `UltraGame`. **They are part of the
@@ -150,7 +150,13 @@ time, so the change is checked and not just made.
 
 **What it buys:** a format whose name will not read "game" for the next hundred years.
 
-**Recommendation:** do it before the first registry anchor, and treat the new tags as frozen from then on.
+**Outcome (2026-11-17):** approved by the owner and applied in P0, after confirming on the live ledger that the
+Registry chain does not exist and has no anchors. The seven tags in the table above were renamed as shown.
+`UltraGame/api-key/v1`, `UltraGrid/*`, `UltraChess/*`, chain #1, fees and the L1 were not touched. Every pinned
+vector was recomputed by an independent script that first reproduced the old values, and Rust, Python and
+TypeScript were compared against it. **The new tags are frozen from the first registry anchor.**
+
+**Recommendation (as proposed):** do it before the first registry anchor, and treat the new tags as frozen from then on.
 Version the layouts as `v1`, and change anything later only by adding `v2` beside it.
 
 ## 7. The API
@@ -217,7 +223,7 @@ and the previous API unchanged.
 
 | Phase | What | Needs approval of |
 |---|---|---|
-| **P0** | Decide D1. If yes: rename the registry tags, recompute and re-pin every vector (Rust, Python, Node), update the docs. **Before** any registry anchor | D1 |
+| **P0 (done)** | Decide D1. If yes: rename the registry tags, recompute and re-pin every vector (Rust, Python, Node), update the docs. **Before** any registry anchor | D1 |
 | **P1** | Add `/api/records` and `/api/apps` as aliases over the existing registry. Add `subject`/`value` naming and the "hash any identifier" rule to the docs. Old routes untouched | §7 |
 | **P2** | Split the process: a records service with the anchor key only. The games service calls it. Database: one registry file per service, migrated in place by the existing upgrade path | D2 |
 | **P3** | Usage reporting per application per day (§9). Read-only | D3 |

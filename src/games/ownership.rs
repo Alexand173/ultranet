@@ -5,7 +5,7 @@
 //! valid signature proves control without any password, login or secret leaving the wallet.
 //!
 //! ```text
-//! digest = SHA3-256("UltraGame/owner-proof/v1"
+//! digest = SHA3-256("UltraRecord/owner-proof/v1"
 //!                   || u32le(len) || action   (ASCII: "register" or "rotate-key")
 //!                   || u32le(len) || game id
 //!                   || u32le(len) || name     (the trimmed name; empty for rotate-key)
@@ -32,7 +32,7 @@ pub const ACTION_ROTATE_KEY: &str = "rotate-key";
 
 pub fn proof_digest(action: &str, game_id: &str, name: &str, timestamp: u64) -> [u8; 32] {
     let mut hasher = Sha3_256::new();
-    hasher.update(b"UltraGame/owner-proof/v1");
+    hasher.update(b"UltraRecord/owner-proof/v1");
     for part in [action, game_id, name] {
         hasher.update((part.len() as u32).to_le_bytes());
         hasher.update(part.as_bytes());
@@ -167,5 +167,5 @@ mod tests {
         assert_eq!(hex::encode(digest), PINNED_DIGEST);
     }
 
-    const PINNED_DIGEST: &str = "47209efea37a0f39e70653b9551dbdf1fc1ba0d9e28a3d7ffb4c4571a51b389b";
+    const PINNED_DIGEST: &str = "a91aa99df10c32e75e9ad18b8586cd019284721d087ce14c5c02662d1fed0650";
 }

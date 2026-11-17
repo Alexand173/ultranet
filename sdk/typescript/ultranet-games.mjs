@@ -26,27 +26,27 @@ const hex = (s, bytes, label) => {
   }
   return Buffer.from(s, "hex");
 };
-const NODE = Buffer.from("UltraGame/node/v1");
+const NODE = Buffer.from("UltraRecord/node/v1");
 
 /** The root of one game's results for one day. `results`: [{player, resultId, score?, dataHash?}] */
 export function gameResultsRoot(gameId, results) {
   const records = results.map((r) => ({
     player: hex(r.player, 32, "player"),
-    idHash: sha3(Buffer.from("UltraGame/result-id/v1"), Buffer.from(r.resultId)),
+    idHash: sha3(Buffer.from("UltraRecord/record-id/v1"), Buffer.from(r.resultId)),
     score: r.score ?? 0,
     data: r.dataHash ? hex(r.dataHash, 32, "dataHash") : Buffer.alloc(32),
   }));
   records.sort((a, b) => Buffer.compare(a.player, b.player) || Buffer.compare(a.idHash, b.idHash));
   const id = Buffer.from(gameId);
   return sha3(
-    Buffer.from("UltraGame/results/v1"), u32(id.length), id, u32(records.length),
+    Buffer.from("UltraRecord/records/v1"), u32(id.length), id, u32(records.length),
     ...records.flatMap((r) => [r.player, r.idHash, u64(r.score), r.data]),
   );
 }
 
 export const leafHash = (gameId, gameRoot) => {
   const id = Buffer.from(gameId);
-  return sha3(Buffer.from("UltraGame/leaf/v1"), u32(id.length), id, gameRoot);
+  return sha3(Buffer.from("UltraRecord/leaf/v1"), u32(id.length), id, gameRoot);
 };
 
 /** Check an inclusion proof as returned by GET /api/games/g/<id>/proof/<date>. Returns problems ([] = holds). */
@@ -61,7 +61,7 @@ export function verifyProof(proof, results) {
     current = step.side === "left" ? sha3(NODE, sibling, current) : sha3(NODE, current, sibling);
   }
   if (current.toString("hex") !== proof.merkle_root) problems.push("the proof does not climb to the merkle root");
-  const dayRoot = sha3(Buffer.from("UltraGame/day-root/v1"), Buffer.from(proof.date), hex(proof.merkle_root, 32, "merkle_root"));
+  const dayRoot = sha3(Buffer.from("UltraRecord/day-root/v1"), Buffer.from(proof.date), hex(proof.merkle_root, 32, "merkle_root"));
   if (dayRoot.toString("hex") !== proof.day_root) problems.push("the day root is not the hash of the date and the merkle root");
   if (results && !gameResultsRoot(proof.game_id, results).equals(gameRoot)) {
     problems.push("the results you supplied do not produce the game root in the proof");
@@ -72,7 +72,7 @@ export function verifyProof(proof, results) {
 /** The digest an owner signs (Dilithium5) to register a game or rotate its key. */
 export function ownerProofDigest(action, gameId, name, timestamp) {
   const part = (s) => [u32(Buffer.byteLength(s)), Buffer.from(s)];
-  return sha3(Buffer.from("UltraGame/owner-proof/v1"), ...part(action), ...part(gameId), ...part(name), u64(timestamp));
+  return sha3(Buffer.from("UltraRecord/owner-proof/v1"), ...part(action), ...part(gameId), ...part(name), u64(timestamp));
 }
 
 export class GamesApiError extends Error {

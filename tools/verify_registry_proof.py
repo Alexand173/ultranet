@@ -27,7 +27,7 @@ def sha3(*parts):
 
 
 def result_id_hash(result_id):
-    return sha3(b"UltraGame/result-id/v1", result_id.encode())
+    return sha3(b"UltraRecord/record-id/v1", result_id.encode())
 
 
 def game_results_root(game_id, results):
@@ -37,20 +37,20 @@ def game_results_root(game_id, results):
         records.append((bytes.fromhex(r["player"]), result_id_hash(r["result_id"]), int(r.get("score", 0)), data_hash))
     records.sort(key=lambda rec: (rec[0], rec[1]))
     body = b"".join(p + i + struct.pack("<Q", s) + d for p, i, s, d in records)
-    return sha3(b"UltraGame/results/v1", struct.pack("<I", len(game_id)), game_id.encode(),
+    return sha3(b"UltraRecord/records/v1", struct.pack("<I", len(game_id)), game_id.encode(),
                 struct.pack("<I", len(records)), body)
 
 
 def leaf_hash(game_id, game_root):
-    return sha3(b"UltraGame/leaf/v1", struct.pack("<I", len(game_id)), game_id.encode(), game_root)
+    return sha3(b"UltraRecord/leaf/v1", struct.pack("<I", len(game_id)), game_id.encode(), game_root)
 
 
 def climb(leaf, steps):
     current = leaf
     for step in steps:
         sibling = bytes.fromhex(step["sibling"])
-        current = sha3(b"UltraGame/node/v1", sibling, current) if step["side"] == "left" \
-            else sha3(b"UltraGame/node/v1", current, sibling)
+        current = sha3(b"UltraRecord/node/v1", sibling, current) if step["side"] == "left" \
+            else sha3(b"UltraRecord/node/v1", current, sibling)
     return current
 
 
@@ -63,7 +63,7 @@ def verify(proof, results=None):
         problems.append("the leaf is not the hash of this game id and game root")
     if climb(leaf, proof["steps"]).hex() != proof["merkle_root"]:
         problems.append("the proof does not climb to the merkle root")
-    day_root = sha3(b"UltraGame/day-root/v1", proof["date"].encode(), bytes.fromhex(proof["merkle_root"]))
+    day_root = sha3(b"UltraRecord/day-root/v1", proof["date"].encode(), bytes.fromhex(proof["merkle_root"]))
     if day_root.hex() != proof["day_root"]:
         problems.append("the day root is not the hash of the date and the merkle root")
     if results is not None and game_results_root(game_id, results) != game_root:

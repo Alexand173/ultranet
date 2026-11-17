@@ -13,13 +13,13 @@
 //! the same single anchor, and any developer can prove their day is inside it with a short proof.
 //!
 //! ```text
-//! result record    = player(32) || SHA3-256("UltraGame/result-id/v1" || result_id)(32) || score(u64le) || data_hash(32)
+//! result record    = player(32) || SHA3-256("UltraRecord/record-id/v1" || result_id)(32) || score(u64le) || data_hash(32)
 //!                                                                        sorted by (player, result id hash)
-//! game day root    = SHA3-256("UltraGame/results/v1" || u32le(len(game_id)) || game_id || u32le(count) || records)
-//! leaf             = SHA3-256("UltraGame/leaf/v1"    || u32le(len(game_id)) || game_id || game day root)
-//! node             = SHA3-256("UltraGame/node/v1"    || left || right)         an unpaired node is carried up unchanged
-//! merkle root      = the single node left; SHA3-256("UltraGame/empty/v1") when no game had results
-//! registry day root= SHA3-256("UltraGame/day-root/v1" || date || merkle root)   the 32 bytes the owner key anchors
+//! game day root    = SHA3-256("UltraRecord/records/v1" || u32le(len(game_id)) || game_id || u32le(count) || records)
+//! leaf             = SHA3-256("UltraRecord/leaf/v1"    || u32le(len(game_id)) || game_id || game day root)
+//! node             = SHA3-256("UltraRecord/node/v1"    || left || right)         an unpaired node is carried up unchanged
+//! merkle root      = the single node left; SHA3-256("UltraRecord/empty/v1") when no game had results
+//! registry day root= SHA3-256("UltraRecord/day-root/v1" || date || merkle root)   the 32 bytes the owner key anchors
 //! ```
 //!
 //! Leaves are sorted by game id. An unpaired node is carried up rather than duplicated, because
@@ -339,7 +339,7 @@ fn hash_key(key: &str) -> [u8; 32] {
 }
 
 fn result_id_hash(result_id: &str) -> [u8; 32] {
-    sha3(&[b"UltraGame/result-id/v1", result_id.as_bytes()])
+    sha3(&[b"UltraRecord/record-id/v1", result_id.as_bytes()])
 }
 
 // --- the roots --------------------------------------------------------------------------------
@@ -365,7 +365,7 @@ pub fn game_results_root(game_id: &str, results: &[ResultRow]) -> [u8; 32] {
         body.extend_from_slice(data_hash);
     }
     sha3(&[
-        b"UltraGame/results/v1",
+        b"UltraRecord/records/v1",
         &(game_id.len() as u32).to_le_bytes(),
         game_id.as_bytes(),
         &(records.len() as u32).to_le_bytes(),
@@ -375,7 +375,7 @@ pub fn game_results_root(game_id: &str, results: &[ResultRow]) -> [u8; 32] {
 
 pub fn leaf_hash(game_id: &str, game_root: &[u8; 32]) -> [u8; 32] {
     sha3(&[
-        b"UltraGame/leaf/v1",
+        b"UltraRecord/leaf/v1",
         &(game_id.len() as u32).to_le_bytes(),
         game_id.as_bytes(),
         game_root,
@@ -383,11 +383,11 @@ pub fn leaf_hash(game_id: &str, game_root: &[u8; 32]) -> [u8; 32] {
 }
 
 fn node_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
-    sha3(&[b"UltraGame/node/v1", left, right])
+    sha3(&[b"UltraRecord/node/v1", left, right])
 }
 
 pub fn empty_root() -> [u8; 32] {
-    sha3(&[b"UltraGame/empty/v1"])
+    sha3(&[b"UltraRecord/empty/v1"])
 }
 
 pub fn merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
@@ -466,7 +466,7 @@ pub fn verify_inclusion(leaf: &[u8; 32], proof: &[ProofStep], root: &[u8; 32]) -
 
 /// The 32 bytes the owner key anchors for a registry day.
 pub fn registry_day_root(date: &str, merkle_root: &[u8; 32]) -> [u8; 32] {
-    sha3(&[b"UltraGame/day-root/v1", date.as_bytes(), merkle_root])
+    sha3(&[b"UltraRecord/day-root/v1", date.as_bytes(), merkle_root])
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1770,11 +1770,11 @@ mod tests {
         assert_eq!(hex::encode(proof_for_zeta[0].sibling), PINNED_ZETA_SIBLING);
     }
 
-    const PINNED_TETRIS: &str = "0c774ecbddcfac9d5321fc9ed6abf977f1cb9c3e715bcbfbd2d47e8521398099";
-    const PINNED_SNAKE: &str = "717952b8681c6383910a5242c7a4cb8545cb5ab6e990b967a5c0f090fdecc950";
-    const PINNED_MERKLE: &str = "578c7e18d4335805a4f02e3be7ea1183a1ef792645977863817b0002fa3be6df";
-    const PINNED_DAY: &str = "2a25e3362cb0bb592f00020128820f53541ff408c574716f09ab841801061892";
-    const PINNED_EMPTY: &str = "26e777b7e3d973324559b3070ce74e8b2d882c01217876a2f8872e8bee607843";
+    const PINNED_TETRIS: &str = "a9548ebbb42d3fed507a94995fae1b5066f84b169bc83221b6811bb60ee6b744";
+    const PINNED_SNAKE: &str = "d64fdd3860a91abc4ced3dd26c56788ab94e8b996887d87eeac1fc1c4bbb1859";
+    const PINNED_MERKLE: &str = "8aee448bb31e3c53e33e27239a3e313478d8d29fff7dcf179b0b8b5907d2ccc8";
+    const PINNED_DAY: &str = "c003c41c297e990fb0264d4cbdb9c8958622d3b3fcb6cbee50eade9246ad2823";
+    const PINNED_EMPTY: &str = "fb474aef10d6c2a3314304c9669047c2fb1d5886549932e41e37440aed9a3fd8";
     const PINNED_ZETA_SIBLING: &str =
-        "16d722e86393b7390bc1b1cf672b2afc5c6e47fc84ee84b13420c43f9d23c98b";
+        "9fafc8c72f9953e313109dea0990ed2595c4d47812cc1018cbc58f662dd6f96c";
 }

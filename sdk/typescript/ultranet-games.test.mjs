@@ -13,8 +13,8 @@ const tetris = [
 const sha3 = (...p) => { const h = createHash("sha3-256"); p.forEach((x) => h.update(x)); return h.digest(); };
 
 test("roots match the vectors pinned in the Rust code", () => {
-  assert.equal(gameResultsRoot("tetris", tetris).toString("hex"), "0c774ecbddcfac9d5321fc9ed6abf977f1cb9c3e715bcbfbd2d47e8521398099");
-  assert.equal(gameResultsRoot("snake", [{ player: A, resultId: "round-7", score: 1000 }]).toString("hex"), "717952b8681c6383910a5242c7a4cb8545cb5ab6e990b967a5c0f090fdecc950");
+  assert.equal(gameResultsRoot("tetris", tetris).toString("hex"), "a9548ebbb42d3fed507a94995fae1b5066f84b169bc83221b6811bb60ee6b744");
+  assert.equal(gameResultsRoot("snake", [{ player: A, resultId: "round-7", score: 1000 }]).toString("hex"), "d64fdd3860a91abc4ced3dd26c56788ab94e8b996887d87eeac1fc1c4bbb1859");
 });
 
 test("order of results does not matter, contents do", () => {
@@ -24,7 +24,7 @@ test("order of results does not matter, contents do", () => {
 
 test("the owner-proof digest matches the Rust and Python pin", () => {
   assert.equal(ownerProofDigest("register", "tetris", "Tetris", 1_800_000_000).toString("hex"),
-    "47209efea37a0f39e70653b9551dbdf1fc1ba0d9e28a3d7ffb4c4571a51b389b");
+    "a91aa99df10c32e75e9ad18b8586cd019284721d087ce14c5c02662d1fed0650");
 });
 
 function proofFor() {
@@ -32,11 +32,11 @@ function proofFor() {
   const snake = gameResultsRoot("snake", [{ player: A, resultId: "round-7", score: 1000 }]);
   const zeta = gameResultsRoot("zeta", []);
   const leaves = [leafHash("snake", snake), leafHash("tetris", root), leafHash("zeta", zeta)];
-  const NODE = Buffer.from("UltraGame/node/v1");
+  const NODE = Buffer.from("UltraRecord/node/v1");
   const ab = sha3(NODE, leaves[0], leaves[1]);
   const merkle = sha3(NODE, ab, leaves[2]);
-  assert.equal(merkle.toString("hex"), "578c7e18d4335805a4f02e3be7ea1183a1ef792645977863817b0002fa3be6df");
-  const day = sha3(Buffer.from("UltraGame/day-root/v1"), Buffer.from("2026-11-16"), merkle);
+  assert.equal(merkle.toString("hex"), "8aee448bb31e3c53e33e27239a3e313478d8d29fff7dcf179b0b8b5907d2ccc8");
+  const day = sha3(Buffer.from("UltraRecord/day-root/v1"), Buffer.from("2026-11-16"), merkle);
   return {
     game_id: "tetris", date: "2026-11-16", game_root: root.toString("hex"), leaf: leaves[1].toString("hex"),
     steps: [{ sibling: leaves[0].toString("hex"), side: "left" }, { sibling: leaves[2].toString("hex"), side: "right" }],
