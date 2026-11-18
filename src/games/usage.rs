@@ -65,9 +65,122 @@ impl AnchorStatus {
         }
     }
 
-    /// Whether this status counts as a charge. Reserved and in-doubt do not.
-    pub fn is_charged(self) -> bool {
+    /// Whether this status is a submission that was accepted. Reserved and in-doubt are not.
+    pub fn is_submitted_charge(self) -> bool {
         matches!(self, AnchorStatus::Submitted | AnchorStatus::Confirmed)
+    }
+
+    /// Whether this node has confirmed the anchor on the chain.
+    pub fn is_confirmed_charge(self) -> bool {
+        matches!(self, AnchorStatus::Confirmed)
+    }
+
+    /// Whether this status counts toward `basis`.
+    pub fn counts_toward(self, basis: CostBasis) -> bool {
+        match basis {
+            CostBasis::Submitted => self.is_submitted_charge(),
+            CostBasis::Confirmed => self.is_confirmed_charge(),
+        }
+    }
+}
+
+/// Which anchors a report counts as charged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CostBasis {
+    /// Every accepted submission, registry and peer: what the owner has committed. The default.
+    Submitted,
+    /// Only anchors this node has confirmed. What can be evidenced against the chain.
+    Confirmed,
+}
+
+impl CostBasis {
+    pub fn code(self) -> &'static str {
+        match self {
+            CostBasis::Submitted => "submitted",
+            CostBasis::Confirmed => "confirmed",
+        }
+    }
+
+    fn parse(text: &str) -> Option<Self> {
+        match text {
+            "submitted" => Some(CostBasis::Submitted),
+            "confirmed" => Some(CostBasis::Confirmed),
+            _ => None,
+        }
+    }
+}
+
+/// A number of anchors, and what they cost.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CostTotals {
+    pub anchors: u64,
+    pub base_units: u64,
+}
+
+impl CostTotals {
+    pub fn plus(self, other: CostTotals) -> CostTotals {
+        CostTotals {
+            anchors: self.anchors + other.anchors,
+            base_units: self.base_units + other.base_units,
+        }
+    }
+}
+
+/// The four classes every report carries, whatever basis it was asked for.
+///
+/// `submitted` and `peer_without_evidence` are classes, not totals. A total is produced by
+/// [`CostBreakdown::total_at`], so the headline, the per-day figures, the averages and the attribution
+/// check can never be built from different definitions of "cost".
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CostBreakdown {
+    /// Registry anchors whose submission was accepted.
+    pub submitted: CostTotals,
+    /// Registry anchors this node has confirmed on the chain.
+    pub confirmed: CostTotals,
+    /// Registry anchors submitted but not confirmed: committed, evidence not seen here yet.
+    pub awaiting: CostTotals,
+    /// Peer anchors. Their confirmation is held by the Games Reward Service and is not observable in
+    /// this database, so they are never counted as confirmed and never wait for evidence here.
+    pub peer_without_evidence: CostTotals,
+}
+
+impl CostBreakdown {
+    /// The charge this basis counts.
+    ///
+    /// `Submitted` includes peer: those fees are committed money, and leaving them out would make the
+    /// headline smaller than the sum of the parts that produced it. `Confirmed` is narrower on purpose:
+    /// it counts only what this database can evidence.
+    pub fn total_at(&self, basis: CostBasis) -> CostTotals {
+        match basis {
+            CostBasis::Submitted => self.submitted.plus(self.peer_without_evidence),
+            CostBasis::Confirmed => self.confirmed,
+        }
+    }
+
+    fn plus(self, other: CostBreakdown) -> CostBreakdown {
+        CostBreakdown {
+            submitted: self.submitted.plus(other.submitted),
+            confirmed: self.confirmed.plus(other.confirmed),
+            awaiting: self.awaiting.plus(other.awaiting),
+            peer_without_evidence: self.peer_without_evidence.plus(other.peer_without_evidence),
+        }
+    }
+
+    fn add_registry(&mut self, status: AnchorStatus) {
+        self.submitted.anchors += 1;
+        self.submitted.base_units += APPCHAIN_ANCHOR_FEE;
+        if status.is_confirmed_charge() {
+            self.confirmed.anchors += 1;
+            self.confirmed.base_units += APPCHAIN_ANCHOR_FEE;
+        } else {
+            self.awaiting.anchors += 1;
+            self.awaiting.base_units += APPCHAIN_ANCHOR_FEE;
+        }
+    }
+
+    fn add_peer(&mut self) {
+        self.peer_without_evidence.anchors += 1;
+        self.peer_without_evidence.base_units += APPCHAIN_ANCHOR_FEE;
     }
 }
 
@@ -93,7 +206,8 @@ pub struct DayUsage {
     pub registry_anchor: Option<AnchorView>,
     /// Anchors the Games Reward Service asked for on this day, one per chain.
     pub peer_anchors: Vec<AnchorView>,
-    pub cost_base_units: u64,
+    /// The day's charges, split into the four classes. `cost.total_at(basis)` is the day's figure.
+    pub cost: CostBreakdown,
     pub attributed_base_units: u64,
     pub unattributed_base_units: u64,
     pub unsent_anchors: u64,
@@ -117,10 +231,10 @@ pub struct AppUsage {
 /// The figures D3 needs, summed over the window.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UsageTotals {
-    pub charged_anchors: u64,
+    /// The window's charges, split into the four classes. `total_at(basis)` is the headline figure.
+    pub cost: CostBreakdown,
     pub registry_anchors: u64,
     pub peer_anchors: u64,
-    pub cost_base_units: u64,
     pub records: u64,
     pub attributed_base_units: u64,
     pub unattributed_base_units: u64,
@@ -140,6 +254,8 @@ pub struct UsageReport {
     pub to: String,
     pub today: String,
     pub registry_chain_id: Option<u32>,
+    /// The basis this report was asked for. Every total, average and attribution follows it.
+    pub basis: CostBasis,
     pub days: Vec<DayUsage>,
     pub apps: Vec<AppUsage>,
     /// Every charged anchor as its own `(chain_id, day)` set, with the shares that sum to its charge.
@@ -151,6 +267,7 @@ pub struct UsageReport {
 struct AllocationSet {
     chain_id: u32,
     day: String,
+    status: AnchorStatus,
     fee_base_units: u64,
     records: BTreeMap<String, u64>,
 }
@@ -164,6 +281,8 @@ struct AllocationSet {
 pub struct SetUsage {
     pub chain_id: u32,
     pub day: String,
+    /// The anchor's state, so the report shows what the shares rest on.
+    pub status: AnchorStatus,
     pub fee_base_units: u64,
     /// Records this charge covers, as counted in this database.
     pub records: u64,
@@ -171,7 +290,8 @@ pub struct SetUsage {
     pub shares: BTreeMap<String, u64>,
 }
 
-/// Build the report for `from..=to` from one consistent snapshot of the database.
+/// Build the report for `from..=to` from one consistent snapshot of the database, at the default basis
+/// (charged at submission).
 ///
 /// `today` is passed in rather than read from the clock so the report is reproducible: the same
 /// database and the same window always produce the same figures.
@@ -181,6 +301,28 @@ pub fn build(
     to: &str,
     today: &str,
     registry_chain_id: Option<u32>,
+) -> Result<UsageReport, StoreError> {
+    build_at(
+        store,
+        from,
+        to,
+        today,
+        registry_chain_id,
+        CostBasis::Submitted,
+    )
+}
+
+/// Build the report at an explicit cost basis.
+///
+/// The basis decides which anchors are apportioned to applications and which figure is the headline.
+/// It never decides which classes are reported: all four are in every report (see [`CostBreakdown`]).
+pub fn build_at(
+    store: &GamesStore,
+    from: &str,
+    to: &str,
+    today: &str,
+    registry_chain_id: Option<u32>,
+    basis: CostBasis,
 ) -> Result<UsageReport, StoreError> {
     let days = window(from, to)?;
 
@@ -277,7 +419,7 @@ pub fn build(
             .unwrap_or_else(|| "open".to_string());
         let records_total: u64 = day_records.values().sum();
 
-        let mut cost = 0u64;
+        let mut cost = CostBreakdown::default();
         let mut unsent = 0u64;
 
         let registry_anchor = match registry_anchors.iter().find(|row| &row.day == day) {
@@ -290,14 +432,17 @@ pub fn build(
         };
 
         if let Some(anchor) = &registry_anchor {
-            if anchor.status.is_charged() {
-                cost += APPCHAIN_ANCHOR_FEE;
-                sets.push(AllocationSet {
-                    chain_id: anchor.chain_id,
-                    day: day.clone(),
-                    fee_base_units: APPCHAIN_ANCHOR_FEE,
-                    records: day_records.clone(),
-                });
+            if anchor.status.is_submitted_charge() {
+                cost.add_registry(anchor.status);
+                if anchor.status.counts_toward(basis) {
+                    sets.push(AllocationSet {
+                        chain_id: anchor.chain_id,
+                        day: day.clone(),
+                        status: anchor.status,
+                        fee_base_units: APPCHAIN_ANCHOR_FEE,
+                        records: day_records.clone(),
+                    });
+                }
             } else {
                 unsent += 1;
             }
@@ -307,15 +452,21 @@ pub fn build(
         for row in peer_anchors.iter().filter(|row| &row.day == day) {
             let status =
                 AnchorStatus::parse(&row.state).ok_or_else(|| unusable_status(&row.state))?;
-            if status.is_charged() {
-                cost += APPCHAIN_ANCHOR_FEE;
+            if status.is_submitted_charge() {
+                cost.add_peer();
                 // A peer anchor covers a first-party game day, whose records this service does not keep.
-                sets.push(AllocationSet {
-                    chain_id: row.chain_id,
-                    day: day.clone(),
-                    fee_base_units: APPCHAIN_ANCHOR_FEE,
-                    records: BTreeMap::new(),
-                });
+                // Under the confirmed basis it is counted in `peer_without_evidence` but never
+                // apportioned: this database holds no evidence for it and no records to apportion it
+                // against, so including it would print a share nobody can recompute.
+                if status.counts_toward(basis) {
+                    sets.push(AllocationSet {
+                        chain_id: row.chain_id,
+                        day: day.clone(),
+                        status,
+                        fee_base_units: APPCHAIN_ANCHOR_FEE,
+                        records: BTreeMap::new(),
+                    });
+                }
             } else {
                 unsent += 1;
             }
@@ -335,7 +486,7 @@ pub fn build(
             day_state,
             registry_anchor,
             peer_anchors: peer,
-            cost_base_units: cost,
+            cost,
             attributed_base_units: 0,
             unattributed_base_units: 0,
             unsent_anchors: unsent,
@@ -359,6 +510,7 @@ pub fn build(
             set_rows.push(SetUsage {
                 chain_id: set.chain_id,
                 day: set.day.clone(),
+                status: set.status,
                 fee_base_units: set.fee_base_units,
                 records: covered,
                 shares: BTreeMap::new(),
@@ -378,6 +530,7 @@ pub fn build(
         set_rows.push(SetUsage {
             chain_id: set.chain_id,
             day: set.day.clone(),
+            status: set.status,
             fee_base_units: set.fee_base_units,
             records: covered,
             shares,
@@ -451,38 +604,27 @@ pub fn build(
             .then_with(|| left.id.cmp(&right.id))
     });
 
-    let cost_base_units: u64 = day_rows.iter().map(|row| row.cost_base_units).sum();
+    // Every total below is folded from the day rows, so the window cannot disagree with its own days.
+    let cost: CostBreakdown = day_rows
+        .iter()
+        .fold(CostBreakdown::default(), |sum, row| sum.plus(row.cost));
     let attributed_total: u64 = day_rows.iter().map(|row| row.attributed_base_units).sum();
     let totals = UsageTotals {
-        charged_anchors: day_rows
-            .iter()
-            .map(|row| {
-                row.registry_anchor
-                    .iter()
-                    .filter(|a| a.status.is_charged())
-                    .count() as u64
-                    + row
-                        .peer_anchors
-                        .iter()
-                        .filter(|a| a.status.is_charged())
-                        .count() as u64
-            })
-            .sum(),
+        cost,
         registry_anchors: day_rows
             .iter()
             .filter_map(|row| row.registry_anchor.as_ref())
-            .filter(|anchor| anchor.status.is_charged())
+            .filter(|anchor| anchor.status.is_submitted_charge())
             .count() as u64,
         peer_anchors: day_rows
             .iter()
             .map(|row| {
                 row.peer_anchors
                     .iter()
-                    .filter(|a| a.status.is_charged())
+                    .filter(|a| a.status.is_submitted_charge())
                     .count() as u64
             })
             .sum(),
-        cost_base_units,
         records: total_records,
         attributed_base_units: attributed_total,
         unattributed_base_units: unattributed_overall,
@@ -499,6 +641,7 @@ pub fn build(
         to: to.to_string(),
         today: today.to_string(),
         registry_chain_id,
+        basis,
         days: day_rows,
         apps,
         sets: set_rows,
@@ -589,6 +732,7 @@ pub struct ReportArgs {
     pub from: String,
     pub to: String,
     pub json: bool,
+    pub cost_basis: CostBasis,
 }
 
 /// Parse `usage-report`'s flags.
@@ -601,6 +745,7 @@ pub fn parse_args(args: &[String], today: &str) -> Result<ReportArgs, String> {
     let mut from: Option<String> = None;
     let mut to: Option<String> = None;
     let mut days: Option<String> = None;
+    let mut basis: Option<String> = None;
     let mut json = false;
 
     // A flag may appear once. `--date A --date B` would otherwise report one of them and say nothing
@@ -609,7 +754,10 @@ pub fn parse_args(args: &[String], today: &str) -> Result<ReportArgs, String> {
     let mut index = 0;
     while index < args.len() {
         let flag = args[index].as_str();
-        if matches!(flag, "--json" | "--date" | "--from" | "--to" | "--days") {
+        if matches!(
+            flag,
+            "--json" | "--date" | "--from" | "--to" | "--days" | "--cost-basis"
+        ) {
             if seen.contains(&flag) {
                 return Err(format!("{flag} was given more than once; give it at most once"));
             }
@@ -620,7 +768,7 @@ pub fn parse_args(args: &[String], today: &str) -> Result<ReportArgs, String> {
                 json = true;
                 index += 1;
             }
-            "--date" | "--from" | "--to" | "--days" => {
+            "--date" | "--from" | "--to" | "--days" | "--cost-basis" => {
                 let value = args
                     .get(index + 1)
                     .ok_or_else(|| format!("{flag} needs a value"))?
@@ -628,14 +776,15 @@ pub fn parse_args(args: &[String], today: &str) -> Result<ReportArgs, String> {
                 match flag {
                     "--date" => date = Some(value),
                     "--from" => from = Some(value),
-                    _ if flag == "--to" => to = Some(value),
+                    "--to" => to = Some(value),
+                    "--cost-basis" => basis = Some(value),
                     _ => days = Some(value),
                 }
                 index += 2;
             }
             other => {
                 return Err(format!(
-                    "unknown argument {other}; usage-report takes --date, --from, --to, --days and --json"
+                    "unknown argument {other}; usage-report takes --date, --from, --to, --days, --cost-basis and --json"
                 ))
             }
         }
@@ -652,11 +801,20 @@ pub fn parse_args(args: &[String], today: &str) -> Result<ReportArgs, String> {
         );
     }
 
+    // The basis is validated here, before anything is opened: an unreadable value must not reach the
+    // database, and a report that silently fell back to the default would answer a different question.
+    let cost_basis = match basis {
+        None => CostBasis::Submitted,
+        Some(value) => CostBasis::parse(&value)
+            .ok_or_else(|| format!("--cost-basis must be submitted or confirmed, got {value}"))?,
+    };
+
     if let Some(date) = date {
         return Ok(ReportArgs {
             from: date.clone(),
             to: date,
             json,
+            cost_basis,
         });
     }
 
@@ -677,7 +835,12 @@ pub fn parse_args(args: &[String], today: &str) -> Result<ReportArgs, String> {
                 .ok_or_else(|| format!("{end} is not a UTC date (expected YYYY-MM-DD)"))?,
         },
     };
-    Ok(ReportArgs { from: start, to: end, json })
+    Ok(ReportArgs {
+        from: start,
+        to: end,
+        json,
+        cost_basis,
+    })
 }
 
 /// The UTC date `days` days before `date`, for the report's windows.
@@ -763,6 +926,43 @@ fn short_hash(hash: &str) -> String {
     format!("{}…{}", &hash[..6], &hash[hash.len() - 6..])
 }
 
+/// What the chosen basis counts, stated once so the header and the summary cannot drift apart.
+fn basis_text(basis: CostBasis) -> &'static str {
+    match basis {
+        CostBasis::Submitted => {
+            "submitted: registry charged at submission + peer anchors without evidence"
+        }
+        CostBasis::Confirmed => "confirmed: registry anchors this node has confirmed only",
+    }
+}
+
+/// One line of the cost summary: a class or a total, with its anchors and its base units.
+fn cost_row(label: &str, totals: CostTotals) -> String {
+    format!(
+        "  {:<32}{:>9}{:>14}  ({} ULTRA)\n",
+        label,
+        grouped(totals.anchors),
+        grouped(totals.base_units),
+        ultra(totals.base_units)
+    )
+}
+
+fn cost_totals_json(totals: CostTotals) -> Value {
+    json!({ "anchors": totals.anchors, "base_units": totals.base_units })
+}
+
+/// The four classes plus the total this basis counts. The total is published rather than left to be
+/// derived: a consumer that sums the wrong subset would report a cost the service never had.
+fn cost_json(cost: &CostBreakdown, basis: CostBasis) -> Value {
+    json!({
+        "submitted": cost_totals_json(cost.submitted),
+        "confirmed": cost_totals_json(cost.confirmed),
+        "awaiting": cost_totals_json(cost.awaiting),
+        "peer_without_evidence": cost_totals_json(cost.peer_without_evidence),
+        "total_at_basis": cost_totals_json(cost.total_at(basis)),
+    })
+}
+
 impl UsageReport {
     /// The operator-readable report. Fixed-width blocks and figures; no interpretation.
     pub fn render_text(&self, database: &str) -> String {
@@ -784,17 +984,36 @@ impl UsageReport {
             self.today
         ));
         out.push_str(&format!("registry    chain {chain}\n"));
+        out.push_str(&format!("basis       {}\n", basis_text(self.basis)));
+        // "1 days" is a small thing that makes an operator distrust a large one, so the word agrees
+        // with the number here as it already does in the `range` line above.
+        let records_days = match self.totals.days_with_records {
+            1 => "1 day".to_string(),
+            other => format!("{other} days"),
+        };
         out.push_str(&format!(
-            "sources     {} apps, {} days with records, {} anchors charged\n",
-            self.totals.apps, self.totals.days_with_records, self.totals.charged_anchors
+            "sources     {} apps, {} with records, {} anchors counted at this basis\n",
+            self.totals.apps,
+            records_days,
+            grouped(self.totals.cost.total_at(self.basis).anchors)
         ));
         out.push_str("note        a per-app figure is that app's share of anchors every application shares,\n");
         out.push_str("            not a measured charge; peer anchors cover first-party game days whose records\n");
         out.push_str("            are kept by the Games Reward Service, so their cost stays unattributed here\n\n");
 
         out.push_str(&format!(
-            "{:<12}{:>5}{:>10}  {:<20}{:<26}{:>6}{:>9}{:>12}\n",
-            "day", "apps", "records", "day state", "registry anchor", "peers", "cost", "attributed"
+            "{:<12}{:>5}{:>8}  {:<20}{:<26}{:>5}{:>9}{:>10}{:>8}{:>9}{:>10}\n",
+            "day",
+            "apps",
+            "records",
+            "day state",
+            "registry anchor",
+            "peers",
+            "cost",
+            "confirmed",
+            "awaiting",
+            "peer cost",
+            "attributed"
         ));
         for day in &self.days {
             let anchor = match &day.registry_anchor {
@@ -814,17 +1033,25 @@ impl UsageReport {
                 day.day_state.clone()
             };
             out.push_str(&format!(
-                "{:<12}{:>5}{:>10}  {:<20}{:<26}{:>6}{:>9}{:>12}\n",
+                "{:<12}{:>5}{:>8}  {:<20}{:<26}{:>5}{:>9}{:>10}{:>8}{:>9}{:>10}\n",
                 day.day,
                 day.apps,
                 grouped(day.records),
                 state,
                 anchor,
                 day.peer_anchors.len(),
-                grouped(day.cost_base_units),
+                grouped(day.cost.total_at(self.basis).base_units),
+                grouped(day.cost.confirmed.base_units),
+                grouped(day.cost.awaiting.base_units),
+                grouped(day.cost.peer_without_evidence.base_units),
                 grouped(day.attributed_base_units),
             ));
         }
+        out.push_str(
+            "\ncost is what this basis counts: at submission, confirmed + awaiting + peer cost;\n\
+             confirmed, the confirmed charge alone. Peer cost is never attributable here: the records\n\
+             those anchors cover are held by the Games Reward Service.\n",
+        );
 
         out.push_str("\nper app\n");
         out.push_str(&format!(
@@ -844,28 +1071,72 @@ impl UsageReport {
         }
 
         let totals = &self.totals;
+        let counted = totals.cost.total_at(self.basis);
         out.push_str("\ncost summary, for D3\n");
+        out.push_str(&format!("basis       {}\n", basis_text(self.basis)));
+        out.push_str(&format!("{:<34}{:>9}{:>14}\n", "", "anchors", "base units"));
+        // Each of the four classes appears exactly once, under the heading that says whether the
+        // chosen basis counts it. That is what stops a confirmed figure being read as the whole cost.
+        out.push_str("counted at this basis\n");
+        match self.basis {
+            CostBasis::Submitted => {
+                out.push_str(&cost_row("submitted (registry)", totals.cost.submitted));
+                out.push_str(&cost_row(
+                    "peer_without_evidence",
+                    totals.cost.peer_without_evidence,
+                ));
+                out.push_str(&cost_row("total at submission", counted));
+            }
+            CostBasis::Confirmed => {
+                out.push_str(&cost_row("confirmed (registry)", totals.cost.confirmed));
+                out.push_str(&cost_row("total at confirmed", counted));
+            }
+        }
+        out.push_str("not counted at this basis\n");
+        match self.basis {
+            CostBasis::Submitted => {
+                out.push_str(&cost_row("awaiting (registry)", totals.cost.awaiting));
+            }
+            CostBasis::Confirmed => {
+                out.push_str(&cost_row("awaiting (registry)", totals.cost.awaiting));
+                out.push_str(&cost_row(
+                    "peer_without_evidence",
+                    totals.cost.peer_without_evidence,
+                ));
+            }
+        }
         out.push_str(&format!(
-            "anchors charged        {:>8}  x {} = {} base units ({} ULTRA)\n",
-            grouped(totals.charged_anchors),
-            grouped(APPCHAIN_ANCHOR_FEE),
-            grouped(totals.cost_base_units),
-            ultra(totals.cost_base_units)
+            "  {:<32}{:>9}{:>14}\n",
+            "unsent (reserved or in doubt)",
+            grouped(totals.unsent_anchors),
+            "-"
         ));
-        out.push_str(&format!(
-            "  registry             {:>8}\n  peer                 {:>8}\n",
-            grouped(totals.registry_anchors),
-            grouped(totals.peer_anchors)
-        ));
+        out.push_str("for reference\n");
+        match self.basis {
+            CostBasis::Submitted => {
+                out.push_str(&cost_row("confirmed (registry)", totals.cost.confirmed));
+                out.push_str(&cost_row(
+                    "total at confirmed",
+                    totals.cost.total_at(CostBasis::Confirmed),
+                ));
+            }
+            CostBasis::Confirmed => {
+                out.push_str(&cost_row("submitted (registry)", totals.cost.submitted));
+                out.push_str(&cost_row(
+                    "total at submission",
+                    totals.cost.total_at(CostBasis::Submitted),
+                ));
+            }
+        }
         out.push_str(&format!(
             "records accepted       {:>8}\n",
             grouped(totals.records)
         ));
         out.push_str(&format!(
-            "cost per UTC day       {:>8} base units  (window average)\n",
+            "cost per UTC day       {:>8} base units  (window average, at this basis)\n",
             grouped(
-                totals
-                    .cost_base_units
+                counted
+                    .base_units
                     .checked_div(self.days.len().max(1) as u64)
                     .unwrap_or(0)
             )
@@ -896,10 +1167,6 @@ impl UsageReport {
             totals.apps_without_records, totals.apps
         ));
         out.push_str(&format!(
-            "unsent anchors         {:>8}  (reserved or in doubt; no cost counted)\n",
-            grouped(totals.unsent_anchors)
-        ));
-        out.push_str(&format!(
             "past days not closed   {:>8}\n",
             grouped(totals.unclosed_past_days as u64)
         ));
@@ -913,6 +1180,7 @@ impl UsageReport {
             "to": self.to,
             "today": self.today,
             "registry_chain_id": self.registry_chain_id,
+            "cost_basis": self.basis.code(),
             "anchor_fee_base_units": APPCHAIN_ANCHOR_FEE,
             "days": self.days.iter().map(|day| json!({
                 "day": day.day,
@@ -930,7 +1198,7 @@ impl UsageReport {
                     "status": anchor.status.code(),
                     "tx_hash": anchor.tx_hash,
                 })).collect::<Vec<_>>(),
-                "cost_base_units": day.cost_base_units,
+                "cost": cost_json(&day.cost, self.basis),
                 "attributed_base_units": day.attributed_base_units,
                 "unattributed_base_units": day.unattributed_base_units,
                 "unsent_anchors": day.unsent_anchors,
@@ -948,15 +1216,16 @@ impl UsageReport {
             "allocation_sets": self.sets.iter().map(|set| json!({
                 "chain_id": set.chain_id,
                 "day": set.day,
+                "status": set.status.code(),
                 "fee_base_units": set.fee_base_units,
                 "records": set.records,
                 "shares": set.shares,
             })).collect::<Vec<_>>(),
             "totals": {
-                "charged_anchors": self.totals.charged_anchors,
+                "basis": self.basis.code(),
+                "cost": cost_json(&self.totals.cost, self.basis),
                 "registry_anchors": self.totals.registry_anchors,
                 "peer_anchors": self.totals.peer_anchors,
-                "cost_base_units": self.totals.cost_base_units,
                 "records": self.totals.records,
                 "attributed_base_units": self.totals.attributed_base_units,
                 "unattributed_base_units": self.totals.unattributed_base_units,
@@ -1134,7 +1403,10 @@ mod tests {
         assert_eq!(set.shares.values().sum::<u64>(), APPCHAIN_ANCHOR_FEE);
 
         let row = day(&report, "2026-11-17");
-        assert_eq!(row.cost_base_units, APPCHAIN_ANCHOR_FEE);
+        assert_eq!(row.cost.submitted.base_units, APPCHAIN_ANCHOR_FEE);
+        assert_eq!(row.cost.confirmed.base_units, APPCHAIN_ANCHOR_FEE);
+        assert_eq!(row.cost.awaiting.base_units, 0);
+        assert_eq!(row.cost.peer_without_evidence.base_units, 0);
         assert_eq!(row.attributed_base_units, APPCHAIN_ANCHOR_FEE);
         assert_eq!(row.unattributed_base_units, 0);
         assert_eq!(
@@ -1163,9 +1435,21 @@ mod tests {
         insert_day(&store, "2026-11-17", "confirmed", Some(&"dd".repeat(32)));
 
         let report = build(&store, "2026-11-14", "2026-11-17", TODAY, Some(3)).unwrap();
-        assert_eq!(day(&report, "2026-11-14").cost_base_units, 0);
+        assert_eq!(
+            day(&report, "2026-11-14")
+                .cost
+                .total_at(CostBasis::Submitted)
+                .base_units,
+            0
+        );
         assert_eq!(day(&report, "2026-11-14").unsent_anchors, 1);
-        assert_eq!(day(&report, "2026-11-15").cost_base_units, 0);
+        assert_eq!(
+            day(&report, "2026-11-15")
+                .cost
+                .total_at(CostBasis::Submitted)
+                .base_units,
+            0
+        );
         assert_eq!(
             day(&report, "2026-11-16")
                 .registry_anchor
@@ -1182,9 +1466,14 @@ mod tests {
                 .status,
             AnchorStatus::Confirmed
         );
-        assert_eq!(report.totals.cost_base_units, 2 * APPCHAIN_ANCHOR_FEE);
+        assert_eq!(
+            report.totals.cost.total_at(CostBasis::Submitted).base_units,
+            2 * APPCHAIN_ANCHOR_FEE
+        );
+        assert_eq!(report.totals.cost.confirmed.base_units, APPCHAIN_ANCHOR_FEE);
+        assert_eq!(report.totals.cost.awaiting.base_units, APPCHAIN_ANCHOR_FEE);
         assert_eq!(report.totals.unsent_anchors, 2);
-        assert_eq!(report.totals.charged_anchors, 2);
+        assert_eq!(report.totals.cost.submitted.anchors, 2);
     }
 
     #[test]
@@ -1229,7 +1518,19 @@ mod tests {
         assert_eq!(row.peer_anchors.len(), 1);
         assert_eq!(row.peer_anchors[0].chain_id, 1);
         assert_eq!(row.peer_anchors[0].status, AnchorStatus::Submitted);
-        assert_eq!(row.cost_base_units, APPCHAIN_ANCHOR_FEE);
+        assert_eq!(
+            row.cost.total_at(CostBasis::Submitted).base_units,
+            APPCHAIN_ANCHOR_FEE,
+            "a peer anchor is committed money at the submitted basis"
+        );
+        assert_eq!(row.cost.peer_without_evidence.base_units, APPCHAIN_ANCHOR_FEE);
+        assert_eq!(row.cost.submitted.base_units, 0, "no registry anchor that day");
+        assert_eq!(row.cost.awaiting.base_units, 0);
+        assert_eq!(
+            row.cost.total_at(CostBasis::Confirmed).base_units,
+            0,
+            "and nothing here can confirm it"
+        );
         assert_eq!(row.attributed_base_units, 0, "no records for chain 1 here");
         assert_eq!(row.unattributed_base_units, APPCHAIN_ANCHOR_FEE);
         assert_eq!(report.totals.anchors_without_records, 1);
@@ -1257,7 +1558,10 @@ mod tests {
         assert_eq!(report.sets[0].shares["alpha"], APPCHAIN_ANCHOR_FEE);
         assert!(report.sets[1].shares.is_empty());
         assert!(report.sets[2].shares.is_empty());
-        assert_eq!(report.totals.cost_base_units, 3 * APPCHAIN_ANCHOR_FEE);
+        assert_eq!(
+            report.totals.cost.total_at(CostBasis::Submitted).base_units,
+            3 * APPCHAIN_ANCHOR_FEE
+        );
         assert_eq!(report.totals.attributed_base_units, APPCHAIN_ANCHOR_FEE);
     }
 
@@ -1376,7 +1680,8 @@ mod tests {
         let report = build(&store, "2026-11-12", "2026-11-18", TODAY, None).unwrap();
         assert_eq!(report.days.len(), 7);
         assert_eq!(report.totals.records, 0);
-        assert_eq!(report.totals.cost_base_units, 0);
+        assert_eq!(report.totals.cost.total_at(CostBasis::Submitted).base_units, 0);
+        assert_eq!(report.totals.cost.total_at(CostBasis::Confirmed).base_units, 0);
         assert!(report.apps.is_empty());
         assert_eq!(report.registry_chain_id, None);
     }
@@ -1406,18 +1711,20 @@ mod tests {
         let report = build(&store, "2026-11-17", "2026-11-17", TODAY, Some(3)).unwrap();
         let json = report.to_json();
         assert_eq!(
-            json["totals"]["cost_base_units"],
-            json!(report.totals.cost_base_units)
+            json["totals"]["cost"]["total_at_basis"]["base_units"],
+            json!(report.totals.cost.total_at(report.basis).base_units)
         );
+        assert_eq!(json["cost_basis"], json!("submitted"));
+        assert_eq!(json["totals"]["basis"], json!("submitted"));
         assert_eq!(json["totals"]["records"], json!(report.totals.records));
-        assert_eq!(json["totals"]["charged_anchors"], json!(1));
+        assert_eq!(json["totals"]["cost"]["submitted"]["anchors"], json!(1));
         assert_eq!(json["allocation_sets"][0]["chain_id"], json!(3));
         assert_eq!(json["days"][0]["records"], json!(2));
         assert_eq!(json["apps"][0]["app"], json!("alpha"));
 
         let text = report.render_text("/tmp/records.db");
         assert!(
-            text.contains(&grouped(report.totals.cost_base_units)),
+            text.contains(&grouped(report.totals.cost.total_at(report.basis).base_units)),
             "{text}"
         );
         assert!(text.contains("read-only"), "{text}");
@@ -1425,6 +1732,365 @@ mod tests {
             text.contains("not a"),
             "the attribution caveat is stated: {text}"
         );
+    }
+
+    // --- the cost basis ---------------------------------------------------------------------------
+
+    /// One window holding every class: a confirmed registry anchor, one submitted and not confirmed
+    /// here, a peer anchor nothing in this database can confirm, and a reserved slot.
+    fn seed_every_class(store: &GamesStore) {
+        insert_game(store, "alpha", "listed");
+        insert_results(store, "alpha", "2026-11-14", 1);
+        insert_results(store, "alpha", "2026-11-15", 2);
+        insert_results(store, "alpha", "2026-11-16", 4);
+        insert_day(store, "2026-11-14", "confirmed", None);
+        insert_registry_anchor(store, "2026-11-14", 3, "submitted", None);
+        insert_day(store, "2026-11-15", "anchored", None);
+        insert_registry_anchor(store, "2026-11-15", 3, "submitted", None);
+        insert_peer_anchor(store, "2026-11-16", 1, 0x51, "submitted", None);
+        insert_registry_anchor(store, "2026-11-17", 3, "reserved", None);
+    }
+
+    #[test]
+    fn the_default_basis_counts_every_accepted_submission() {
+        let store = store();
+        seed_every_class(&store);
+
+        let report = build(&store, "2026-11-14", "2026-11-17", TODAY, Some(3)).unwrap();
+        assert_eq!(report.basis, CostBasis::Submitted, "submitted stays the default");
+
+        // The figure the report has always shown: every accepted submission, both chains. The basis
+        // added the split; it must not have moved this number.
+        let accepted = 3 * APPCHAIN_ANCHOR_FEE;
+        assert_eq!(
+            report.totals.cost.total_at(CostBasis::Submitted),
+            CostTotals {
+                anchors: 3,
+                base_units: accepted
+            }
+        );
+    }
+
+    #[test]
+    fn the_breakdown_closes_in_both_directions() {
+        let store = store();
+        seed_every_class(&store);
+        let cost = build(&store, "2026-11-14", "2026-11-17", TODAY, Some(3))
+            .unwrap()
+            .totals
+            .cost;
+
+        assert_eq!(
+            cost.confirmed.plus(cost.awaiting),
+            cost.submitted,
+            "the registry classes must account for the registry anchors"
+        );
+        assert_eq!(
+            cost.submitted.plus(cost.peer_without_evidence),
+            cost.total_at(CostBasis::Submitted)
+        );
+        assert_eq!(cost.confirmed, cost.total_at(CostBasis::Confirmed));
+    }
+
+    #[test]
+    fn peer_anchors_are_never_confirmed_and_never_await_evidence() {
+        let store = store();
+        seed_every_class(&store);
+
+        for basis in [CostBasis::Submitted, CostBasis::Confirmed] {
+            let report =
+                build_at(&store, "2026-11-14", "2026-11-17", TODAY, Some(3), basis).unwrap();
+            let cost = report.totals.cost;
+            assert_eq!(cost.peer_without_evidence.anchors, 1, "{basis:?}");
+            assert_eq!(
+                cost.peer_without_evidence.base_units, APPCHAIN_ANCHOR_FEE,
+                "{basis:?}"
+            );
+            // Its money is not silently moved into either registry class.
+            assert_eq!(cost.confirmed.base_units, APPCHAIN_ANCHOR_FEE, "{basis:?}");
+            assert_eq!(cost.awaiting.base_units, APPCHAIN_ANCHOR_FEE, "{basis:?}");
+        }
+    }
+
+    #[test]
+    fn the_confirmed_basis_counts_only_confirmed_registry_anchors() {
+        let store = store();
+        seed_every_class(&store);
+        let report = build_at(
+            &store,
+            "2026-11-14",
+            "2026-11-17",
+            TODAY,
+            Some(3),
+            CostBasis::Confirmed,
+        )
+        .unwrap();
+
+        assert_eq!(
+            report.totals.cost.total_at(CostBasis::Confirmed).base_units,
+            APPCHAIN_ANCHOR_FEE
+        );
+        // The day whose anchor is only submitted now counts nothing, and says what it is waiting for.
+        assert_eq!(
+            day(&report, "2026-11-15")
+                .cost
+                .total_at(CostBasis::Confirmed)
+                .base_units,
+            0
+        );
+        assert_eq!(
+            day(&report, "2026-11-15").cost.awaiting.base_units,
+            APPCHAIN_ANCHOR_FEE
+        );
+        // So does the peer day, whose charge is still shown rather than dropped.
+        assert_eq!(
+            day(&report, "2026-11-16")
+                .cost
+                .total_at(CostBasis::Confirmed)
+                .base_units,
+            0
+        );
+        assert_eq!(
+            day(&report, "2026-11-16")
+                .cost
+                .peer_without_evidence
+                .base_units,
+            APPCHAIN_ANCHOR_FEE
+        );
+    }
+
+    #[test]
+    fn an_all_confirmed_window_reports_the_same_total_in_both_bases() {
+        let store = store();
+        insert_game(&store, "alpha", "listed");
+        insert_results(&store, "alpha", "2026-11-17", 3);
+        insert_day(&store, "2026-11-17", "confirmed", None);
+        insert_registry_anchor(&store, "2026-11-17", 3, "submitted", None);
+
+        let submitted =
+            build_at(&store, "2026-11-17", "2026-11-17", TODAY, Some(3), CostBasis::Submitted)
+                .unwrap();
+        let confirmed =
+            build_at(&store, "2026-11-17", "2026-11-17", TODAY, Some(3), CostBasis::Confirmed)
+                .unwrap();
+
+        assert_eq!(
+            submitted.totals.cost.total_at(CostBasis::Submitted),
+            confirmed.totals.cost.total_at(CostBasis::Confirmed)
+        );
+        assert_eq!(submitted.sets, confirmed.sets, "the same anchors form the same sets");
+    }
+
+    #[test]
+    fn day_rows_sum_to_the_totals_in_every_class() {
+        let store = store();
+        seed_every_class(&store);
+
+        for basis in [CostBasis::Submitted, CostBasis::Confirmed] {
+            let report =
+                build_at(&store, "2026-11-14", "2026-11-17", TODAY, Some(3), basis).unwrap();
+            let mut cost = CostBreakdown::default();
+            for row in &report.days {
+                cost = cost.plus(row.cost);
+            }
+            assert_eq!(cost, report.totals.cost, "{basis:?}");
+        }
+    }
+
+    #[test]
+    fn attribution_at_submission_keeps_peer_cost_inside_unattributed() {
+        let store = store();
+        seed_every_class(&store);
+        let report = build(&store, "2026-11-14", "2026-11-17", TODAY, Some(3)).unwrap();
+
+        let counted = report.totals.cost.total_at(CostBasis::Submitted).base_units;
+        assert_eq!(
+            report.totals.attributed_base_units + report.totals.unattributed_base_units,
+            counted,
+            "the attribution closes on the total this basis counts"
+        );
+        assert!(
+            report.totals.unattributed_base_units >= APPCHAIN_ANCHOR_FEE,
+            "the peer charge sits in the unattributed part, not in an app's share"
+        );
+    }
+
+    #[test]
+    fn attribution_at_confirmation_excludes_peer_and_awaiting() {
+        let store = store();
+        seed_every_class(&store);
+        let report = build_at(
+            &store,
+            "2026-11-14",
+            "2026-11-17",
+            TODAY,
+            Some(3),
+            CostBasis::Confirmed,
+        )
+        .unwrap();
+
+        let counted = report.totals.cost.total_at(CostBasis::Confirmed).base_units;
+        assert_eq!(
+            report.totals.attributed_base_units + report.totals.unattributed_base_units,
+            counted
+        );
+        assert_eq!(
+            report.sets.len(),
+            1,
+            "only the confirmed anchor is apportioned at that basis"
+        );
+        assert_eq!((report.sets[0].chain_id, report.sets[0].day.as_str()), (3, "2026-11-14"));
+        assert_eq!(report.totals.anchors_without_records, 0);
+    }
+
+    #[test]
+    fn every_set_records_the_status_it_was_counted_as() {
+        let store = store();
+        seed_every_class(&store);
+
+        let submitted = build(&store, "2026-11-14", "2026-11-17", TODAY, Some(3)).unwrap();
+        let statuses: Vec<AnchorStatus> = submitted.sets.iter().map(|set| set.status).collect();
+        assert_eq!(
+            statuses,
+            vec![
+                AnchorStatus::Confirmed,
+                AnchorStatus::Submitted,
+                AnchorStatus::Submitted
+            ]
+        );
+
+        let confirmed =
+            build_at(&store, "2026-11-14", "2026-11-17", TODAY, Some(3), CostBasis::Confirmed)
+                .unwrap();
+        assert!(confirmed
+            .sets
+            .iter()
+            .all(|set| set.status == AnchorStatus::Confirmed));
+    }
+
+    #[test]
+    fn one_day_with_records_is_called_a_day_and_not_a_days() {
+        let store = store();
+        insert_game(&store, "alpha", "listed");
+        insert_results(&store, "alpha", "2026-11-17", 1);
+
+        let one = build(&store, "2026-11-17", "2026-11-17", TODAY, Some(3)).unwrap();
+        let text = one.render_text("/tmp/records.db");
+        assert!(text.contains("1 day with records"), "{text}");
+        assert!(!text.contains("1 days"), "the plural must not leak: {text}");
+
+        insert_results(&store, "alpha", "2026-11-18", 1);
+        let two = build(&store, "2026-11-17", "2026-11-18", TODAY, Some(3)).unwrap();
+        let text = two.render_text("/tmp/records.db");
+        assert!(text.contains("2 days with records"), "{text}");
+    }
+
+    #[test]
+    fn the_text_states_every_class_under_both_bases() {
+        let store = store();
+        seed_every_class(&store);
+
+        for basis in [CostBasis::Submitted, CostBasis::Confirmed] {
+            let report =
+                build_at(&store, "2026-11-14", "2026-11-17", TODAY, Some(3), basis).unwrap();
+            let text = report.render_text("/tmp/records.db");
+            for label in [
+                "counted at this basis",
+                "not counted at this basis",
+                "for reference",
+                "unsent (reserved or in doubt)",
+                "awaiting (registry)",
+                "total at submission",
+                "total at confirmed",
+            ] {
+                assert!(text.contains(label), "{basis:?} report lost {label}:\n{text}");
+            }
+            assert_eq!(
+                text.matches("peer_without_evidence").count(),
+                1,
+                "peer without evidence is stated exactly once, under '{basis:?}'"
+            );
+        }
+    }
+
+    #[test]
+    fn json_publishes_the_four_classes_and_the_total_under_both_bases() {
+        let store = store();
+        seed_every_class(&store);
+
+        for basis in [CostBasis::Submitted, CostBasis::Confirmed] {
+            let report =
+                build_at(&store, "2026-11-14", "2026-11-17", TODAY, Some(3), basis).unwrap();
+            let json = report.to_json();
+            let cost = &json["totals"]["cost"];
+            assert_eq!(
+                cost["submitted"]["anchors"],
+                json!(report.totals.cost.submitted.anchors)
+            );
+            assert_eq!(
+                cost["confirmed"]["base_units"],
+                json!(report.totals.cost.confirmed.base_units)
+            );
+            assert_eq!(cost["awaiting"]["anchors"], json!(1));
+            assert_eq!(cost["peer_without_evidence"]["anchors"], json!(1));
+            assert_eq!(
+                cost["total_at_basis"]["base_units"],
+                json!(report.totals.cost.total_at(basis).base_units)
+            );
+            assert_eq!(json["cost_basis"], json!(basis.code()));
+            assert!(json["days"][0]["cost"]["total_at_basis"].is_object());
+        }
+    }
+
+    #[test]
+    fn the_cost_basis_composes_with_windows_and_json() {
+        let parsed =
+            parse_args(&argv(&["--days", "3", "--cost-basis", "confirmed", "--json"]), TODAY)
+                .unwrap();
+        assert_eq!(parsed.cost_basis, CostBasis::Confirmed);
+        assert_eq!((parsed.from.as_str(), parsed.to.as_str()), ("2026-11-16", TODAY));
+        assert!(parsed.json);
+
+        let default = parse_args(&argv(&["--date", "2026-11-17"]), TODAY).unwrap();
+        assert_eq!(
+            default.cost_basis,
+            CostBasis::Submitted,
+            "submitted stays the default"
+        );
+    }
+
+    #[test]
+    fn a_repeated_unknown_or_valueless_cost_basis_is_refused() {
+        for values in [
+            vec!["--cost-basis", "submitted", "--cost-basis", "confirmed"],
+            vec!["--cost-basis", "ledger"],
+            vec!["--cost-basis"],
+            vec!["--cost-basis", "confirmed", "--cost-basis"],
+        ] {
+            let error = parse_args(&argv(&values), TODAY)
+                .err()
+                .unwrap_or_else(|| panic!("{values:?} was accepted, and it should not have been"));
+            assert!(error.contains("--cost-basis"), "{values:?} gave: {error}");
+        }
+        // A typo is named, so the operator can see what was rejected.
+        let error = parse_args(&argv(&["--cost-basis", "ledger"]), TODAY).unwrap_err();
+        assert!(error.contains("ledger"), "{error}");
+    }
+
+    #[test]
+    fn the_same_basis_and_window_always_produce_the_same_report() {
+        let store = store();
+        seed_every_class(&store);
+
+        for basis in [CostBasis::Submitted, CostBasis::Confirmed] {
+            let first =
+                build_at(&store, "2026-11-14", "2026-11-17", TODAY, Some(3), basis).unwrap();
+            let second =
+                build_at(&store, "2026-11-14", "2026-11-17", TODAY, Some(3), basis).unwrap();
+            assert_eq!(first, second, "{basis:?}");
+            assert_eq!(first.render_text("db"), second.render_text("db"), "{basis:?}");
+            assert_eq!(first.to_json(), second.to_json(), "{basis:?}");
+        }
     }
 
     // --- read-only, on real files -----------------------------------------------------------------

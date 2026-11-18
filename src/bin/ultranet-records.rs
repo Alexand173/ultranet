@@ -11,9 +11,9 @@
 //! ultranet-records backup --to /var/backups/ultranet-records/records-YYYYMMDD.db
 //! ultranet-records close-day --date YYYY-MM-DD                          # close (and anchor) a registry day
 //! ultranet-records peer-usage [--date YYYY-MM-DD]    # the Games service's anchor allowance for a day (database only)
-//! ultranet-records usage-report [--date D | --from D --to D] [--days N] [--json]
+//! ultranet-records usage-report [--date D | --from D --to D | --days N] [--cost-basis submitted|confirmed] [--json]
 //!                                                    # accepted records, anchor cost and each app's share of it,
-//!                                                    # from the database read-only: no key, no network (P3)
+//!                                                    # at the basis asked for; database read-only: no key, no network (P3)
 //! ultranet-records peer-resolve --date D --chain C --root <64 hex> (--landed <tx hash> [--pending-unverified-ok] | --not-submitted) --note "..."
 //! ultranet-records registry-resolve --date D (--landed <tx hash> [--pending-unverified-ok] | --not-submitted) --note "..."
 //!                                                    # an operator's decision about an anchor whose outcome is unknown;
@@ -313,9 +313,15 @@ fn usage_report(args: &[String]) -> Result<(), String> {
         .ok()
         .and_then(|value| value.trim().parse::<u32>().ok());
 
-    let report =
-        UltraNet::games::usage::build(&store, &parsed.from, &parsed.to, &today, registry_chain_id)
-            .map_err(|e| e.to_string())?;
+    let report = UltraNet::games::usage::build_at(
+        &store,
+        &parsed.from,
+        &parsed.to,
+        &today,
+        registry_chain_id,
+        parsed.cost_basis,
+    )
+    .map_err(|e| e.to_string())?;
     if parsed.json {
         let json = serde_json::to_string_pretty(&report.to_json()).map_err(|e| e.to_string())?;
         println!("{json}");
