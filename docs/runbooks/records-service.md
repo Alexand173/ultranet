@@ -258,10 +258,28 @@ ultranet-records usage-report                     # the last 7 UTC days, today i
 ultranet-records usage-report --date 2026-11-17   # one day
 ultranet-records usage-report --from 2026-11-01 --to 2026-11-30
 ultranet-records usage-report --days 30 --json    # same figures, for diffing month to month
+ultranet-records usage-report --cost-basis confirmed   # only what this node can evidence
 ```
 
 Each flag may be given at most once, and a window may be described one way only: a repeated flag, or `--date`
 together with `--from`, `--to` or `--days`, is refused rather than letting the last one win.
+
+**The cost basis.** A fee is charged when a transaction is *included in a block*; `submitted` only means a signer
+returned a hash. So the report can count two ways, and says which one it used:
+
+| `--cost-basis` | Counts | Use |
+|---|---|---|
+| `submitted` (default) | registry anchors accepted at submission **+ peer anchors** | what the owner has committed: the money that must be available |
+| `confirmed` | registry anchors this node has confirmed only | what can be evidenced against the chain |
+
+Every report prints four figures whichever basis is chosen, under `counted at this basis`, `not counted at this
+basis` and `for reference`: registry `submitted`, `confirmed` and `awaiting`, peer `peer_without_evidence`, plus the
+unsent count. `total at submission` is `submitted + peer_without_evidence`; `total at confirmed` is `confirmed`. A
+confirmed-basis report therefore never shows a smaller headline without the larger one beside it.
+
+**Peer anchors can never be confirmed here.** Their confirmation lives in the Games database, not this one. They are
+reported as `peer_without_evidence` under both bases, and under `confirmed` they are not apportioned to applications
+at all — this database holds no evidence for them and none of the records to apportion them against.
 
 It answers four questions and nothing else: how many records each application had accepted per UTC day, which anchor
 transactions were charged, which records each charge covered, and how much of the spend carried no records. It opens
@@ -291,9 +309,15 @@ nothing is dropped, nothing is assigned twice, and nothing is carried to another
 | A peer anchor is reported on its **request** day, not the day it covers | the covered day lives in the Games database's `days` table, which this service does not own |
 | `reserved` and `submitting` are reported as *unsent* and cost nothing | the outcome is unknown; see §5.2 |
 | `submitted` is not called `confirmed` | only the registry's own day state, synced from the ledger, earns that word |
+| A peer anchor cannot be confirmed here | its confirmation lives in the Games database; it is reported as `peer_without_evidence` under both bases |
+| `anchors with no records` follows the chosen basis | under `confirmed` only confirmed anchors are counted, so the figure is smaller and means less |
+| `confirmed` means "this node's ledger sync saw it" | a lagging sync under-counts, so the error is toward understating cost, never overstating it |
 
-Read it as: **cost per UTC day** is what the owner wallet actually pays, and **anchors with no records** is the part of
-it that buys nothing but liveness.
+Read it as: at the default basis, **cost per UTC day** is what the owner has committed — every accepted submission,
+including peer anchors whose confirmation this service cannot observe. Under `--cost-basis confirmed` it is only what
+the node has evidenced, which is smaller for a reason the report states beside the figure. **anchors with no records**
+is the part of the chosen total that buys nothing but liveness. Neither figure is a bank statement: this service knows
+what it submitted and what its own ledger sync has seen, not what a wallet will be debited.
 
 ## 5. When something goes wrong
 

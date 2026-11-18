@@ -273,6 +273,18 @@ inside a set each application takes its integer share with the leftover units go
 Two limits are printed with the figures: a per-app cost is a *share* of a shared anchor, not a measured charge, and a
 peer anchor is reported on its request day because the day it covers lives in the Games database.
 
+The report also states **which charges it counted**, because a fee is charged at inclusion, not at submission.
+
+| `--cost-basis` | Total | Apportioned |
+|---|---|---|
+| `submitted` (default) | registry accepted at submission + peer anchors | registry sets and peer sets; peer fees land in the unattributed part |
+| `confirmed` | registry anchors this node has confirmed | confirmed registry sets only |
+
+Each report prints four classes — registry `submitted`, `confirmed`, `awaiting`, and peer
+`peer_without_evidence` — plus the unsent count, so the narrower total can never be read without the wider one. A peer
+anchor is never called confirmed here: its evidence belongs to the Games database, and the service does not infer what
+it cannot see. `confirmed` describes this node's own ledger sync, so a lagging sync under-counts and never overstates.
+
 **Proposal:** the service **reports** and does not **collect**.
 
 - It counts, per application and per day, the records accepted and the anchors that covered them.
