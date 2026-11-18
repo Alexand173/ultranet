@@ -316,10 +316,14 @@ impl GamesStore {
     /// Open an **existing** database with no ability to write it, for operator reports (`usage.rs`).
     ///
     /// Unlike [`open`](Self::open) this never creates the file or its parent directory, never runs the
-    /// migration, and never sets the journal mode, because all three write. If the database cannot be
-    /// read under those terms — a WAL file whose shared memory is missing, a directory the process may
-    /// not write — this returns an error. It must not fall back to a writable connection: a report that
-    /// needs write access to read its own figures could change the figures it is reporting.
+    /// migration, and never sets the journal mode, because all three write. A database at any schema
+    /// version other than this build's is refused rather than read, since a report cannot migrate it
+    /// into something it can understand.
+    ///
+    /// If the database cannot be read under those terms — a WAL file whose companions are missing and
+    /// may not be created, a directory the process may not write — this returns an error. It must not
+    /// fall back to a writable connection: a report that needs write access to read its own figures
+    /// could change the figures it is reporting.
     pub fn open_read_only(path: &Path) -> Result<Self, StoreError> {
         if path == Path::new(":memory:") {
             return Err(StoreError::Malformed(
@@ -347,6 +351,38 @@ impl GamesStore {
         })?;
         // Per-connection settings only: neither writes to the file.
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
+        // A report never migrates, so a database from another build is refused. The alternative is
+        // reading a schema this code does not understand and printing figures that look authoritative.
+        // Two different failures, kept apart on purpose: a database that cannot be read here at all,
+        // and one that is readable but not this schema. Calling the first "unknown schema" would send
+        // the operator looking for the wrong problem.
+        let version: Option<String> = connection
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| {
+                StoreError::Malformed(format!(
+                    "cannot read the schema version of {} ({error}); this report needs schema \
+                     {SCHEMA_VERSION} and will not read a database it cannot verify",
+                    path.display()
+                ))
+            })?;
+        let parsed = version
+            .as_deref()
+            .and_then(|text| text.trim().parse::<i64>().ok());
+        if parsed != Some(SCHEMA_VERSION) {
+            return Err(StoreError::Malformed(format!(
+                "{} is schema {}; this report needs schema {SCHEMA_VERSION}. Run the build that \
+                 matches the database, or report against a copy of it",
+                path.display(),
+                parsed
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
+            )));
+        }
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
             path: Some(path.to_path_buf()),

@@ -583,6 +583,110 @@ fn bad_date(date: &str) -> StoreError {
     StoreError::Malformed(format!("{date} is not a UTC date (expected YYYY-MM-DD)"))
 }
 
+/// What an operator asked the report to cover.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReportArgs {
+    pub from: String,
+    pub to: String,
+    pub json: bool,
+}
+
+/// Parse `usage-report`'s flags.
+///
+/// Contradictory windows and unknown flags are refused rather than resolved. A report that silently
+/// covers the wrong days, or silently prints text when JSON was asked for, looks exactly like a correct
+/// one, and the operator has no way to tell afterwards.
+pub fn parse_args(args: &[String], today: &str) -> Result<ReportArgs, String> {
+    let mut date: Option<String> = None;
+    let mut from: Option<String> = None;
+    let mut to: Option<String> = None;
+    let mut days: Option<String> = None;
+    let mut json = false;
+
+    // A flag may appear once. `--date A --date B` would otherwise report one of them and say nothing
+    // about the other, which is the same silent-wrong-answer problem as a contradictory window.
+    let mut seen: Vec<&str> = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        if matches!(flag, "--json" | "--date" | "--from" | "--to" | "--days") {
+            if seen.contains(&flag) {
+                return Err(format!("{flag} was given more than once; give it at most once"));
+            }
+            seen.push(flag);
+        }
+        match flag {
+            "--json" => {
+                json = true;
+                index += 1;
+            }
+            "--date" | "--from" | "--to" | "--days" => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| format!("{flag} needs a value"))?
+                    .clone();
+                match flag {
+                    "--date" => date = Some(value),
+                    "--from" => from = Some(value),
+                    _ if flag == "--to" => to = Some(value),
+                    _ => days = Some(value),
+                }
+                index += 2;
+            }
+            other => {
+                return Err(format!(
+                    "unknown argument {other}; usage-report takes --date, --from, --to, --days and --json"
+                ))
+            }
+        }
+    }
+
+    if date.is_some() && (from.is_some() || to.is_some() || days.is_some()) {
+        return Err(
+            "--date selects a single day, so it cannot be combined with --from, --to or --days".into(),
+        );
+    }
+    if days.is_some() && from.is_some() {
+        return Err(
+            "--days counts back from --to (or from today), so it cannot be combined with --from".into(),
+        );
+    }
+
+    if let Some(date) = date {
+        return Ok(ReportArgs {
+            from: date.clone(),
+            to: date,
+            json,
+        });
+    }
+
+    let end = to.unwrap_or_else(|| today.to_string());
+    let start = match days {
+        Some(value) => {
+            let count = value
+                .parse::<u64>()
+                .ok()
+                .filter(|count| *count > 0)
+                .ok_or_else(|| format!("--days needs a positive whole number, got {value}"))?;
+            days_before(&end, count.saturating_sub(1))
+                .ok_or_else(|| format!("{end} is not a UTC date (expected YYYY-MM-DD)"))?
+        }
+        None => match from {
+            Some(value) => value,
+            None => days_before(&end, 6)
+                .ok_or_else(|| format!("{end} is not a UTC date (expected YYYY-MM-DD)"))?,
+        },
+    };
+    Ok(ReportArgs { from: start, to: end, json })
+}
+
+/// The UTC date `days` days before `date`, for the report's windows.
+pub fn days_before(date: &str, days: u64) -> Option<String> {
+    let day = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
+    let earlier = day.checked_sub_signed(ChronoDuration::days(i64::try_from(days).ok()?))?;
+    Some(earlier.format("%Y-%m-%d").to_string())
+}
+
 /// `day -> app id -> accepted records`.
 type Records = BTreeMap<String, BTreeMap<String, u64>>;
 /// `day -> the registry's day state`, for the days that have been closed.
@@ -1429,12 +1533,18 @@ mod tests {
                     "it opened writable, so it did not read read-only"
                 );
             }
-            // Or it cannot, and then it must say so rather than open the database another way.
+            // Or it cannot, and then it must say so rather than open the database another way. This code
+            // path has exactly two honest refusals — the schema cannot be verified, or the connection
+            // cannot be opened read-only — and either must name the database it is refusing.
             Err(error) => {
                 let error = error.to_string();
                 assert!(
-                    error.contains("read-only"),
-                    "the failure must explain itself: {error}"
+                    error.contains("records.db"),
+                    "the refusal must name the database: {error}"
+                );
+                assert!(
+                    error.contains("schema") || error.contains("read-only"),
+                    "the refusal must explain itself: {error}"
                 );
             }
         }
@@ -1483,5 +1593,154 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    // --- the schema gate ---------------------------------------------------------------------------
+
+    fn read_only_error(path: &Path) -> String {
+        match GamesStore::open_read_only(path) {
+            Ok(_) => panic!("{} opened, and should not have", path.display()),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_database_from_another_schema_is_refused_rather_than_misread() {
+        let path = scratch("schema3");
+        {
+            let writable = GamesStore::open(&path).unwrap();
+            insert_game(&writable, "alpha", "listed");
+            writable
+                .lock()
+                .unwrap()
+                .execute("UPDATE meta SET value = '3' WHERE key = 'schema_version'", [])
+                .unwrap();
+        }
+        let error = read_only_error(&path);
+        assert!(error.contains("schema 3"), "{error}");
+        assert!(error.contains("needs schema 4"), "{error}");
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn a_database_without_a_schema_marker_is_refused_as_unknown() {
+        let path = scratch("noschema");
+        {
+            let writable = GamesStore::open(&path).unwrap();
+            insert_game(&writable, "alpha", "listed");
+            writable.lock().unwrap().execute("DELETE FROM meta", []).unwrap();
+        }
+        let error = read_only_error(&path);
+        assert!(error.contains("unknown"), "{error}");
+        assert!(error.contains("needs schema 4"), "{error}");
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    // --- the arguments -----------------------------------------------------------------------------
+
+    fn argv(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn the_default_window_is_the_seven_days_ending_today() {
+        let parsed = parse_args(&argv(&[]), TODAY).unwrap();
+        assert_eq!((parsed.from.as_str(), parsed.to.as_str()), ("2026-11-12", TODAY));
+        assert!(!parsed.json);
+    }
+
+    #[test]
+    fn a_single_day_a_range_a_count_and_an_open_end_all_parse() {
+        let one = parse_args(&argv(&["--date", "2026-11-17"]), TODAY).unwrap();
+        assert_eq!((one.from.as_str(), one.to.as_str()), ("2026-11-17", "2026-11-17"));
+
+        let range =
+            parse_args(&argv(&["--from", "2026-11-01", "--to", "2026-11-30"]), TODAY).unwrap();
+        assert_eq!((range.from.as_str(), range.to.as_str()), ("2026-11-01", "2026-11-30"));
+
+        // --to alone keeps the default width, ending there.
+        let end = parse_args(&argv(&["--to", "2026-11-17"]), TODAY).unwrap();
+        assert_eq!((end.from.as_str(), end.to.as_str()), ("2026-11-11", "2026-11-17"));
+
+        // --from alone runs to today.
+        let open = parse_args(&argv(&["--from", "2026-11-01"]), TODAY).unwrap();
+        assert_eq!((open.from.as_str(), open.to.as_str()), ("2026-11-01", TODAY));
+
+        let counted = parse_args(&argv(&["--days", "30"]), TODAY).unwrap();
+        assert_eq!((counted.from.as_str(), counted.to.as_str()), ("2026-10-20", TODAY));
+
+        let counted_back = parse_args(&argv(&["--days", "3", "--to", "2026-11-17"]), TODAY).unwrap();
+        assert_eq!((counted_back.from.as_str(), counted_back.to.as_str()), ("2026-11-15", "2026-11-17"));
+    }
+
+    #[test]
+    fn json_composes_with_every_window() {
+        for values in [
+            vec!["--json"],
+            vec!["--json", "--date", "2026-11-17"],
+            vec!["--json", "--from", "2026-11-01", "--to", "2026-11-02"],
+            vec!["--json", "--days", "3"],
+        ] {
+            let parsed = parse_args(&argv(&values), TODAY)
+                .unwrap_or_else(|error| panic!("{values:?} was refused: {error}"));
+            assert!(parsed.json, "{values:?} lost --json");
+        }
+    }
+
+    #[test]
+    fn contradictory_windows_are_refused_rather_than_silently_resolved() {
+        for (values, expected) in [
+            (vec!["--date", "2026-11-17", "--from", "2026-11-01"], "--date"),
+            (vec!["--date", "2026-11-17", "--to", "2026-11-18"], "--date"),
+            (vec!["--date", "2026-11-17", "--days", "3"], "--date"),
+            (vec!["--days", "3", "--from", "2026-11-01"], "--days"),
+        ] {
+            let error = parse_args(&argv(&values), TODAY)
+                .err()
+                .unwrap_or_else(|| panic!("{values:?} was accepted, and it should not have been"));
+            assert!(error.contains(expected), "{values:?} gave: {error}");
+        }
+    }
+
+    #[test]
+    fn unknown_flags_and_missing_or_bad_values_are_refused_by_name() {
+        for (values, expected) in [
+            (vec!["--jsno"], "--jsno"),
+            (vec!["--date"], "--date"),
+            (vec!["--from"], "--from"),
+            (vec!["--days", "0"], "--days"),
+            (vec!["--days", "seven"], "--days"),
+            (vec!["--date", "2026-11-17", "--loud"], "--loud"),
+        ] {
+            let error = parse_args(&argv(&values), TODAY)
+                .err()
+                .unwrap_or_else(|| panic!("{values:?} was accepted, and it should not have been"));
+            assert!(error.contains(expected), "{values:?} gave: {error}");
+        }
+    }
+
+    #[test]
+    fn a_repeated_flag_is_refused_instead_of_letting_the_last_one_win() {
+        for given in [
+            vec!["--date", "2026-11-16", "--date", "2026-11-17"],
+            vec!["--from", "2026-11-01", "--from", "2026-11-02"],
+            vec!["--to", "2026-11-17", "--to", "2026-11-18"],
+            vec!["--days", "3", "--days", "4"],
+            vec!["--json", "--json"],
+        ] {
+            let error = parse_args(&argv(&given), TODAY)
+                .err()
+                .unwrap_or_else(|| panic!("{given:?} was accepted, and should not have been"));
+            assert!(error.contains("more than once"), "{given:?} gave: {error}");
+        }
+    }
+
+    #[test]
+    fn counting_back_crosses_months_and_leap_days() {
+        assert_eq!(days_before("2026-03-01", 1).as_deref(), Some("2026-02-28"));
+        assert_eq!(days_before("2028-03-01", 1).as_deref(), Some("2028-02-29"));
+        assert_eq!(days_before("2026-01-01", 1).as_deref(), Some("2025-12-31"));
+        assert_eq!(days_before("2026-11-18", 0).as_deref(), Some("2026-11-18"));
+        assert_eq!(days_before("not-a-date", 1), None);
     }
 }

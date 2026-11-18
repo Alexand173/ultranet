@@ -260,6 +260,9 @@ ultranet-records usage-report --from 2026-11-01 --to 2026-11-30
 ultranet-records usage-report --days 30 --json    # same figures, for diffing month to month
 ```
 
+Each flag may be given at most once, and a window may be described one way only: a repeated flag, or `--date`
+together with `--from`, `--to` or `--days`, is refused rather than letting the last one win.
+
 It answers four questions and nothing else: how many records each application had accepted per UTC day, which anchor
 transactions were charged, which records each charge covered, and how much of the spend carried no records. It opens
 the database **read-only** and needs no key, no network and no `appchain-cli`:
@@ -268,9 +271,10 @@ the database **read-only** and needs no key, no network and no `appchain-cli`:
   configuration is deliberately not built, because that is how a report would end up holding a credential.
 * The database is never created, migrated or modified. If `RECORDS_DB_PATH` is wrong the command says `no database`
   rather than creating an empty one that then reports zeroes for the wrong reason.
-* Reading a WAL database can make SQLite create the `-wal`/`-shm` companions; the database file itself is unchanged.
-  If the directory forbids even that, the command refuses with an explanation instead of opening the database
-  writable to get its numbers.
+* Reading a WAL database can make SQLite create the `-wal`/`-shm` companions; the database file itself is never
+  modified. Where those companions cannot be created — a directory the service user may not write — the outcome
+  depends on the SQLite build: it either reads the database without them, or refuses with an explanation. What it
+  never does is open the database writable to get its numbers.
 
 **How a charge is apportioned.** An allocation set is a `(chain_id, attribution_day)` pair — one set per anchor, so
 two chains anchoring on the same day are two sets and no charge is ever counted twice. Inside a set, each application

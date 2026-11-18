@@ -298,54 +298,31 @@ fn peer_usage(args: &[String]) -> Result<(), String> {
 /// reason `peer-usage` does — building the full service configuration is how a report would end up
 /// holding a credential it never needs.
 fn usage_report(args: &[String]) -> Result<(), String> {
+    let today = UltraNet::games::service::date_of(UltraNet::auth::now_seconds());
+    // Arguments first: a bad invocation is refused without touching the database at all.
+    let parsed = UltraNet::games::usage::parse_args(args, &today)?;
+
     let path = db_path();
     // The operator reads this line, so a plain reason beats an internal prefix.
     let store = GamesStore::open_read_only(&path).map_err(|error| match error {
         UltraNet::games::store::StoreError::Malformed(reason) => reason,
         other => other.to_string(),
     })?;
-    let today = UltraNet::games::service::date_of(UltraNet::auth::now_seconds());
-
-    let (from, to) = match flag(args, "--date") {
-        Some(date) => (date.clone(), date),
-        None => {
-            let days = match flag(args, "--days") {
-                Some(value) => value
-                    .parse::<u64>()
-                    .ok()
-                    .filter(|days| *days > 0)
-                    .ok_or_else(|| format!("--days needs a positive whole number, got {value}"))?,
-                None => 7,
-            };
-            let to = flag(args, "--to").unwrap_or_else(|| today.clone());
-            let from = flag(args, "--from").unwrap_or_else(|| {
-                days_before(&to, days.saturating_sub(1)).unwrap_or_else(|| to.clone())
-            });
-            (from, to)
-        }
-    };
 
     let registry_chain_id = env::var("RECORDS_REGISTRY_CHAIN_ID")
         .ok()
         .and_then(|value| value.trim().parse::<u32>().ok());
 
-    let report = UltraNet::games::usage::build(&store, &from, &to, &today, registry_chain_id)
-        .map_err(|e| e.to_string())?;
-    if args.iter().any(|argument| argument == "--json") {
+    let report =
+        UltraNet::games::usage::build(&store, &parsed.from, &parsed.to, &today, registry_chain_id)
+            .map_err(|e| e.to_string())?;
+    if parsed.json {
         let json = serde_json::to_string_pretty(&report.to_json()).map_err(|e| e.to_string())?;
         println!("{json}");
     } else {
         print!("{}", report.render_text(&path.display().to_string()));
     }
     Ok(())
-}
-
-/// The UTC date `days` days before `date`, for the report's default window.
-fn days_before(date: &str, days: u64) -> Option<String> {
-    let start = UltraNet::games::service::date_start(date)?;
-    Some(UltraNet::games::service::date_of(
-        start.saturating_sub(days.saturating_mul(86_400)),
-    ))
 }
 
 /// What an operator decided about an anchor whose outcome the service could not settle, with a claimed
