@@ -963,6 +963,26 @@ fn cost_json(cost: &CostBreakdown, basis: CostBasis) -> Value {
     })
 }
 
+/// `1 day` / `2 days`, `1 anchor` / `2 anchors`. A report that says "1 anchors" invites doubt about
+/// the figures beside it, so every count printed for a human uses this.
+fn plural(count: u64, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{} {noun}s", grouped(count))
+    }
+}
+
+/// One line of the day table, header or data, from one format string: a header can never drift from
+/// its column, and the single spaces between the numeric columns stop two labels touching.
+fn day_columns(cells: [&str; 11]) -> String {
+    format!(
+        "{:<12}{:>5}{:>8}  {:<20}{:<26}{:>5} {:>9} {:>10} {:>8} {:>9} {:>10}\n",
+        cells[0], cells[1], cells[2], cells[3], cells[4], cells[5], cells[6], cells[7], cells[8],
+        cells[9], cells[10]
+    )
+}
+
 impl UsageReport {
     /// The operator-readable report. Fixed-width blocks and figures; no interpretation.
     pub fn render_text(&self, database: &str) -> String {
@@ -985,24 +1005,20 @@ impl UsageReport {
         ));
         out.push_str(&format!("registry    chain {chain}\n"));
         out.push_str(&format!("basis       {}\n", basis_text(self.basis)));
-        // "1 days" is a small thing that makes an operator distrust a large one, so the word agrees
-        // with the number here as it already does in the `range` line above.
-        let records_days = match self.totals.days_with_records {
-            1 => "1 day".to_string(),
-            other => format!("{other} days"),
-        };
+        // Every count on this line agrees with its noun: "1 app", "1 day", "1 anchor".
+        let counted = self.totals.cost.total_at(self.basis);
         out.push_str(&format!(
-            "sources     {} apps, {} with records, {} anchors counted at this basis\n",
-            self.totals.apps,
-            records_days,
-            grouped(self.totals.cost.total_at(self.basis).anchors)
+            "sources     {}, {} with records, {} counted at this basis\n",
+            plural(self.totals.apps as u64, "app"),
+            plural(self.totals.days_with_records as u64, "day"),
+            plural(counted.anchors, "anchor"),
         ));
         out.push_str("note        a per-app figure is that app's share of anchors every application shares,\n");
         out.push_str("            not a measured charge; peer anchors cover first-party game days whose records\n");
-        out.push_str("            are kept by the Games Reward Service, so their cost stays unattributed here\n\n");
+        out.push_str("            are kept by the Games Reward Service, so their cost is never apportioned to an\n");
+        out.push_str("            application here\n\n");
 
-        out.push_str(&format!(
-            "{:<12}{:>5}{:>8}  {:<20}{:<26}{:>5}{:>9}{:>10}{:>8}{:>9}{:>10}\n",
+        out.push_str(&day_columns([
             "day",
             "apps",
             "records",
@@ -1013,8 +1029,8 @@ impl UsageReport {
             "confirmed",
             "awaiting",
             "peer cost",
-            "attributed"
-        ));
+            "attributed",
+        ]));
         for day in &self.days {
             let anchor = match &day.registry_anchor {
                 Some(anchor) => {
@@ -1032,25 +1048,28 @@ impl UsageReport {
             } else {
                 day.day_state.clone()
             };
-            out.push_str(&format!(
-                "{:<12}{:>5}{:>8}  {:<20}{:<26}{:>5}{:>9}{:>10}{:>8}{:>9}{:>10}\n",
-                day.day,
-                day.apps,
-                grouped(day.records),
-                state,
-                anchor,
-                day.peer_anchors.len(),
-                grouped(day.cost.total_at(self.basis).base_units),
-                grouped(day.cost.confirmed.base_units),
-                grouped(day.cost.awaiting.base_units),
-                grouped(day.cost.peer_without_evidence.base_units),
-                grouped(day.attributed_base_units),
-            ));
+            out.push_str(&day_columns([
+                &day.day,
+                &day.apps.to_string(),
+                &grouped(day.records),
+                &state,
+                &anchor,
+                &day.peer_anchors.len().to_string(),
+                &grouped(day.cost.total_at(self.basis).base_units),
+                &grouped(day.cost.confirmed.base_units),
+                &grouped(day.cost.awaiting.base_units),
+                &grouped(day.cost.peer_without_evidence.base_units),
+                &grouped(day.attributed_base_units),
+            ]));
         }
         out.push_str(
             "\ncost is what this basis counts: at submission, confirmed + awaiting + peer cost;\n\
-             confirmed, the confirmed charge alone. Peer cost is never attributable here: the records\n\
-             those anchors cover are held by the Games Reward Service.\n",
+             confirmed, the confirmed charge alone. Peer cost is never apportioned to an application\n\
+             here: the records those anchors cover are held by the Games Reward Service.\n",
+        );
+        out.push_str(
+            "every cost figure in that table is base units, not ULTRA: 1,000,000 base units = 1 ULTRA.\n\
+             the summary below prints each total's ULTRA equivalent beside it.\n",
         );
 
         out.push_str("\nper app\n");
@@ -1983,6 +2002,42 @@ mod tests {
         let two = build(&store, "2026-11-17", "2026-11-18", TODAY, Some(3)).unwrap();
         let text = two.render_text("/tmp/records.db");
         assert!(text.contains("2 days with records"), "{text}");
+
+        // One app, one day with records, one counted anchor: every noun on that line agrees.
+        insert_day(&store, "2026-11-17", "confirmed", None);
+        insert_registry_anchor(&store, "2026-11-17", 3, "submitted", None);
+        let confirmed = build_at(
+            &store,
+            "2026-11-17",
+            "2026-11-17",
+            TODAY,
+            Some(3),
+            CostBasis::Confirmed,
+        )
+        .unwrap();
+        let text = confirmed.render_text("/tmp/records.db");
+        assert!(text.contains("1 app,"), "{text}");
+        assert!(text.contains("1 anchor counted at this basis"), "{text}");
+        assert!(!text.contains("1 anchors"), "{text}");
+    }
+
+    #[test]
+    fn the_day_table_headers_do_not_run_together_and_state_the_unit() {
+        let store = store();
+        insert_game(&store, "alpha", "listed");
+        insert_results(&store, "alpha", "2026-11-17", 1);
+        let report = build(&store, "2026-11-17", "2026-11-17", TODAY, Some(3)).unwrap();
+        let text = report.render_text("/tmp/records.db");
+
+        // Without separators these three labels filled their columns exactly and the header read as a
+        // single word: "confirmedawaitingpeer costattributed".
+        assert!(text.contains("confirmed awaiting"), "{text}");
+        assert!(text.contains("awaiting peer cost"), "{text}");
+        assert!(text.contains("peer cost attributed"), "{text}");
+        assert!(!text.contains("confirmedawaiting"), "{text}");
+
+        // And the table says what its numbers are, without waiting for the reader to reach the summary.
+        assert!(text.contains("1,000,000 base units = 1 ULTRA"), "{text}");
     }
 
     #[test]
