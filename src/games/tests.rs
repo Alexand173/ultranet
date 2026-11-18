@@ -6,7 +6,7 @@
 
 use super::{
     anchor::{AnchorError, Anchorer},
-    chain::{AnchorPoint, ChainError, GamesChain},
+    chain::{AnchorPoint, ChainError, GamesChain, OwnerActivity, OwnerTx, TxView},
     roots,
     rules::{Policy, GAME_CHESS, GAME_GRID},
     peer::PeerVerifier,
@@ -50,6 +50,14 @@ struct FakeChain {
     everyone_active: AtomicBool,
     anchors: Mutex<Vec<(u32, AnchorPoint)>>,
     down: AtomicBool,
+    /// The owner's AppChain transactions as the node's address history would list them.
+    owner_txs: Mutex<Vec<OwnerTx>>,
+    /// The node's history does not reach back far enough (or hides its pending list): absence proves nothing.
+    history_incomplete: AtomicBool,
+    /// The anchors index lags the chain: accepted anchors are not visible to the ledger lookups yet.
+    index_lag: AtomicBool,
+    /// Transactions by some other sender, for tests of an operator naming the wrong transaction.
+    other_txs: Mutex<HashMap<String, TxView>>,
 }
 
 impl FakeChain {
@@ -68,6 +76,66 @@ impl FakeChain {
 
 #[async_trait]
 impl GamesChain for FakeChain {
+    async fn owner_appchain_activity(
+        &self,
+        _owner: &str,
+        since: u64,
+    ) -> Result<OwnerActivity, ChainError> {
+        if self.down.load(Ordering::SeqCst) {
+            return Err(ChainError::Unavailable);
+        }
+        Ok(OwnerActivity {
+            transactions: self
+                .owner_txs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|tx| tx.timestamp >= since)
+                .cloned()
+                .collect(),
+            complete: !self.history_incomplete.load(Ordering::SeqCst),
+            confirmed_complete: !self.history_incomplete.load(Ordering::SeqCst),
+        })
+    }
+
+    async fn transaction(&self, hash: &str) -> Result<Option<TxView>, ChainError> {
+        if self.down.load(Ordering::SeqCst) {
+            return Err(ChainError::Unavailable);
+        }
+        if let Some(view) = self.other_txs.lock().unwrap().get(hash) {
+            return Ok(Some(view.clone()));
+        }
+        Ok(self.owner_txs.lock().unwrap().iter().find(|tx| tx.hash == hash).map(|tx| TxView {
+            sender: A.to_string(),
+            recipient: "appchain".to_string(),
+            timestamp: tx.timestamp,
+            pending: tx.pending,
+        }))
+    }
+
+    async fn anchors_since(
+        &self,
+        chain_id: u32,
+        since: u64,
+    ) -> Result<Vec<AnchorPoint>, ChainError> {
+        if self.down.load(Ordering::SeqCst) {
+            return Err(ChainError::Unavailable);
+        }
+        if self.index_lag.load(Ordering::SeqCst) {
+            return Ok(Vec::new());
+        }
+        let mut points: Vec<AnchorPoint> = self
+            .anchors
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(id, point)| *id == chain_id && point.block_timestamp >= since)
+            .map(|(_, point)| point.clone())
+            .collect();
+        points.sort_by_key(|p| p.sequence);
+        Ok(points)
+    }
+
     async fn address_active(&self, address: &str) -> Result<bool, ChainError> {
         if self.down.load(Ordering::SeqCst) {
             return Err(ChainError::Unavailable);
@@ -101,6 +169,9 @@ impl GamesChain for FakeChain {
     ) -> Result<Option<AnchorPoint>, ChainError> {
         if self.down.load(Ordering::SeqCst) {
             return Err(ChainError::Unavailable);
+        }
+        if self.index_lag.load(Ordering::SeqCst) {
+            return Ok(None);
         }
         Ok(self
             .anchors
@@ -334,6 +405,7 @@ fn harness(options: Options) -> Harness {
     let records_anchorer = Arc::new(FakeAnchorer::default());
     let mut records_config = RecordsConfig::new();
     records_config.registry_chain_id = options.registry_chain;
+    records_config.owner_address = Some(A.to_string());
     let records_tick = clock.clone();
     let records = Arc::new(RecordsService::new(
         GamesStore::open(Path::new(":memory:")).unwrap(),
@@ -3971,5 +4043,1126 @@ mod split {
         h.service.submit_grid_answer(answer, None).await.unwrap();
         assert_eq!(h.records.store().wins_for_day(GAME_GRID, DAY).unwrap().len(), 0, "a win is not in the Records database");
         assert_eq!(h.service.store().wins_for_day(GAME_GRID, DAY).unwrap().len(), 1);
+    }
+
+    // --- the peer-anchor allowance is durable ------------------------------------------------------
+
+    #[derive(Clone, Copy)]
+    enum Mode {
+        Accept,
+        /// The signer could not even be run: nothing was submitted.
+        Definite,
+        /// A timeout: the transaction may or may not have been accepted.
+        Ambiguous,
+        /// The CLI ran and reported an error (for example it could not reach the node): it may have been
+        /// accepted before the connection failed.
+        CliFailed,
+    }
+
+    struct ScriptedAnchorer {
+        calls: Mutex<Vec<(u32, [u8; 32])>>,
+        mode: Mutex<Mode>,
+    }
+
+    impl ScriptedAnchorer {
+        fn new(mode: Mode) -> Arc<ScriptedAnchorer> {
+            Arc::new(ScriptedAnchorer {
+                calls: Mutex::new(Vec::new()),
+                mode: Mutex::new(mode),
+            })
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.lock().unwrap().len()
+        }
+
+        fn set(&self, mode: Mode) {
+            *self.mode.lock().unwrap() = mode;
+        }
+    }
+
+    #[async_trait]
+    impl Anchorer for ScriptedAnchorer {
+        async fn anchor(&self, chain_id: u32, root: &[u8; 32]) -> Result<String, AnchorError> {
+            self.calls.lock().unwrap().push((chain_id, *root));
+            let mode = *self.mode.lock().unwrap();
+            match mode {
+                Mode::Accept => Ok(format!("{:064x}", self.calls.lock().unwrap().len())),
+                Mode::Definite => Err(AnchorError::Spawn("no such file".into())),
+                Mode::Ambiguous => Err(AnchorError::TimedOut),
+                Mode::CliFailed => Err(AnchorError::Failed("cannot reach the node".into())),
+            }
+        }
+    }
+
+    /// Never returns: the process is killed while the signer is running.
+    struct HangingAnchorer;
+
+    #[async_trait]
+    impl Anchorer for HangingAnchorer {
+        async fn anchor(&self, _chain_id: u32, _root: &[u8; 32]) -> Result<String, AnchorError> {
+            std::future::pending().await
+        }
+    }
+
+    fn db_file(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("records-durable-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("records.db")
+    }
+
+    /// A Records Service over a database *file*: dropping it and calling this again is a restart.
+    fn records_on(
+        path: &std::path::Path,
+        clock: &Arc<AtomicU64>,
+        chain: &Arc<FakeChain>,
+        anchorer: Arc<dyn Anchorer>,
+    ) -> Arc<RecordsService> {
+        records_with(path, clock, chain, anchorer, None)
+    }
+
+    fn records_with(
+        path: &std::path::Path,
+        clock: &Arc<AtomicU64>,
+        chain: &Arc<FakeChain>,
+        anchorer: Arc<dyn Anchorer>,
+        registry_chain: Option<u32>,
+    ) -> Arc<RecordsService> {
+        let clock = clock.clone();
+        Arc::new(RecordsService::new(
+            GamesStore::open(path).unwrap(),
+            RegistryCaps::standard(),
+            {
+                let mut config = RecordsConfig::new();
+                config.owner_address = Some(A.to_string());
+                config.registry_chain_id = registry_chain;
+                config
+            },
+            chain.clone(),
+            Some(anchorer),
+            None,
+            Arc::new(move || clock.load(Ordering::SeqCst)),
+        ))
+    }
+
+    fn fresh_clock() -> Arc<AtomicU64> {
+        Arc::new(AtomicU64::new(date_start(DAY).unwrap() + 3_600))
+    }
+
+    fn open_chain() -> Arc<FakeChain> {
+        let chain = Arc::new(FakeChain::default());
+        chain.everyone_active.store(true, Ordering::SeqCst);
+        chain
+    }
+
+    #[actix_web::test]
+    async fn eight_distinct_roots_are_anchored_the_ninth_is_refused_and_a_restart_changes_nothing() {
+        let path = db_file("restart");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let first = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, first.clone());
+        let mut txs = Vec::new();
+        for n in 1..=8u8 {
+            txs.push(records.anchor_for_peer(1, [n; 32]).await.unwrap().tx_hash);
+        }
+        let error = records.anchor_for_peer(1, [9u8; 32]).await.unwrap_err();
+        assert_eq!((error.code(), error.status()), ("forbidden", 403));
+        assert_eq!(first.calls(), 8);
+
+        // The process dies and restarts, three times. The allowance does not come back.
+        drop(records);
+        for _ in 0..3 {
+            let again = ScriptedAnchorer::new(Mode::Accept);
+            let records = records_on(&path, &clock, &chain, again.clone());
+            let error = records.anchor_for_peer(1, [9u8; 32]).await.unwrap_err();
+            assert_eq!(error.code(), "forbidden", "a restart must not reset the limit");
+            assert_eq!(again.calls(), 0, "and nothing was signed");
+            // A root it already anchored is answered from the record, with its transaction, for free.
+            let repeat = records.anchor_for_peer(1, [3u8; 32]).await.unwrap();
+            assert_eq!(repeat.tx_hash, txs[2]);
+            assert_eq!(again.calls(), 0);
+        }
+    }
+
+    #[actix_web::test]
+    async fn a_crash_during_submission_cannot_bypass_the_limit_or_double_submit() {
+        let path = db_file("crash");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        // The signer is running when the process is killed: the request future is dropped mid-call.
+        let records = records_on(&path, &clock, &chain, Arc::new(HangingAnchorer));
+        let killed = tokio::time::timeout(Duration::from_millis(100), records.anchor_for_peer(1, [1u8; 32])).await;
+        assert!(killed.is_err(), "the call never finished");
+        drop(records);
+
+        let healthy = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, healthy.clone());
+        // The slot and the attempt survived. Asking again inside the window does not submit a second time.
+        let error = records.anchor_for_peer(1, [1u8; 32]).await.unwrap_err();
+        assert_eq!((error.code(), error.status()), ("anchor_failed", 502));
+        assert!(error.to_string().contains("in doubt"), "{error}");
+        assert_eq!(healthy.calls(), 0);
+        // The crashed root still holds its slot: seven more, not eight, fit in the day.
+        for n in 2..=8u8 {
+            records.anchor_for_peer(1, [n; 32]).await.unwrap();
+        }
+        assert_eq!(records.anchor_for_peer(1, [9u8; 32]).await.unwrap_err().code(), "forbidden");
+        assert_eq!(healthy.calls(), 7);
+        // After the window the doubtful root may be tried again, still inside the same slot.
+        clock.fetch_add(3_601, Ordering::SeqCst);
+        assert!(records.anchor_for_peer(1, [1u8; 32]).await.is_ok());
+        assert_eq!(records.store().peer_anchor_usage(&records.today()).unwrap(), 8, "no extra slot");
+    }
+
+    #[actix_web::test]
+    async fn a_failed_submission_is_retried_safely_without_exceeding_the_limit() {
+        let path = db_file("retry");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let signer = ScriptedAnchorer::new(Mode::Definite);
+        let records = records_on(&path, &clock, &chain, signer.clone());
+        let today = records.today();
+
+        // The signer cannot be run (a definite failure: nothing was submitted), twice, then works.
+        for _ in 0..2 {
+            let error = records.anchor_for_peer(1, [1u8; 32]).await.unwrap_err();
+            assert_eq!(error.code(), "anchor_failed");
+        }
+        assert_eq!(records.store().peer_anchor_usage(&today).unwrap(), 1, "two failures, one slot");
+        signer.set(Mode::Accept);
+        assert_eq!(records.anchor_for_peer(1, [1u8; 32]).await.unwrap().state, "submitted");
+        assert_eq!(signer.calls(), 3);
+        assert_eq!(records.store().peer_anchor_usage(&today).unwrap(), 1);
+
+        // A root that never works is capped: three attempts a day, then it stops costing fees.
+        signer.set(Mode::Definite);
+        for _ in 0..3 {
+            assert_eq!(records.anchor_for_peer(1, [2u8; 32]).await.unwrap_err().code(), "anchor_failed");
+        }
+        signer.set(Mode::Accept);
+        let before = signer.calls();
+        let error = records.anchor_for_peer(1, [2u8; 32]).await.unwrap_err();
+        assert_eq!((error.code(), error.status()), ("forbidden", 403));
+        assert_eq!(signer.calls(), before, "an exhausted root is not submitted again today");
+        assert_eq!(records.store().peer_anchor_usage(&today).unwrap(), 2);
+    }
+
+    #[actix_web::test]
+    async fn an_error_from_the_cli_or_a_timeout_is_ambiguous_and_is_never_retried_on_a_timer() {
+        for mode in [Mode::Ambiguous, Mode::CliFailed] {
+            let path = db_file("ambiguous");
+            let (clock, chain) = (fresh_clock(), open_chain());
+            let signer = ScriptedAnchorer::new(mode);
+            let records = records_on(&path, &clock, &chain, signer.clone());
+            assert_eq!(records.anchor_for_peer(1, [3u8; 32]).await.unwrap_err().code(), "anchor_failed");
+            assert_eq!(signer.calls(), 1);
+            signer.set(Mode::Accept);
+            // An hour, a day, a month later: still no second signer call, because the first may have landed.
+            // (An owner transaction in the attempt's window is what keeps it unprovable.)
+            let tx_time = records.now() + 5;
+            chain.owner_txs.lock().unwrap().push(OwnerTx { hash: "aa".repeat(32), timestamp: tx_time, pending: false });
+            for later in [3_601u64, 86_400, 30 * 86_400] {
+                clock.store(date_start(DAY).unwrap() + 3_600 + later, Ordering::SeqCst);
+                let error = records.anchor_for_peer(1, [3u8; 32]).await.unwrap_err();
+                assert!(error.to_string().contains("in doubt"), "{error}");
+                assert_eq!(signer.calls(), 1, "no second signer call after {later}s");
+            }
+            // If it did land, the ledger says so, and that is the end of it.
+            chain.add_anchor(1, 1, [3u8; 32], tx_time);
+            assert_eq!(records.anchor_for_peer(1, [3u8; 32]).await.unwrap().state, "confirmed");
+            assert_eq!(signer.calls(), 1);
+        }
+    }
+
+    /// The scenario of the review: the signer submitted, the node accepted, the process died before the
+    /// transaction hash was saved. Returns the service after the restart and the signer behind it.
+    async fn crashed_after_acceptance(
+        name: &str,
+    ) -> (std::path::PathBuf, Arc<AtomicU64>, Arc<FakeChain>, u64) {
+        let path = db_file(name);
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let records = records_on(&path, &clock, &chain, Arc::new(HangingAnchorer));
+        let begun_at = records.now();
+        let killed = tokio::time::timeout(Duration::from_millis(100), records.anchor_for_peer(1, [5u8; 32])).await;
+        assert!(killed.is_err(), "the process died while the signer ran");
+        drop(records);
+        (path, clock, chain, begun_at)
+    }
+
+    #[actix_web::test]
+    async fn an_accepted_anchor_that_is_not_yet_visible_is_never_submitted_a_second_time() {
+        let (path, clock, chain, begun_at) = crashed_after_acceptance("invisible").await;
+        // The node did accept it: the owner has a pending AppChain transaction signed just after the attempt
+        // began. The ledger index shows nothing yet.
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: "bb".repeat(32), timestamp: begun_at + 5, pending: true });
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, signer.clone());
+
+        // Immediately after the restart, after the old resubmit window, after a day: always in doubt.
+        for later in [10u64, 3_601, 7_200, 86_400 - 4_000] {
+            clock.store(begun_at + later, Ordering::SeqCst);
+            let error = records.anchor_for_peer(1, [5u8; 32]).await.unwrap_err();
+            assert_eq!(error.code(), "anchor_failed", "after {later}s");
+            assert!(error.to_string().contains("in doubt"), "{error}");
+        }
+        assert_eq!(signer.calls(), 0, "the signer was not invoked a second time");
+
+        // It is mined, but the anchors index is delayed: the owner's confirmed history shows it, the ledger
+        // lookup does not. Still no second submission.
+        chain.owner_txs.lock().unwrap()[0].pending = false;
+        chain.index_lag.store(true, Ordering::SeqCst);
+        chain.add_anchor(1, 1, [5u8; 32], begun_at + 30);
+        let error = records.anchor_for_peer(1, [5u8; 32]).await.unwrap_err();
+        assert!(error.to_string().contains("in doubt"), "{error}");
+        assert_eq!(signer.calls(), 0, "a delayed index is not evidence of rejection");
+
+        // The index catches up: the anchor is found and confirmed, and still nothing was signed.
+        chain.index_lag.store(false, Ordering::SeqCst);
+        let reply = records.anchor_for_peer(1, [5u8; 32]).await.unwrap();
+        assert_eq!(reply.state, "confirmed");
+        assert_eq!(signer.calls(), 0);
+    }
+
+    #[actix_web::test]
+    async fn only_proof_that_the_first_attempt_never_reached_the_node_allows_one_retry() {
+        let (path, clock, chain, begun_at) = crashed_after_acceptance("proof").await;
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, signer.clone());
+        let after_window = begun_at + 60 + 120 + 120 + 1;
+
+        // Too early: the first signer could still be running, so even an empty history is not proof.
+        clock.store(begun_at + 30, Ordering::SeqCst);
+        assert!(records.anchor_for_peer(1, [5u8; 32]).await.unwrap_err().to_string().contains("in doubt"));
+        // The history cannot be shown completely: absence proves nothing.
+        clock.store(after_window, Ordering::SeqCst);
+        chain.history_incomplete.store(true, Ordering::SeqCst);
+        // (It is stopped even earlier now, by the owner-history check: a history that cannot be read back far
+        // enough cannot be compared with the recorded attempts, so nothing is signed.)
+        assert_eq!(records.anchor_for_peer(1, [5u8; 32]).await.unwrap_err().code(), "reconciliation_required");
+        // The node cannot be read: nothing is submitted, and nothing is concluded.
+        chain.history_incomplete.store(false, Ordering::SeqCst);
+        chain.down.store(true, Ordering::SeqCst);
+        assert_eq!(records.anchor_for_peer(1, [5u8; 32]).await.unwrap_err().code(), "chain_unavailable");
+        chain.down.store(false, Ordering::SeqCst);
+        // A transaction in the window, even a long-confirmed one, might be this anchor.
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: "cc".repeat(32), timestamp: begun_at + 20, pending: false });
+        assert!(records.anchor_for_peer(1, [5u8; 32]).await.unwrap_err().to_string().contains("in doubt"));
+        assert_eq!(signer.calls(), 0, "no proof, no signer");
+
+        // Transactions outside the window are not this anchor; with a complete, readable history and the
+        // window closed, the first attempt provably never reached the node: exactly one retry.
+        chain.owner_txs.lock().unwrap()[0].timestamp = begun_at + 5_000;
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: "dd".repeat(32), timestamp: begun_at - 5_000, pending: false });
+        clock.store(begun_at + 6_000, Ordering::SeqCst);
+        // Those two are the owner's, but not this service's: the operator has reconciled and acknowledged them.
+        records.store().set_owner_ack(begun_at + 5_500, records.store().recorded_attempts(&[&records.today()]).unwrap()).unwrap();
+        assert_eq!(records.anchor_for_peer(1, [5u8; 32]).await.unwrap().state, "submitted");
+        assert_eq!(signer.calls(), 1);
+        // And now it is a recorded submission: asking again never signs again.
+        assert_eq!(records.anchor_for_peer(1, [5u8; 32]).await.unwrap().state, "submitted");
+        assert_eq!(signer.calls(), 1);
+    }
+
+    #[actix_web::test]
+    async fn a_pending_owner_transaction_blocks_a_new_submission_until_it_is_mined() {
+        let path = db_file("pending");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, signer.clone());
+        // One anchor is accepted and is still pending in the node.
+        records.anchor_for_peer(1, [6u8; 32]).await.unwrap();
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: "ee".repeat(32), timestamp: records.now(), pending: true });
+        let error = records.anchor_for_peer(1, [7u8; 32]).await.unwrap_err();
+        assert!(error.to_string().contains("still pending"), "{error}");
+        assert_eq!(signer.calls(), 1, "nothing was signed on top of the pending transaction");
+        assert_eq!(records.store().peer_anchor_usage(&records.today()).unwrap(), 2, "the slot is held, the attempt is not counted");
+        chain.owner_txs.lock().unwrap()[0].pending = false;
+        assert!(records.anchor_for_peer(1, [7u8; 32]).await.is_ok());
+        assert_eq!(signer.calls(), 2);
+    }
+
+    #[actix_web::test]
+    async fn an_unresolved_root_from_yesterday_is_not_a_fresh_root_today() {
+        let path = db_file("yesterday");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, signer.clone());
+        let tx = records.anchor_for_peer(1, [7u8; 32]).await.unwrap().tx_hash;
+        // The next day the Games service asks again for the same root, which the ledger still does not show.
+        clock.store(date_start(&shift_date(DAY, 1).unwrap()).unwrap() + 3_600, Ordering::SeqCst);
+        let again = records.anchor_for_peer(1, [7u8; 32]).await.unwrap();
+        assert_eq!((again.tx_hash, signer.calls()), (tx, 1), "answered from yesterday's record, not signed again");
+    }
+
+    #[actix_web::test]
+    async fn concurrent_requests_cannot_exceed_the_limit() {
+        let path = db_file("concurrent");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, signer.clone());
+        let tasks: Vec<_> = (1..=24u8)
+            .map(|n| {
+                let records = records.clone();
+                actix_web::rt::spawn(async move { records.anchor_for_peer(1, [n; 32]).await })
+            })
+            .collect();
+        let mut accepted = 0;
+        let mut refused = 0;
+        for task in tasks {
+            match task.await.unwrap() {
+                Ok(_) => accepted += 1,
+                Err(error) => {
+                    assert_eq!(error.code(), "forbidden");
+                    refused += 1;
+                }
+            }
+        }
+        assert_eq!((accepted, refused), (8, 16));
+        assert_eq!(signer.calls(), 8, "exactly the allowance was signed");
+        // The same root asked for 20 times at once is one anchor.
+        let duplicate: Vec<_> = (0..20)
+            .map(|_| {
+                let records = records.clone();
+                actix_web::rt::spawn(async move { records.anchor_for_peer(1, [1u8; 32]).await })
+            })
+            .collect();
+        for task in duplicate {
+            assert!(task.await.unwrap().is_ok());
+        }
+        assert_eq!(signer.calls(), 8, "duplicates signed nothing");
+    }
+
+    #[actix_web::test]
+    async fn utc_midnight_starts_a_new_allowance_at_the_service_level() {
+        let path = db_file("midnight");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, signer.clone());
+        for n in 1..=8u8 {
+            records.anchor_for_peer(1, [n; 32]).await.unwrap();
+        }
+        // One second before midnight: still the old day.
+        clock.store(date_start(&shift_date(DAY, 1).unwrap()).unwrap() - 1, Ordering::SeqCst);
+        assert_eq!(records.anchor_for_peer(1, [9u8; 32]).await.unwrap_err().code(), "forbidden");
+        // At midnight: a new allowance, for new roots.
+        clock.fetch_add(1, Ordering::SeqCst);
+        // A root already anchored yesterday is the same anchor: answered from its record, no fee, no slot.
+        for n in 1..=8u8 {
+            assert_eq!(records.anchor_for_peer(1, [n; 32]).await.unwrap().state, "submitted");
+        }
+        assert_eq!(signer.calls(), 8, "yesterday's roots signed nothing today");
+        for n in 11..=18u8 {
+            records.anchor_for_peer(1, [n; 32]).await.unwrap();
+        }
+        assert_eq!(records.anchor_for_peer(1, [19u8; 32]).await.unwrap_err().code(), "forbidden");
+        assert_eq!(signer.calls(), 16);
+    }
+
+    #[actix_web::test]
+    async fn corrupted_usage_state_stops_anchoring_and_is_never_silently_reset() {
+        let path = db_file("corrupt");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, signer.clone());
+        for n in 1..=8u8 {
+            records.anchor_for_peer(1, [n; 32]).await.unwrap();
+        }
+        drop(records);
+        // Someone (or something) zeroes the counter to get a fresh allowance.
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch("UPDATE peer_anchor_days SET used = 0;")
+            .unwrap();
+        let records = records_on(&path, &clock, &chain, signer.clone());
+        let before = signer.calls();
+        let error = records.anchor_for_peer(1, [9u8; 32]).await.unwrap_err();
+        assert_eq!((error.code(), error.status()), ("internal_error", 500));
+        assert_eq!(signer.calls(), before, "nothing is signed on unusable state");
+        let again = records.anchor_for_peer(1, [10u8; 32]).await.unwrap_err();
+        assert_eq!(again.code(), "internal_error", "it stays refused; it did not heal itself");
+        let used: i64 = rusqlite::Connection::open(&path)
+            .unwrap()
+            .query_row("SELECT used FROM peer_anchor_days", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(used, 0, "the tampered counter was left exactly as found");
+        // The client is told nothing but that something went wrong.
+        assert!(!error.to_string().is_empty());
+    }
+
+    // --- restoring an older database must not regress the allowance -------------------------------
+
+    #[actix_web::test]
+    async fn a_database_older_than_the_ledger_refuses_to_anchor_until_reconciled() {
+        // The live service anchored eight roots today. The backup it is "restored" from knew only three.
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let live_path = db_file("restore-live");
+        let live = ScriptedAnchorer::new(Mode::Accept);
+        let live_records = records_on(&live_path, &clock, &chain, live.clone());
+        let mut txs = Vec::new();
+        for n in 1..=8u8 {
+            let reply = live_records.anchor_for_peer(1, [n; 32]).await.unwrap();
+            chain.add_anchor(1, n as u64, [n; 32], live_records.now());
+            txs.push(reply.tx_hash);
+        }
+        drop(live_records);
+
+        let restored_path = db_file("restore-old");
+        {
+            let old = records_on(&restored_path, &clock, &chain, ScriptedAnchorer::new(Mode::Accept));
+            let store = old.store();
+            for n in 1..=3u8 {
+                store.reserve_peer_anchor(&old.today(), 1, &[n; 32], 8, old.now()).unwrap();
+                store.begin_peer_submission(&old.today(), 1, &[n; 32], 3, old.now()).unwrap();
+                store.finish_peer_submission(&old.today(), 1, &[n; 32], Ok(&txs[(n - 1) as usize]), old.now()).unwrap();
+            }
+        }
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&restored_path, &clock, &chain, signer.clone());
+        assert_eq!(records.store().peer_anchor_usage(&records.today()).unwrap(), 3, "the backup has regressed");
+
+        // It does not silently carry on with a 5-slot allowance it has forgotten it spent.
+        let error = records.anchor_for_peer(1, [20u8; 32]).await.unwrap_err();
+        assert_eq!((error.code(), error.status()), ("reconciliation_required", 503));
+        assert!(error.to_string().contains("peer-reconcile"), "{error}");
+        // Not even for a root it believes it only reserved.
+        assert_eq!(records.anchor_for_peer(1, [4u8; 32]).await.unwrap().state, "confirmed", "the ledger answers for what it holds");
+        assert_eq!(signer.calls(), 0);
+
+        // Reconciliation adopts what the ledger holds (what `peer-reconcile --apply` does).
+        for n in 4..=8u8 {
+            let day = records.today();
+            assert!(records.store().adopt_ledger_anchor(&day, 1, &[n; 32], &txs[(n - 1) as usize], records.now()).unwrap());
+        }
+        assert_eq!(records.store().peer_anchor_usage(&records.today()).unwrap(), 8, "the allowance is what the ledger says");
+        let error = records.anchor_for_peer(1, [20u8; 32]).await.unwrap_err();
+        assert_eq!(error.code(), "forbidden", "the day is full, exactly as it was before the restore");
+        assert_eq!(signer.calls(), 0, "and nothing was signed on a regressed allowance");
+    }
+
+    #[actix_web::test]
+    async fn the_restore_hold_stops_all_anchoring_until_it_is_cleared() {
+        let path = db_file("hold");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = {
+            let clock = clock.clone();
+            let mut config = RecordsConfig::new();
+            config.owner_address = Some(A.to_string());
+            config.registry_chain_id = Some(3);
+            Arc::new(RecordsService::new(
+                GamesStore::open(&path).unwrap(),
+                RegistryCaps::standard(),
+                config,
+                chain.clone(),
+                Some(signer.clone() as Arc<dyn Anchorer>),
+                None,
+                Arc::new(move || clock.load(Ordering::SeqCst)),
+            ))
+        };
+        records.store().set_peer_hold("restored from backup 2026-11-10", records.now()).unwrap();
+        for n in [1u8, 2] {
+            let error = records.anchor_for_peer(1, [n; 32]).await.unwrap_err();
+            assert_eq!((error.code(), error.status()), ("reconciliation_required", 503));
+        }
+        assert_eq!(signer.calls(), 0);
+        // The registry's own day is held too: closed and recorded as held, never anchored.
+        let (_, key) = records.store().register_game("tetris", "Tetris", A, records.now()).unwrap();
+        records.store().set_game_status("tetris", crate::games::registry::GameStatus::Registered, records.now()).unwrap();
+        records
+            .submit_registry_result("tetris", &key, crate::games::records::RegistryResultRequest {
+                player: A.into(), result_id: "match-0001".into(), score: 1, data_hash: None,
+            })
+            .unwrap();
+        clock.store(date_start(&shift_date(DAY, 1).unwrap()).unwrap() + 3_600, Ordering::SeqCst);
+        let day = records.close_registry_day(DAY).await.unwrap();
+        assert_ne!(day.state, "anchored");
+        assert!(day.last_error.unwrap().contains("held after a restore"));
+        assert_eq!(signer.calls(), 0);
+        // Cleared (what a successful `peer-reconcile --clear-hold` does): anchoring resumes.
+        records.store().clear_peer_hold().unwrap();
+        assert!(records.anchor_for_peer(1, [1u8; 32]).await.is_ok());
+        assert_eq!(signer.calls(), 1);
+    }
+
+    // --- the registry's own daily anchor, under the same fail-closed rules ---------------------------
+
+    const REGISTRY_CHAIN: u32 = 3;
+
+    /// A registered game with one result on DAY, with the clock moved to the next day so DAY can be closed.
+    fn registry_day_ready(records: &RecordsService, clock: &Arc<AtomicU64>) {
+        let (_, key) = records.store().register_game("tetris", "Tetris", A, records.now()).unwrap();
+        records
+            .store()
+            .set_game_status("tetris", crate::games::registry::GameStatus::Registered, records.now())
+            .unwrap();
+        records
+            .submit_registry_result("tetris", &key, crate::games::records::RegistryResultRequest {
+                player: A.into(), result_id: "match-0001".into(), score: 1, data_hash: None,
+            })
+            .unwrap();
+        clock.store(date_start(&shift_date(DAY, 1).unwrap()).unwrap() + 3_600, Ordering::SeqCst);
+    }
+
+    fn registry_root(records: &RecordsService) -> [u8; 32] {
+        records.store().registry_day(DAY).unwrap().unwrap().day_root
+    }
+
+    /// The review's scenario for the registry: the signer submitted, the node accepted, the process died before
+    /// the hash was saved. Returns what a restart needs.
+    async fn registry_crashed_after_acceptance(
+        name: &str,
+    ) -> (std::path::PathBuf, Arc<AtomicU64>, Arc<FakeChain>, u64) {
+        let path = db_file(name);
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let records = records_with(&path, &clock, &chain, Arc::new(HangingAnchorer), Some(REGISTRY_CHAIN));
+        registry_day_ready(&records, &clock);
+        let begun_at = records.now();
+        let killed = tokio::time::timeout(Duration::from_millis(100), records.close_registry_day(DAY)).await;
+        assert!(killed.is_err(), "the process died while the signer ran");
+        drop(records);
+        (path, clock, chain, begun_at)
+    }
+
+    #[actix_web::test]
+    async fn an_accepted_registry_anchor_with_an_unsaved_hash_and_a_late_index_is_never_submitted_twice() {
+        let (path, clock, chain, begun_at) = registry_crashed_after_acceptance("registry-invisible").await;
+        // The node accepted it: a pending owner transaction in the attempt's window. The index shows nothing.
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: "bb".repeat(32), timestamp: begun_at + 5, pending: true });
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_with(&path, &clock, &chain, signer.clone(), Some(REGISTRY_CHAIN));
+        let root = registry_root(&records);
+
+        for later in [10u64, 3_601, 7_200, 80_000] {
+            clock.store(begun_at + later, Ordering::SeqCst);
+            // The restart's daily pass tries, as it does every ten minutes.
+            let day = records.close_registry_day(DAY).await.unwrap();
+            assert_ne!(day.state, "anchored", "after {later}s");
+            assert!(day.last_error.as_deref().unwrap_or("").contains("in doubt"), "after {later}s: {:?}", day.last_error);
+        }
+        assert_eq!(signer.calls(), 0, "the signer was not invoked a second time");
+
+        // Mined, but the anchors index is behind: the owner's confirmed history shows it, the lookup does not.
+        chain.owner_txs.lock().unwrap()[0].pending = false;
+        chain.index_lag.store(true, Ordering::SeqCst);
+        chain.add_anchor(REGISTRY_CHAIN, 1, root, begun_at + 30);
+        let day = records.close_registry_day(DAY).await.unwrap();
+        assert!(day.last_error.unwrap().contains("in doubt"));
+        assert_eq!(signer.calls(), 0, "a late index is not evidence of rejection");
+
+        // The index catches up: the anchor is confirmed, still without a second signer call.
+        chain.index_lag.store(false, Ordering::SeqCst);
+        let day = records.close_registry_day(DAY).await.unwrap();
+        assert_eq!(day.state, "confirmed");
+        assert_eq!(signer.calls(), 0);
+    }
+
+    #[actix_web::test]
+    async fn a_submitted_registry_anchor_is_never_resubmitted_whatever_the_time() {
+        let path = db_file("registry-submitted");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_with(&path, &clock, &chain, signer.clone(), Some(REGISTRY_CHAIN));
+        registry_day_ready(&records, &clock);
+        let day = records.close_registry_day(DAY).await.unwrap();
+        assert_eq!((day.state.as_str(), signer.calls()), ("anchored", 1));
+        // It is not on the ledger yet. An hour, a day, a month: the old rule would have signed again.
+        for later in [3_601u64, 86_400, 30 * 86_400] {
+            clock.fetch_add(later, Ordering::SeqCst);
+            let day = records.close_registry_day(DAY).await.unwrap();
+            assert_eq!(day.state, "anchored");
+            assert_eq!(signer.calls(), 1, "no second submission after {later}s");
+        }
+    }
+
+    #[actix_web::test]
+    async fn a_registry_retry_needs_proof_and_every_unprovable_state_stays_in_doubt() {
+        let (path, clock, chain, begun_at) = registry_crashed_after_acceptance("registry-proof").await;
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_with(&path, &clock, &chain, signer.clone(), Some(REGISTRY_CHAIN));
+        let after_window = begun_at + 60 + 120 + 120 + 1;
+        let try_close = || async { records.close_registry_day(DAY).await.unwrap() };
+
+        clock.store(begun_at + 30, Ordering::SeqCst);
+        assert!(try_close().await.last_error.unwrap().contains("in doubt"), "too early");
+        clock.store(after_window, Ordering::SeqCst);
+        chain.history_incomplete.store(true, Ordering::SeqCst);
+        assert!(try_close().await.last_error.unwrap().contains("reconcil"), "history incomplete");
+        chain.history_incomplete.store(false, Ordering::SeqCst);
+        chain.down.store(true, Ordering::SeqCst);
+        assert_ne!(try_close().await.state, "anchored", "node unavailable");
+        chain.down.store(false, Ordering::SeqCst);
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: "cc".repeat(32), timestamp: begun_at + 20, pending: false });
+        assert!(try_close().await.last_error.unwrap().contains("in doubt"), "a transaction in the window");
+        assert_eq!(signer.calls(), 0, "no proof, no signer");
+
+        // Outside the window, acknowledged, complete, readable: exactly one retry.
+        chain.owner_txs.lock().unwrap()[0].timestamp = begun_at + 5_000;
+        clock.store(begun_at + 6_000, Ordering::SeqCst);
+        records.store().set_owner_ack(begun_at + 5_500, records.store().recorded_attempts(&[DAY, &shift_date(DAY, 1).unwrap()]).unwrap()).unwrap();
+        let day = try_close().await;
+        assert_eq!((day.state.as_str(), signer.calls()), ("anchored", 1));
+        let day = try_close().await;
+        assert_eq!((day.state.as_str(), signer.calls()), ("anchored", 1), "and never again");
+    }
+
+    #[actix_web::test]
+    async fn a_pending_owner_transaction_blocks_a_registry_submission() {
+        let path = db_file("registry-pending");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_with(&path, &clock, &chain, signer.clone(), Some(REGISTRY_CHAIN));
+        registry_day_ready(&records, &clock);
+        // An earlier anchor of the owner's (accounted for by an attempt) is still pending in the node.
+        records.anchor_for_peer(1, [8u8; 32]).await.unwrap();
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: "ee".repeat(32), timestamp: records.now(), pending: true });
+        let day = records.close_registry_day(DAY).await.unwrap();
+        assert_ne!(day.state, "anchored");
+        assert!(day.last_error.unwrap().contains("still pending"));
+        assert_eq!(signer.calls(), 1, "only the peer anchor was signed");
+        chain.owner_txs.lock().unwrap()[0].pending = false;
+        assert_eq!(records.close_registry_day(DAY).await.unwrap().state, "anchored");
+        assert_eq!(signer.calls(), 2);
+    }
+
+    #[actix_web::test]
+    async fn the_restore_hold_blocks_the_registry_and_resumes_only_after_it_is_cleared() {
+        let path = db_file("registry-hold");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_with(&path, &clock, &chain, signer.clone(), Some(REGISTRY_CHAIN));
+        registry_day_ready(&records, &clock);
+        records.store().set_peer_hold("restored from backup", records.now()).unwrap();
+        for _ in 0..3 {
+            let day = records.close_registry_day(DAY).await.unwrap();
+            assert_ne!(day.state, "anchored");
+            assert!(day.last_error.unwrap().contains("held after a restore"));
+        }
+        assert_eq!(signer.calls(), 0);
+        records.store().clear_peer_hold().unwrap();
+        assert_eq!(records.close_registry_day(DAY).await.unwrap().state, "anchored");
+        assert_eq!(signer.calls(), 1);
+    }
+
+    #[actix_web::test]
+    async fn an_operator_resolves_a_registry_day_without_resubmission_after_the_claim_is_checked() {
+        use crate::games::{peer_usage::PeerResolution, records::validate_landed_transaction};
+        let (path, clock, chain, begun_at) = registry_crashed_after_acceptance("registry-resolve").await;
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_with(&path, &clock, &chain, signer.clone(), Some(REGISTRY_CHAIN));
+        let root = registry_root(&records);
+        let tx = "ab".repeat(32);
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: tx.clone(), timestamp: begun_at + 5, pending: true });
+        let validate = |hash: &str, chain_id: u32, root: [u8; 32], pending_ok: bool| {
+            let hash = hash.to_string();
+            let chain = chain.clone();
+            async move { validate_landed_transaction(chain.as_ref(), A, chain_id, &root, &hash, pending_ok).await }
+        };
+        // A transaction the node does not have, one signed by someone else, and a pending one without consent.
+        assert!(validate(&"00".repeat(32), REGISTRY_CHAIN, root, true).await.unwrap_err().contains("no such transaction"));
+        chain.other_txs.lock().unwrap().insert("dd".repeat(32), TxView { sender: B.to_string(), recipient: "appchain".into(), timestamp: begun_at, pending: false });
+        assert!(validate(&"dd".repeat(32), REGISTRY_CHAIN, root, true).await.unwrap_err().contains("not by the owner"));
+        chain.other_txs.lock().unwrap().insert("ee".repeat(32), TxView { sender: A.to_string(), recipient: "deadbeef".into(), timestamp: begun_at, pending: false });
+        assert!(validate(&"ee".repeat(32), REGISTRY_CHAIN, root, true).await.unwrap_err().contains("not an AppChain transaction"));
+        assert!(validate(&tx, REGISTRY_CHAIN, root, false).await.unwrap_err().contains("still pending"));
+        // With consent, a pending transaction is recorded as a CLAIM, never as verified.
+        assert!(matches!(
+            validate(&tx, REGISTRY_CHAIN, root, true).await,
+            Ok(crate::games::records::LandedCheck::PendingClaim(note)) if note.contains("NOT verified")
+        ));
+        // Once mined, chain and root are verified against the anchors index: wrong chain, wrong root, wrong tx.
+        chain.owner_txs.lock().unwrap()[0].pending = false;
+        assert!(validate(&tx, REGISTRY_CHAIN, root, false).await.unwrap_err().contains("does not show"), "mined but not indexed");
+        chain.add_anchor(REGISTRY_CHAIN, 1, root, begun_at + 30);
+        assert!(validate(&tx, REGISTRY_CHAIN, root, false).await.unwrap_err().contains("different transaction"), "indexed under another tx hash");
+        chain.anchors.lock().unwrap().clear();
+        chain.anchors.lock().unwrap().push((REGISTRY_CHAIN, AnchorPoint { sequence: 1, root, block_timestamp: begun_at + 30, tx_hash: tx.clone() }));
+        assert!(validate(&tx, 1, root, false).await.unwrap_err().contains("does not show"), "wrong chain");
+        assert!(validate(&tx, REGISTRY_CHAIN, [9u8; 32], false).await.unwrap_err().contains("does not show"), "wrong root");
+        assert!(matches!(
+            validate(&tx, REGISTRY_CHAIN, root, false).await,
+            Ok(crate::games::records::LandedCheck::Verified(note)) if note.contains("verified: the owner's confirmed anchor")
+        ));
+        // The consent flag changes nothing for a MINED transaction: it is still verified in full.
+        assert!(validate(&tx, REGISTRY_CHAIN, root, true).await.is_ok(), "mined and indexed: verified");
+        assert!(validate(&tx, 1, root, true).await.unwrap_err().contains("does not show"), "flag cannot bypass the chain check");
+        assert!(validate(&tx, REGISTRY_CHAIN, [9u8; 32], true).await.unwrap_err().contains("does not show"), "flag cannot bypass the root check");
+        chain.index_lag.store(true, Ordering::SeqCst);
+        assert!(validate(&tx, REGISTRY_CHAIN, root, true).await.unwrap_err().contains("does not show"), "flag cannot bypass the index check");
+        chain.index_lag.store(false, Ordering::SeqCst);
+        chain.anchors.lock().unwrap().clear();
+        chain.anchors.lock().unwrap().push((REGISTRY_CHAIN, AnchorPoint { sequence: 1, root, block_timestamp: begun_at + 30, tx_hash: "ab".repeat(31) + "cd" }));
+        assert!(validate(&tx, REGISTRY_CHAIN, root, true).await.unwrap_err().contains("different transaction"), "flag cannot bypass the hash check");
+        chain.anchors.lock().unwrap().clear();
+        chain.anchors.lock().unwrap().push((REGISTRY_CHAIN, AnchorPoint { sequence: 1, root, block_timestamp: begun_at + 30, tx_hash: tx.clone() }));
+        chain.other_txs.lock().unwrap().insert("dd".repeat(32), TxView { sender: B.to_string(), recipient: "appchain".into(), timestamp: begun_at, pending: true });
+        assert!(validate(&"dd".repeat(32), REGISTRY_CHAIN, root, true).await.unwrap_err().contains("not by the owner"), "flag cannot bypass the owner check");
+
+        // The verified claim is recorded: the day is answered from it, and nothing is ever signed.
+        chain.index_lag.store(true, Ordering::SeqCst);
+        records
+            .store()
+            .resolve_registry_anchor(DAY, &PeerResolution::Landed { tx_hash: tx.clone() }, "found pending, then mined", records.now())
+            .unwrap();
+        let day = records.close_registry_day(DAY).await.unwrap();
+        assert_eq!(day.state, "anchored");
+        assert_eq!(day.anchor_tx.as_deref(), Some(tx.as_str()));
+        assert_eq!(signer.calls(), 0, "resolved without resubmission");
+        // And the other resolution: certain nothing was submitted, so the day may be anchored.
+        let path2 = db_file("registry-resolve-not");
+        let (clock2, chain2) = (fresh_clock(), open_chain());
+        let hang = records_with(&path2, &clock2, &chain2, Arc::new(HangingAnchorer), Some(REGISTRY_CHAIN));
+        registry_day_ready(&hang, &clock2);
+        let _ = tokio::time::timeout(Duration::from_millis(100), hang.close_registry_day(DAY)).await;
+        drop(hang);
+        let signer2 = ScriptedAnchorer::new(Mode::Accept);
+        let again = records_with(&path2, &clock2, &chain2, signer2.clone(), Some(REGISTRY_CHAIN));
+        assert!(again.close_registry_day(DAY).await.unwrap().last_error.unwrap().contains("in doubt"));
+        again.store().resolve_registry_anchor(DAY, &PeerResolution::NotSubmitted, "the node never saw it", again.now()).unwrap();
+        assert_eq!(again.close_registry_day(DAY).await.unwrap().state, "anchored");
+        assert_eq!(signer2.calls(), 1);
+    }
+
+    // --- restoring: what is and is not detected ------------------------------------------------------
+
+    /// Take a backup of a live file database and its fence file, the way an operator's backup of the state would.
+    fn snapshot(records: &RecordsService, path: &std::path::Path, name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let backup = db_file(name);
+        records.store().backup_to(&backup).unwrap();
+        let fence = backup.with_file_name(format!("{name}.fence"));
+        std::fs::copy(format!("{}.fence", path.display()), &fence).unwrap();
+        (backup, fence)
+    }
+
+    fn restore_db(path: &std::path::Path, backup: &std::path::Path) {
+        for suffix in ["-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        std::fs::copy(backup, path).unwrap();
+    }
+
+    #[actix_web::test]
+    async fn a_restored_database_file_is_detected_by_the_fence_without_anyone_saying_so() {
+        let path = db_file("fence-restore");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let live = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, live.clone());
+        for n in 1..=3u8 {
+            records.anchor_for_peer(1, [n; 32]).await.unwrap();
+            chain.add_anchor(1, n as u64, [n; 32], records.now());
+        }
+        let (backup, _) = snapshot(&records, &path, "fence-restore-backup");
+        for n in 4..=6u8 {
+            records.anchor_for_peer(1, [n; 32]).await.unwrap();
+            // The anchors are mined, but the index is behind: the ledger lookups cannot see them.
+            chain.owner_txs.lock().unwrap().push(OwnerTx { hash: format!("{n:02x}").repeat(32), timestamp: records.now(), pending: false });
+        }
+        for n in 1..=3u8 {
+            chain.owner_txs.lock().unwrap().push(OwnerTx { hash: format!("{:02x}", n + 10).repeat(32), timestamp: records.now() - 100, pending: false });
+        }
+        chain.index_lag.store(true, Ordering::SeqCst);
+        drop(records);
+
+        // Only the database file is replaced, as `cp backup records.db` would. The fence file stays.
+        restore_db(&path, &backup);
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, signer.clone());
+        assert_eq!(records.store().peer_anchor_usage(&records.today()).unwrap(), 3, "the backup has regressed");
+        assert!(records.store().peer_hold().unwrap().is_none(), "nobody ran restore-mark");
+        let error = records.anchor_for_peer(1, [20u8; 32]).await.unwrap_err();
+        assert_eq!((error.code(), error.status()), ("reconciliation_required", 503));
+        assert!(error.to_string().contains("restored from a backup"), "{error}");
+        assert_eq!(signer.calls(), 0);
+        // The hold was set durably by the detection itself: a restart does not forget it.
+        drop(records);
+        let records = records_on(&path, &clock, &chain, signer.clone());
+        assert!(records.store().peer_hold().unwrap().unwrap().starts_with(&format!("{}: automatic", records.now())) || records.store().peer_hold().unwrap().unwrap().contains("automatic"));
+        assert_eq!(records.anchor_for_peer(1, [21u8; 32]).await.unwrap_err().code(), "reconciliation_required");
+        // The registry day is held too, though nothing told it about the restore.
+        assert_eq!(signer.calls(), 0);
+    }
+
+    #[actix_web::test]
+    async fn restoring_the_whole_state_directory_is_caught_by_the_owner_history_while_the_index_lags() {
+        // The reported case: an older database restored WITH its fence file, a lost attempt record, an anchor
+        // that is already mined, and the anchors index still behind. Neither the fence nor the ledger lookup can
+        // see it. The owner's confirmed history, read from the chain itself, can.
+        let path = db_file("whole-dir");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let live = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, live.clone());
+        for n in 1..=3u8 {
+            records.anchor_for_peer(1, [n; 32]).await.unwrap();
+            chain.owner_txs.lock().unwrap().push(OwnerTx { hash: format!("{n:02x}").repeat(32), timestamp: records.now(), pending: false });
+            chain.add_anchor(1, n as u64, [n; 32], records.now());
+        }
+        let (backup, backup_fence) = snapshot(&records, &path, "whole-dir-backup");
+        // After the backup: one more anchor, mined, its attempt record then lost with the restore.
+        records.anchor_for_peer(1, [4u8; 32]).await.unwrap();
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: "44".repeat(32), timestamp: records.now(), pending: false });
+        chain.index_lag.store(true, Ordering::SeqCst);
+        drop(records);
+
+        // The state directory is restored whole: the database AND its fence file, consistent with each other.
+        restore_db(&path, &backup);
+        std::fs::copy(&backup_fence, format!("{}.fence", path.display())).unwrap();
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, signer.clone());
+        assert_eq!(records.store().check_fence().unwrap(), crate::games::fence::FenceCheck::Intact, "the fence cannot see this");
+        let error = records.anchor_for_peer(1, [30u8; 32]).await.unwrap_err();
+        assert_eq!(error.code(), "reconciliation_required", "{error}");
+        assert!(error.to_string().contains("signed 4 AppChain transaction(s)"), "{error}");
+        assert!(error.to_string().contains("recorded only 3"), "{error}");
+        assert_eq!(signer.calls(), 0);
+        // Acknowledged by an operator who has reconciled, it resumes: the baseline is the new starting line.
+        records.store().set_owner_ack(records.now(), records.store().recorded_attempts(&[&records.today()]).unwrap()).unwrap();
+        assert!(records.anchor_for_peer(1, [30u8; 32]).await.is_ok());
+        assert_eq!(signer.calls(), 1);
+    }
+
+    #[actix_web::test]
+    async fn the_owner_history_check_has_a_horizon_and_the_acknowledged_baseline_survives_day_changes() {
+        let path = db_file("horizon");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, signer.clone());
+        let tx = |label: &str, at: u64| OwnerTx { hash: label.repeat(32), timestamp: at, pending: false };
+        // An owner transaction nobody recorded, three days old: beyond the horizon (yesterday 00:00), so it is
+        // NOT detected. This is the documented limit of the automatic check.
+        chain.owner_txs.lock().unwrap().push(tx("99", records.now() - 3 * 86_400));
+        records.anchor_for_peer(1, [1u8; 32]).await.unwrap();
+        chain.owner_txs.lock().unwrap().push(tx("11", records.now())); // the node holds the anchor just signed
+        // Yesterday's, unrecorded, is inside the horizon: one transaction more than attempts.
+        chain.owner_txs.lock().unwrap().push(tx("98", records.now() - 86_400));
+        assert_eq!(records.anchor_for_peer(1, [2u8; 32]).await.unwrap_err().code(), "reconciliation_required");
+        assert_eq!(signer.calls(), 1);
+        // An operator reconciles and acknowledges. Later attempts are then accounted against the baseline,
+        // across a change of day (the window slides: this must not produce a false alarm).
+        records.store().set_owner_ack(records.now(), records.store().recorded_attempts(&[&records.today()]).unwrap()).unwrap();
+        records.anchor_for_peer(1, [2u8; 32]).await.unwrap();
+        chain.owner_txs.lock().unwrap().push(tx("22", records.now() + 1));
+        clock.store(date_start(&shift_date(DAY, 1).unwrap()).unwrap() + 3_600, Ordering::SeqCst);
+        records.anchor_for_peer(1, [3u8; 32]).await.unwrap();
+        chain.owner_txs.lock().unwrap().push(tx("33", records.now() + 1));
+        assert!(records.anchor_for_peer(1, [3u8; 32]).await.is_ok(), "the same root again is an answer, not a new attempt");
+        assert_eq!(signer.calls(), 3);
+    }
+
+    #[actix_web::test]
+    async fn an_incomplete_confirmed_history_fails_closed_for_peers_and_for_the_registry() {
+        let path = db_file("incomplete");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_with(&path, &clock, &chain, signer.clone(), Some(REGISTRY_CHAIN));
+        registry_day_ready(&records, &clock);
+        chain.history_incomplete.store(true, Ordering::SeqCst);
+        assert_eq!(records.anchor_for_peer(1, [1u8; 32]).await.unwrap_err().code(), "reconciliation_required");
+        let day = records.close_registry_day(DAY).await.unwrap();
+        assert_ne!(day.state, "anchored");
+        assert_eq!(signer.calls(), 0);
+    }
+
+    #[actix_web::test]
+    async fn a_registry_day_anchored_days_late_raises_no_false_alarm_for_later_anchors() {
+        let path = db_file("registry-late");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_with(&path, &clock, &chain, signer.clone(), Some(REGISTRY_CHAIN));
+        registry_day_ready(&records, &clock);
+        // The registry day for DAY is only anchored three days later (a long outage, or an unset chain).
+        clock.fetch_add(3 * 86_400, Ordering::SeqCst);
+        let day = records.close_registry_day(DAY).await.unwrap();
+        assert_eq!((day.state.as_str(), signer.calls()), ("anchored", 1));
+        // The node holds it, and the ledger shows it: both are accounted for by the registry's record.
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: "12".repeat(32), timestamp: records.now(), pending: false });
+        chain.add_anchor(REGISTRY_CHAIN, 1, registry_root(&records), records.now());
+        // A peer anchor right after is not refused by the ledger check or the owner-history check.
+        assert!(records.anchor_for_peer(1, [40u8; 32]).await.is_ok(), "no false alarm");
+        assert_eq!(signer.calls(), 2);
+    }
+
+    #[actix_web::test]
+    async fn a_registry_anchor_that_fails_ambiguously_is_not_retried_on_a_timer() {
+        for mode in [Mode::Ambiguous, Mode::CliFailed] {
+            let path = db_file("registry-ambiguous");
+            let (clock, chain) = (fresh_clock(), open_chain());
+            let signer = ScriptedAnchorer::new(mode);
+            let records = records_with(&path, &clock, &chain, signer.clone(), Some(REGISTRY_CHAIN));
+            registry_day_ready(&records, &clock);
+            let day = records.close_registry_day(DAY).await.unwrap();
+            assert_ne!(day.state, "anchored");
+            assert_eq!(signer.calls(), 1);
+            signer.set(Mode::Accept);
+            // The CLI ran and the node may have taken the transaction: an hour, a day, a month later, still no retry.
+            // (An owner transaction in the attempt's window keeps it unprovable.)
+            chain.owner_txs.lock().unwrap().push(OwnerTx { hash: "af".repeat(32), timestamp: records.now() + 5, pending: false });
+            for later in [3_601u64, 86_400, 30 * 86_400] {
+                clock.fetch_add(later, Ordering::SeqCst);
+                let day = records.close_registry_day(DAY).await.unwrap();
+                assert!(day.last_error.unwrap().contains("in doubt"), "after {later}s");
+                assert_eq!(signer.calls(), 1, "no second signer call after {later}s");
+            }
+        }
+        // Only "the signer could not be run at all" is definite: that one may be retried at once.
+        let path = db_file("registry-definite");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let signer = ScriptedAnchorer::new(Mode::Definite);
+        let records = records_with(&path, &clock, &chain, signer.clone(), Some(REGISTRY_CHAIN));
+        registry_day_ready(&records, &clock);
+        assert_ne!(records.close_registry_day(DAY).await.unwrap().state, "anchored");
+        signer.set(Mode::Accept);
+        assert_eq!(records.close_registry_day(DAY).await.unwrap().state, "anchored");
+        assert_eq!(signer.calls(), 2);
+    }
+
+    // --- an operator's claim of a PENDING transaction is only a claim ---------------------------------
+
+    use crate::games::peer_usage::{PeerResolution, PeerState};
+
+    async fn crashed_registry_with_pending_owner_tx(
+        name: &str,
+    ) -> (std::path::PathBuf, Arc<AtomicU64>, Arc<FakeChain>, u64, String) {
+        let (path, clock, chain, begun_at) = registry_crashed_after_acceptance(name).await;
+        let tx = "ab".repeat(32);
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: tx.clone(), timestamp: begun_at + 5, pending: true });
+        (path, clock, chain, begun_at, tx)
+    }
+
+    #[actix_web::test]
+    async fn a_pending_claim_never_marks_a_registry_day_landed_and_survives_a_restart() {
+        let (path, clock, chain, begun_at, tx) = crashed_registry_with_pending_owner_tx("claim-registry").await;
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_with(&path, &clock, &chain, signer.clone(), Some(REGISTRY_CHAIN));
+        records.store().resolve_registry_anchor(DAY, &PeerResolution::PendingClaim { tx_hash: tx.clone() }, "pending on the node", records.now()).unwrap();
+        let record = records.store().registry_anchor(DAY).unwrap().unwrap();
+        assert_eq!((record.state, record.tx_hash.as_deref()), (PeerState::Submitting, Some(tx.as_str())), "a claim is not a landing");
+        // Over time, and across restarts, it stays unresolved: not anchored, never resubmitted, reason given.
+        drop(records);
+        for later in [10u64, 3_601, 86_400] {
+            clock.store(begun_at + later, Ordering::SeqCst);
+            let records = records_with(&path, &clock, &chain, signer.clone(), Some(REGISTRY_CHAIN));
+            let day = records.close_registry_day(DAY).await.unwrap();
+            assert_eq!(day.state, "closed", "the day is NOT marked anchored by a claim (after {later}s)");
+            let error = day.last_error.unwrap();
+            assert!(error.contains("not verified") && error.contains("still pending"), "{error}");
+            let record = records.store().registry_anchor(DAY).unwrap().unwrap();
+            assert_eq!((record.state, record.tx_hash.as_deref()), (PeerState::Submitting, Some(tx.as_str())), "the unresolved state persists");
+        }
+        assert_eq!(signer.calls(), 0, "no signer call while the claim is unresolved");
+    }
+
+    #[actix_web::test]
+    async fn a_claimed_transaction_that_is_not_this_anchor_cannot_suppress_it_forever_and_the_operator_can_clear_it() {
+        let (path, clock, chain, begun_at, tx) = crashed_registry_with_pending_owner_tx("claim-other").await;
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_with(&path, &clock, &chain, signer.clone(), Some(REGISTRY_CHAIN));
+        records.store().resolve_registry_anchor(DAY, &PeerResolution::PendingClaim { tx_hash: tx.clone() }, "claimed", records.now()).unwrap();
+        // The claimed transaction is mined, but it is some other owner transaction: the index never shows this root.
+        chain.owner_txs.lock().unwrap()[0].pending = false;
+        clock.store(begun_at + 5_000, Ordering::SeqCst);
+        let day = records.close_registry_day(DAY).await.unwrap();
+        assert_eq!(day.state, "closed");
+        assert!(day.last_error.unwrap().contains("does not show this root"), "visible, with the reason");
+        assert_eq!(signer.calls(), 0);
+        // The operator, having looked, clears it: the stale hash must go, or a later ambiguity would read it as a claim.
+        records.store().resolve_registry_anchor(DAY, &PeerResolution::NotSubmitted, "it was a registration", records.now()).unwrap();
+        let record = records.store().registry_anchor(DAY).unwrap().unwrap();
+        assert_eq!((record.state, record.tx_hash), (PeerState::Reserved, None));
+        // Acknowledge the owner's unrelated transaction, as the procedure says, and the day can be anchored.
+        records.store().set_owner_ack(begun_at + 5_500, records.store().recorded_attempts(&[DAY, &shift_date(DAY, 1).unwrap()]).unwrap()).unwrap();
+        clock.store(begun_at + 6_000, Ordering::SeqCst);
+        assert_eq!(records.close_registry_day(DAY).await.unwrap().state, "anchored");
+        assert_eq!(signer.calls(), 1);
+    }
+
+    #[actix_web::test]
+    async fn a_claim_for_a_transaction_the_node_lost_or_that_is_not_the_owners_stays_in_doubt() {
+        let (path, clock, chain, begun_at, tx) = crashed_registry_with_pending_owner_tx("claim-lost").await;
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_with(&path, &clock, &chain, signer.clone(), Some(REGISTRY_CHAIN));
+        records.store().resolve_registry_anchor(DAY, &PeerResolution::PendingClaim { tx_hash: tx.clone() }, "claimed", records.now()).unwrap();
+        clock.store(begun_at + 5_000, Ordering::SeqCst);
+        // The pending transaction vanished from the node (dropped): in doubt, never a retry on its own.
+        chain.owner_txs.lock().unwrap().clear();
+        let day = records.close_registry_day(DAY).await.unwrap();
+        assert!(day.last_error.unwrap().contains("does not know that transaction"));
+        // It turns out to be somebody else's transaction.
+        chain.other_txs.lock().unwrap().insert(tx.clone(), TxView { sender: B.to_string(), recipient: "appchain".into(), timestamp: begun_at, pending: false });
+        let day = records.close_registry_day(DAY).await.unwrap();
+        assert!(day.last_error.unwrap().contains("not an AppChain transaction signed by the owner"));
+        assert_eq!(signer.calls(), 0);
+    }
+
+    #[actix_web::test]
+    async fn a_peer_root_claim_is_also_only_a_claim_and_one_transaction_cannot_anchor_two_roots() {
+        let path = db_file("claim-peer");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let records = records_on(&path, &clock, &chain, Arc::new(HangingAnchorer));
+        let begun_at = records.now();
+        let _ = tokio::time::timeout(Duration::from_millis(100), records.anchor_for_peer(1, [5u8; 32])).await;
+        let _ = tokio::time::timeout(Duration::from_millis(100), records.anchor_for_peer(1, [6u8; 32])).await;
+        drop(records);
+        let tx = "ab".repeat(32);
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: tx.clone(), timestamp: begun_at + 5, pending: true });
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: "cd".repeat(32), timestamp: begun_at + 6, pending: true });
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, signer.clone());
+        let day = records.today();
+        records.store().resolve_peer_root(&day, 1, &[5u8; 32], &PeerResolution::PendingClaim { tx_hash: tx.clone() }, "claimed", records.now()).unwrap();
+        // The same hash cannot be named for a second root, nor for the registry.
+        assert!(records.store().resolve_peer_root(&day, 1, &[6u8; 32], &PeerResolution::PendingClaim { tx_hash: tx.clone() }, "again", records.now()).is_err());
+        assert!(records.store().resolve_peer_root(&day, 1, &[6u8; 32], &PeerResolution::Landed { tx_hash: tx.clone() }, "again", records.now()).is_err());
+        let row = records.store().peer_anchor_roots(&day).unwrap().into_iter().find(|r| r.root == [5u8; 32]).unwrap();
+        assert_eq!((row.state, row.tx_hash.as_deref()), (PeerState::Submitting, Some(tx.as_str())), "still only a claim");
+        // Asked again, the claimed root stays in doubt with the reason (and nothing is signed), at any later time.
+        for later in [10u64, 7_200, 86_400 - 4_000] {
+            clock.store(begun_at + later, Ordering::SeqCst);
+            let error = records.anchor_for_peer(1, [5u8; 32]).await.unwrap_err();
+            assert!(error.to_string().contains("not verified") && error.to_string().contains("still pending"), "{error}");
+        }
+        assert_eq!(signer.calls(), 0);
+        // Mined and shown by the index under the claimed hash: the ledger itself confirms it.
+        chain.owner_txs.lock().unwrap()[0].pending = false;
+        chain.add_anchor(1, 1, [5u8; 32], begun_at + 30);
+        chain.anchors.lock().unwrap()[0].1.tx_hash = tx.clone();
+        assert_eq!(records.anchor_for_peer(1, [5u8; 32]).await.unwrap().state, "confirmed");
+        assert_eq!(signer.calls(), 0);
+    }
+
+    // --- the restore documentation says exactly what the implementation does -----------------------------
+
+    #[test]
+    fn the_documentation_does_not_claim_more_restore_protection_than_exists() {
+        let runbook = include_str!("../../docs/runbooks/records-service.md");
+        let checklist = include_str!("../../docs/runbooks/games-go-live-checklist.md");
+        let architecture = include_str!("../../docs/APPCHAIN_SERVICE_ARCHITECTURE.md");
+        // The limits are stated.
+        for needed in [
+            "Restoring the whole state directory",
+            "invisible",
+            "since 00:00 UTC yesterday",
+            "not the plan",
+            "hard operational prerequisite",
+        ] {
+            assert!(runbook.contains(needed), "the runbook must say: {needed}");
+        }
+        // The mandatory procedure is in the deployment checklist, command by command.
+        for command in ["restore-mark", "peer-reconcile --apply", "--clear-hold", "records.db-wal"] {
+            assert!(checklist.contains(command), "the checklist must contain the restore step: {command}");
+        }
+        assert!(checklist.contains("mandatory"), "the checklist marks the restore procedure as mandatory");
+        // And no document promises complete detection.
+        for (name, text) in [("runbook", runbook), ("checklist", checklist), ("architecture", architecture)] {
+            let lower = text.to_lowercase();
+            for forbidden in [
+                "complete automatic detection",
+                "detects every restore",
+                "all restores are detected",
+                "cannot be restored without",
+                "restore is always detected",
+                "fully protected against restore",
+            ] {
+                assert!(!lower.contains(forbidden), "{name} must not claim: {forbidden}");
+            }
+        }
+        assert!(architecture.contains("Neither is claimed to be complete"));
     }
 }

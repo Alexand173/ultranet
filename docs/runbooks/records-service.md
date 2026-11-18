@@ -28,7 +28,8 @@ unit's credentials directory. The systemd unit also makes the other service's di
 **What a compromised Games service can do to this one.** It holds the peer secret, so it can send a valid
 signed request. It can ask for an anchor of any root on chains `RECORDS_PEER_ANCHOR_CHAINS` allows (default
 `1,2`, UltraGrid and Ultra Chess). It can have at most `RECORDS_PEER_ANCHORS_PER_DAY` (default 8) distinct roots anchored per UTC day, so it
-cannot drain the owner wallet by asking for many (each anchor costs 0.001 `$ULTRA`). It cannot anchor the
+cannot drain the owner wallet by asking for many (each anchor costs 0.001 `$ULTRA`). That allowance is kept
+in the database, so restarting or crashing this service does not reset it (§4.3). It cannot anchor the
 registry's own chain or the L1 (refused with `403 forbidden`), cannot read or change a registry record (a different database, a different user), and cannot sign
 anything. That is why the allow-list exists, and why it should stay as short as it is.
 
@@ -151,6 +152,11 @@ ultranet-records disable --reason "why"       # stop accepting records and peer 
 ultranet-records enable
 ultranet-records backup --to /var/backups/ultranet-records/records-$(date -u +%Y%m%d).db
 ultranet-records close-day --date <yesterday> # by hand; normally automatic
+ultranet-records peer-usage [--date <day>]    # the Games service's anchor allowance for a day (database only)
+ultranet-records peer-resolve …               # an operator's decision about a peer's anchor in doubt (§5.2; checks the node)
+ultranet-records registry-resolve …           # the same for a registry day (§5.2; checks the node)
+ultranet-records restore-mark --note "…"      # after restoring a backup: hold anchoring (§5.1, database only)
+ultranet-records peer-reconcile [--apply] [--acknowledge-owner-transactions] [--clear-hold]   # §5.1, reads the node
 ```
 
 `status`, `game-list`, `disable`, `enable`, `backup` and the `game-*` commands open the database and nothing
@@ -197,6 +203,49 @@ nobody; a root submitted a moment ago returns the same transaction; if the ledge
 submitted. The ledger is therefore checked by both services, and an anchor cannot be paid for twice by a
 retry, a restart or a duplicate request.
 
+### 4.3 The peer allowance and the rule that time is not evidence
+
+The Games service may have at most `RECORDS_PEER_ANCHORS_PER_DAY` (default 8) **distinct roots** anchored per
+UTC day, across all chains. The count lives in the Records database (`peer_anchor_days` and
+`peer_anchor_roots`), changed together in one atomic transaction on a WAL database with `synchronous=FULL`.
+
+* **A slot is taken when a root is *reserved*, before anything is submitted.** A crash can waste a slot and can
+  never bypass the limit. The same root asked again, on that day **or any later day**, takes no slot: it is the
+  same anchor.
+* **An attempt is recorded before the signer is called**, so a crash leaves `submitting` with the attempt counted.
+* **The ledger does not refuse a repeated root.** Each anchor takes the next sequence and pays its own fee, so a
+  second submission of a root whose first outcome is unknown can cost a second fee. Therefore:
+  * **`submitted`** (the node accepted it, the hash is recorded): answered with that transaction, **never**
+    submitted again automatically, however long ago. Only the ledger showing it, or an operator, settles it.
+  * **`submitting`** (the outcome is unknown): **in doubt**, and refused (`502 anchor_failed`, "in doubt"). It
+    returns to `reserved` only if reconciliation **proves** the attempt never reached the node (below).
+    Expiry of a time window is never that proof.
+* **What counts as unknown.** Only "the signer could not be run at all" is known not to have submitted anything.
+  Every other failure (the CLI ran and reported an error, a timeout, output that could not be read) may be an
+  accepted transaction, because the CLI can fail after the node has already taken it.
+* **The reconciliation that can prove it.** `appchain-cli` signs with the time it runs, so a transaction it made
+  carries a timestamp within `[attempt − 120 s, attempt + CLI timeout + 120 s]`. After that window and a further
+  margin have passed, the owner's address history (`/api/address/<owner>/transactions`: pending **and**
+  confirmed) is read. If it reaches back past the window, is complete, and holds **no** AppChain transaction in
+  the window, the first attempt did not reach the node and the root may be tried once more. If the history holds
+  a transaction in the window (even a long-confirmed one: it could be this anchor), cannot be shown completely, or
+  the node cannot be read, the root stays in doubt. This needs `RECORDS_OWNER_ADDRESS`, which `check-config` checks
+  against the owner key.
+* **A pending owner transaction blocks a new submission** while the node lets us see it. The node also refuses a
+  second pending transaction with the same nonce, and the CLI reads the same confirmed nonce each time. That
+  protects the *pending* case. It does not protect a first transaction that has already been mined: the nonce has
+  moved on and a retry would be accepted. That case is exactly what the ledger lookup and the rules above cover.
+* **One root may be submitted at most `RECORDS_PEER_SUBMISSIONS_PER_ROOT` (3) times a day**, so a root that keeps
+  failing cannot be retried into a pile of fees. The next UTC day is a new allowance and a new count.
+* **Concurrent requests**, from threads or from two processes on one database, are serialised by SQLite's write
+  lock: exactly the allowance is granted.
+* **What the node does not show.** The node lists pending transactions only when the confirmed history leaves room
+  in its 100-entry list. For an owner with 100 or more transactions the pending list may be hidden; the service then
+  cannot see pending transactions, relies on the node's pending-nonce rule, and treats such a history as
+  incomplete, so a root in doubt then needs an operator (§5.2).
+
+`ultranet-records peer-usage` shows the day: slots used, each root, its state, attempts and transaction.
+
 ## 5. When something goes wrong
 
 | Symptom | Likely cause | What to do |
@@ -208,11 +257,124 @@ retry, a restart or a duplicate request.
 | A registry day stays `closed` / `anchored` for hours | the anchor is not landing | `close-day --date <day>` shows `last error` |
 | `chain_unavailable` | the node's ledger API is unreachable | nothing was submitted; it retries |
 | Every result submission is a 401 through the proxy | the proxy strips `Authorization` | fix the Caddy route (§3) |
+| Games service sees `internal_error` on every anchor; the journal says "peer anchor accounting is unusable" | the stored allowance is inconsistent or corrupt (see §5.1) | follow §5.1; **do not** edit the tables to "make it work" |
+| `reconciliation_required` (503) | the database is held after a restore, the fence shows it was replaced, the ledger shows an anchor it has no record of, or the owner has signed more transactions than it recorded attempts for | §5.1: `peer-reconcile`, then `--apply --clear-hold` (and `--acknowledge-owner-transactions` if you know why) |
+| `anchor_failed` … "in doubt" | a submission's outcome is unknown and cannot yet be proved | §5.2 |
+| `anchor_failed` … "still pending" | an owner transaction is pending in the node | wait for it to be mined; it retries by itself |
 | The service will not start: "must not hold the games payout credentials" | a Games credential is in this unit's directory | remove it; it belongs to `ultranet-games` |
 
-**Restarts are safe.** The service keeps nothing that matters in memory: records and days are in the
-database, and an anchor of unclear outcome is settled from the ledger. Restarting between submitting an anchor
-and noting it cannot produce a second anchor.
+### 5.1 Restoring a backup: what is detected, and the fail-closed procedure
+
+A restored database may remember fewer reservations and attempts than the live service made: it may have anchored
+roots after the backup was taken. A service that simply started on it would hand out an allowance it had forgotten it
+spent, and could re-submit a root or a registry day whose first attempt it has forgotten. A restore is therefore not
+complete until the database has been **reconciled with the ledger and the owner's history**.
+
+**What the service detects by itself** (any one of these holds anchoring, durably, and answers `503
+reconciliation_required`; nothing is signed, for peers and for the registry alike):
+
+| Situation | Detected by | Horizon / limit |
+|---|---|---|
+| The database file was replaced by an older copy, the fence file left in place (`cp backup records.db`) | the **fence**: a counter in the database and a copy beside it (`records.db.fence`) | always, at the next anchor decision. A missing, damaged or foreign fence file counts too |
+| The ledger shows an anchor on a peer chain, or on the registry chain, that no record here accounts for | the **ledger check** | anchors since 00:00 UTC yesterday, as far as the **anchors index** has caught up |
+| The owner has signed more AppChain transactions than this database recorded attempts for (an older backup restored with its fence file, a lost attempt record, an anchor already mined while the index lags, or the owner key used elsewhere) | the **owner-history check**: the owner's confirmed history comes from the chain itself, not from the index | transactions since 00:00 UTC yesterday, or since your last acknowledged reconciliation if later |
+| The owner's confirmed history cannot be read back that far | the owner-history check, which then refuses | same horizon |
+
+**What it cannot detect.** State this plainly to anyone relying on it:
+
+* **Restoring the whole state directory** (the database *and* its fence file, consistent with each other) is invisible
+  to the fence. It is caught only by the owner-history check, and only for transactions inside its horizon. A
+  discrepancy older than yesterday 00:00 UTC is not seen.
+* **A hidden pending transaction.** The node leaves pending transactions out of the owner's history once the confirmed
+  history fills its 100-entry list. A pending anchor lost with a restore is then invisible until it is mined; the node's
+  rule that one sender may hold only one pending transaction per nonce is the only protection meanwhile.
+* **Owner transactions made elsewhere** (registering a chain, a manual `appchain-cli` call) look exactly like a
+  forgotten attempt. The service refuses until you acknowledge them. This is a false alarm by design, not a miss.
+* Someone with root on the host can edit or replace the database and the fence file together, and could as easily
+  replace the binary. None of this defends against that.
+
+So **the explicit procedure below is a hard operational prerequisite of every restore**; the automatic checks are the net,
+not the plan.
+
+1. Stop the service. Keep the damaged database aside (`cp records.db records.damaged.db`); never delete it.
+2. Put the backup in place, **and delete the old `records.db-wal` and `records.db-shm` files**. Leave the fence file alone.
+3. `ultranet-records restore-mark --note "restored from <which backup>"`. (Database only, no keys.) This sets the hold
+   explicitly; without it, the fence sets it at the first anchor decision.
+4. Start the service. It answers `reconciliation_required` and signs nothing.
+5. `ultranet-records peer-reconcile` (it reads the node). It reports the fence state; every anchor the ledger shows on the
+   peer chains or the registry chain since yesterday that this database does not know (`UNKNOWN …`); any pending owner
+   transaction; and how many AppChain transactions the owner has signed against how many attempts were recorded.
+6. `ultranet-records peer-reconcile --apply` adopts each unknown peer anchor as a used slot, and each unknown registry
+   anchor against the closed day whose root it carries. One that matches no closed day cannot be adopted: investigate it.
+7. If it reports `UNACCOUNTED` owner transactions and you know why (you registered a chain, you ran the CLI by hand),
+   add `--acknowledge-owner-transactions`: everything up to now is then treated as accounted for. **Do not acknowledge
+   what you cannot explain.**
+8. Wait for any pending owner transaction to be mined. Then `ultranet-records peer-reconcile --apply --clear-hold`. It
+   **refuses** to release the hold while unknown anchors remain, while owner transactions are unaccounted for, while the
+   owner has pending transactions, or (unless you pass `--i-have-checked-for-pending-transactions` after checking the
+   node yourself) while the node cannot show its pending list. On success it also makes the fence describe the database
+   as it now is.
+9. Check `ultranet-records peer-usage`. A restored database has also lost every registry record written since the backup;
+   that is the larger cost of a restore, and no command brings it back.
+
+If the stored allowance is *inconsistent* rather than old (the counter disagrees with the rows, or a row does not
+decode), the service refuses to anchor for that day, signs nothing and changes nothing. `peer-usage` prints the
+inconsistency. Establish what the ledger holds for that day, take a backup, then either restore as above or, if the
+rows are right and only the counter is wrong, stop the service and set the counter to the number of rows
+(`sqlite3 records.db "UPDATE peer_anchor_days SET used = (SELECT COUNT(*) FROM peer_anchor_roots WHERE day='<day>') WHERE day='<day>';"`).
+
+**After any manual use of the owner key** (registering a chain, a hand-run `appchain-cli anchor` or `transfer`), run
+`ultranet-records peer-reconcile --acknowledge-owner-transactions`, or the service will refuse to anchor until you do.
+
+### 5.2 An anchor in doubt: the operator's procedure
+
+Symptom: the Games service logs `anchor_failed` with "in doubt", or `ultranet-records peer-usage` shows a root as
+`submitting`. The service will not submit it again by itself while it cannot tell whether the first attempt landed.
+
+1. `ultranet-records peer-usage --date <day>` gives the root, its chain, the attempts and the time.
+2. **Find out what the node holds.** Is the root on the ledger? `curl -s https://api.ultranetwork.cc/api/appchain/ledger/<chain>/anchors`.
+   Is a transaction from the owner pending or recent? `curl -s "https://api.ultranetwork.cc/api/address/<owner>/transactions?limit=100"`
+   (look for `recipient: appchain` near the time of the attempt). Check the owner's nonce.
+3. **If a transaction exists:** record it so it is not repeated. A confirmed one that the index shows under this root is recorded as landed; a pending one is recorded as a claim only (add `--pending-unverified-ok`) and the service settles it when it is mined (see the registry rules above):
+   `ultranet-records peer-resolve --date <day> --chain <id> --root <root> --landed <tx hash> --note "found pending at <time>"`.
+   The service then answers with that transaction, and the ledger confirms it when it lands.
+4. **If you are certain nothing was submitted** (the node never saw it, the owner's history has no transaction in the
+   window, the CLI never ran): `ultranet-records peer-resolve … --not-submitted --note "<what you checked>"`. The root
+   may then be submitted again; the attempt stays counted, and the per-root cap still applies.
+5. **If you cannot tell, do not resolve it.** An anchor that is late is a nuisance; a duplicated anchor is a fee. The
+   day's anchor can wait: the allowance resets at UTC midnight and the same root is still the same anchor tomorrow.
+
+The service does the proof by itself when it can (§4.3), so in practice this procedure is for a history the node
+cannot show completely, or a transaction in the window that you can identify as not being this anchor.
+
+**The registry's own daily anchor follows the same rules.** Each closed registry day has an anchor record
+(`registry_anchor_attempts`) in the same states: an attempt is recorded before the signer is called; a `submitted`
+day is never submitted again automatically; a `submitting` day is in doubt until reconciliation proves the attempt never
+reached the node (the owner's complete history shows no AppChain transaction in its window), a pending owner transaction
+blocks a new submission, and the hold, fence, ledger and owner-history checks all apply. Its symptom is `last error`
+containing "in doubt" in `close-day`'s output or on the day. To settle one by hand:
+
+* `ultranet-records registry-resolve --date <day> --landed <tx hash> --note "..."` records a transaction the operator
+  found. **The claim is checked against the node first**: the transaction must exist, be signed by the owner address,
+  and be an AppChain transaction. A **mined** one is recorded as landed only if the anchors index also shows exactly this
+  day's root, on the registry chain, under exactly this transaction; a different chain, root, owner or transaction is
+  refused, and so is one the index does not show yet (wait for it).
+* **A pending transaction is only a claim.** Its chain and root cannot be read until it is mined, so `--landed` refuses it
+  unless you add `--pending-unverified-ok`, and even then it is recorded as a **claim**, never as landed: the day stays
+  in doubt (not anchored, not resubmitted) and every pass says why. The service verifies the claim itself once the
+  transaction is mined and indexed (owner, AppChain, and the root on the registry chain under that hash); if it is
+  pending, unknown to the node (dropped), mined but not shown by the index under that root, or somebody else's, it stays
+  in doubt with that reason. **A claim cannot silence an anchor for good:** when you have seen enough, clear it with
+  `--not-submitted`, which also forgets the named hash. One transaction hash cannot be claimed for two anchors. The flag
+  changes nothing for a mined transaction, which is always verified in full.
+* `ultranet-records registry-resolve --date <day> --not-submitted --note "..."` returns the day to `reserved` when you
+  are certain nothing was submitted.
+* `peer-resolve` takes the same validated claim, with the same rules, for a peer's root.
+
+**Restarts are safe.** The service keeps nothing that matters in memory except the peer replay cache (a
+request replayed within 60 seconds of a restart is answered from the record and never anchored twice): records,
+days and the peer allowance are in the database. Restarting between submitting an anchor and noting it leaves the
+root in doubt (§4.3), which is refused, not repeated.
 
 **Rotating the peer secret.** Generate a new one, install it in both services' credentials, restart both. In
 between, days are not anchored (the Games service logs `peer_unauthenticated`) and nothing is lost: the next

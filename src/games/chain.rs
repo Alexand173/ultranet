@@ -25,8 +25,57 @@ pub struct AnchorPoint {
     pub tx_hash: String,
 }
 
+/// One AppChain transaction signed by the owner, as the node's address history reports it. The history
+/// carries no payload, so a transaction can be told apart by its time and status, never by its root.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OwnerTx {
+    pub hash: String,
+    pub timestamp: u64,
+    pub pending: bool,
+}
+
+/// What the owner's address history says about its AppChain transactions since a moment.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OwnerActivity {
+    /// The owner's AppChain transactions (recipient `appchain`) at or after `since`, newest first.
+    pub transactions: Vec<OwnerTx>,
+    /// The history reaches back to `since` **and** the node listed its pending transactions, so nothing
+    /// in the window can be missing. When false, absence of a transaction proves nothing.
+    pub complete: bool,
+    /// The *confirmed* history reaches back to `since`, whatever the node did with its pending list.
+    /// Confirmed transactions come from the chain itself, so with this set none is missing from the window.
+    pub confirmed_complete: bool,
+}
+
+/// One transaction as the node reports it by hash.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxView {
+    pub sender: String,
+    pub recipient: String,
+    pub timestamp: u64,
+    pub pending: bool,
+}
+
 #[async_trait]
 pub trait GamesChain: Send + Sync {
+    /// The owner's AppChain transactions, confirmed and pending, since `since`. See [`OwnerActivity`].
+    async fn owner_appchain_activity(
+        &self,
+        owner: &str,
+        since: u64,
+    ) -> Result<OwnerActivity, ChainError>;
+
+    /// One transaction by hash, or `None` if the node has neither mined nor pending one.
+    async fn transaction(&self, hash: &str) -> Result<Option<TxView>, ChainError>;
+
+    /// Every anchor of `chain_id` whose block timestamp is at or after `since`, oldest first. An error,
+    /// never a partial list, if the ledger cannot be read back that far.
+    async fn anchors_since(
+        &self,
+        chain_id: u32,
+        since: u64,
+    ) -> Result<Vec<AnchorPoint>, ChainError>;
+
     /// Whether the address has a balance or any transaction history. A fresh random address has neither.
     async fn address_active(&self, address: &str) -> Result<bool, ChainError>;
 
@@ -49,6 +98,11 @@ pub trait GamesChain: Send + Sync {
 const PAGE: u64 = 50;
 /// How far back `find_anchor` looks: a day's anchor is among the newest few.
 const FIND_PAGES: u64 = 3;
+/// How far back `anchors_since` will read before it gives up rather than return a partial answer.
+const SINCE_PAGES: u64 = 40;
+/// The node lists at most this many transactions for an address, and omits the pending ones when the
+/// confirmed history alone fills the list.
+const HISTORY_LIMIT: usize = 100;
 
 pub struct HttpChain {
     client: reqwest::Client,
@@ -125,8 +179,116 @@ pub fn parse_anchors(body: &Value) -> Result<Vec<AnchorPoint>, ChainError> {
     Ok(points)
 }
 
+/// Parse the node's address history into the owner's AppChain transactions since `since`.
+pub fn parse_owner_activity(
+    body: &Value,
+    owner: &str,
+    since: u64,
+) -> Result<OwnerActivity, ChainError> {
+    let list = body["transactions"].as_array().ok_or(ChainError::Invalid)?;
+    let mut transactions = Vec::new();
+    let mut oldest = u64::MAX;
+    for row in list {
+        let timestamp = row["timestamp"].as_u64().ok_or(ChainError::Invalid)?;
+        oldest = oldest.min(timestamp);
+        let status = row["status"].as_str().ok_or(ChainError::Invalid)?;
+        if status != "pending" && status != "confirmed" {
+            return Err(ChainError::Invalid);
+        }
+        if row["recipient"].as_str() == Some("appchain")
+            && row["sender"].as_str() == Some(owner)
+            && timestamp >= since
+        {
+            let hash = row["hash"].as_str().ok_or(ChainError::Invalid)?;
+            if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(ChainError::Invalid);
+            }
+            transactions.push(OwnerTx {
+                hash: hash.to_ascii_lowercase(),
+                timestamp,
+                pending: status == "pending",
+            });
+        }
+    }
+    // The node fills its list with confirmed history first and adds pending transactions only if there is
+    // room. A full list therefore may be missing pending ones, and a list that stops short of `since` may
+    // be missing confirmed ones: either way an empty answer is not evidence.
+    let room_for_pending = list.len() < HISTORY_LIMIT;
+    let reaches_back = list.len() < HISTORY_LIMIT || oldest < since;
+    Ok(OwnerActivity {
+        transactions,
+        complete: room_for_pending && reaches_back,
+        confirmed_complete: reaches_back,
+    })
+}
+
 #[async_trait]
 impl GamesChain for HttpChain {
+    async fn owner_appchain_activity(
+        &self,
+        owner: &str,
+        since: u64,
+    ) -> Result<OwnerActivity, ChainError> {
+        let body = self
+            .get(&format!(
+                "/api/address/{owner}/transactions?limit={HISTORY_LIMIT}"
+            ))
+            .await?
+            .ok_or(ChainError::Invalid)?;
+        parse_owner_activity(&body, owner, since)
+    }
+
+    async fn transaction(&self, hash: &str) -> Result<Option<TxView>, ChainError> {
+        if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(ChainError::Invalid);
+        }
+        let Some(body) = self.get(&format!("/api/transaction/{hash}")).await? else {
+            return Ok(None);
+        };
+        if body["success"] != Value::Bool(true) {
+            return Ok(None);
+        }
+        let data = &body["data"];
+        let status = data["status"].as_str().ok_or(ChainError::Invalid)?;
+        if status != "pending" && status != "confirmed" {
+            return Err(ChainError::Invalid);
+        }
+        Ok(Some(TxView {
+            sender: data["sender"].as_str().ok_or(ChainError::Invalid)?.to_string(),
+            recipient: data["recipient"].as_str().ok_or(ChainError::Invalid)?.to_string(),
+            timestamp: data["timestamp"].as_u64().ok_or(ChainError::Invalid)?,
+            pending: status == "pending",
+        }))
+    }
+
+    async fn anchors_since(
+        &self,
+        chain_id: u32,
+        since: u64,
+    ) -> Result<Vec<AnchorPoint>, ChainError> {
+        let Some(count) = self.anchor_count(chain_id).await? else {
+            return Ok(Vec::new());
+        };
+        let mut found: Vec<AnchorPoint> = Vec::new();
+        let mut from = count.saturating_sub(PAGE - 1).max(1);
+        for _ in 0..SINCE_PAGES {
+            if count == 0 {
+                return Ok(found);
+            }
+            let page = self.anchors(chain_id, from).await?;
+            let reached_older = page.iter().any(|p| p.block_timestamp < since) || from <= 1;
+            found.extend(page.into_iter().filter(|p| p.block_timestamp >= since));
+            if reached_older {
+                found.sort_by_key(|p| p.sequence);
+                found.dedup_by_key(|p| p.sequence);
+                return Ok(found);
+            }
+            from = from.saturating_sub(PAGE).max(1);
+        }
+        // Read back as far as allowed and still not past `since`: say so rather than guess.
+        Err(ChainError::Unavailable)
+    }
+
     async fn address_active(&self, address: &str) -> Result<bool, ChainError> {
         let body = self
             .get(&format!("/api/account/{address}"))
@@ -217,6 +379,70 @@ mod tests {
         );
         assert_eq!(points[0].root, [0xAA; 32]);
         assert_eq!(points[1].block_timestamp, 200);
+    }
+
+    fn history(rows: &[(&str, &str, u64, &str)]) -> Value {
+        json!({"transactions": rows.iter().map(|(recipient, status, ts, hash)| json!({
+            "sender": OWNER, "recipient": recipient, "status": status, "timestamp": ts, "hash": hash,
+        })).collect::<Vec<_>>()})
+    }
+
+    const OWNER: &str = "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e";
+
+    #[test]
+    fn the_owners_history_yields_only_its_appchain_transactions_in_the_window() {
+        let h = "ab".repeat(32);
+        let body = history(&[
+            ("appchain", "pending", 500, &h),
+            ("appchain", "confirmed", 400, &h),
+            ("appchain", "confirmed", 100, &h),
+            ("deadbeef", "confirmed", 450, &h),
+        ]);
+        let activity = parse_owner_activity(&body, OWNER, 300).unwrap();
+        assert_eq!(
+            activity.transactions.iter().map(|t| (t.timestamp, t.pending)).collect::<Vec<_>>(),
+            vec![(500, true), (400, false)]
+        );
+        assert!(activity.complete, "a short list that reaches back past the window is complete");
+    }
+
+    #[test]
+    fn a_full_list_or_one_that_stops_short_of_the_window_proves_nothing() {
+        let h = "cd".repeat(32);
+        // 100 rows: the node may have left the pending ones out.
+        let rows: Vec<(&str, &str, u64, &str)> = (0..100).map(|i| ("appchain", "confirmed", 1_000 + i, h.as_str())).collect();
+        assert!(!parse_owner_activity(&history(&rows), OWNER, 500).unwrap().complete);
+        // Even if it reached back, a full list cannot rule out omitted pending transactions.
+        let rows: Vec<(&str, &str, u64, &str)> = (0..100).map(|i| ("appchain", "confirmed", 100 + i, h.as_str())).collect();
+        assert!(!parse_owner_activity(&history(&rows), OWNER, 500).unwrap().complete);
+        // A list shorter than the limit is the owner's whole history (confirmed first, then pending), so it is
+        // complete even if its oldest entry is newer than the window: there is nothing older to miss.
+        let short = history(&[("appchain", "confirmed", 900, &h)]);
+        assert!(parse_owner_activity(&short, OWNER, 500).unwrap().complete);
+        // An empty history is complete: there is nothing in it at all.
+        assert!(parse_owner_activity(&history(&[]), OWNER, 500).unwrap().complete);
+        // A full list that reaches back past the window still has a complete CONFIRMED history, though its
+        // pending list may be hidden: the two are reported separately.
+        let reaching: Vec<(&str, &str, u64, &str)> = (0..100).map(|i| ("appchain", "confirmed", 100 + i, h.as_str())).collect();
+        let activity = parse_owner_activity(&history(&reaching), OWNER, 500).unwrap();
+        assert!(activity.confirmed_complete && !activity.complete);
+        // A full list that does not reach back has neither.
+        let not_reaching: Vec<(&str, &str, u64, &str)> = (0..100).map(|i| ("appchain", "confirmed", 1_000 + i, h.as_str())).collect();
+        let activity = parse_owner_activity(&history(&not_reaching), OWNER, 500).unwrap();
+        assert!(!activity.confirmed_complete && !activity.complete);
+    }
+
+    #[test]
+    fn a_malformed_history_is_refused_not_guessed() {
+        let h = "ab".repeat(32);
+        for bad in [
+            json!({"nope": []}),
+            history(&[("appchain", "weird", 5, &h)]),
+            history(&[("appchain", "confirmed", 5, "not-a-hash")]),
+            json!({"transactions": [{"sender": OWNER, "recipient": "appchain", "status": "confirmed", "hash": h}]}),
+        ] {
+            assert_eq!(parse_owner_activity(&bad, OWNER, 0), Err(ChainError::Invalid), "{bad}");
+        }
     }
 
     #[test]

@@ -10,6 +10,14 @@
 //! ultranet-records enable
 //! ultranet-records backup --to /var/backups/ultranet-records/records-YYYYMMDD.db
 //! ultranet-records close-day --date YYYY-MM-DD                          # close (and anchor) a registry day
+//! ultranet-records peer-usage [--date YYYY-MM-DD]    # the Games service's anchor allowance for a day (database only)
+//! ultranet-records peer-resolve --date D --chain C --root <64 hex> (--landed <tx hash> [--pending-unverified-ok] | --not-submitted) --note "..."
+//! ultranet-records registry-resolve --date D (--landed <tx hash> [--pending-unverified-ok] | --not-submitted) --note "..."
+//!                                                    # an operator's decision about an anchor whose outcome is unknown;
+//!                                                    # a landed transaction is checked against the node first
+//! ultranet-records restore-mark --note "restored from ..."   # after putting a backup in place: hold anchoring
+//! ultranet-records peer-reconcile [--apply] [--acknowledge-owner-transactions] [--clear-hold]
+//!                                                    # compare the ledger and the owner's history with the database (needs the node)
 //!
 //! ultranet-records game-register --id tetris --name "Tetris" --owner <64 hex>    # prints the API key ONCE
 //! ultranet-records game-list
@@ -52,11 +60,16 @@ async fn main() {
         "enable" => set_accepting(&args[1..], true),
         "backup" => backup(&args[1..]),
         "close-day" => close_day(&args[1..]).await,
+        "peer-usage" => peer_usage(&args[1..]),
+        "peer-resolve" => peer_resolve(&args[1..]).await,
+        "registry-resolve" => registry_resolve(&args[1..]).await,
+        "restore-mark" => restore_mark(&args[1..]),
+        "peer-reconcile" => peer_reconcile(&args[1..]).await,
         "game-register" => game_register(&args[1..]),
         "game-list" => game_list(),
         "game-status" => game_status(&args[1..]),
         "game-rotate-key" => game_rotate_key(&args[1..]),
-        _ => Err("use serve, check-config, status, disable, enable, backup, close-day, game-register, game-list, game-status or game-rotate-key".into()),
+        _ => Err("use serve, check-config, status, disable, enable, backup, close-day, peer-usage, peer-resolve, registry-resolve, restore-mark, peer-reconcile, game-register, game-list, game-status or game-rotate-key".into()),
     };
     if let Err(error) = result {
         eprintln!("ultranet-records: {error}");
@@ -210,6 +223,25 @@ fn check_config() -> Result<(), String> {
                 }
             }
             println!("Anchoring:         enabled via {}", anchor.cli_path.display());
+            if let Some(owner) = &config.service.owner_address {
+                let output = std::process::Command::new(&anchor.cli_path)
+                    .arg("address")
+                    .arg("--key-file")
+                    .arg(config.credential_path(&anchor.key_credential))
+                    .arg("--password-file")
+                    .arg(config.credential_path(&anchor.password_credential))
+                    .stdin(std::process::Stdio::null())
+                    .output()
+                    .map_err(|e| format!("cannot run {}: {e}", anchor.cli_path.display()))?;
+                let address = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !output.status.success() || &address != owner {
+                    return Err(format!(
+                        "RECORDS_OWNER_ADDRESS ({owner}) is not the address of the owner key ({})",
+                        if address.is_empty() { "unreadable" } else { &address }
+                    ));
+                }
+                println!("Owner address:     {owner} (matches the owner key)");
+            }
         }
     }
     match &config.peer_credential {
@@ -218,6 +250,271 @@ fn check_config() -> Result<(), String> {
             read_secret(&config.credential_path(name), MIN_SECRET_BYTES)?;
             println!("Peer route:        enabled, secret present");
         }
+    }
+    Ok(())
+}
+
+/// What the Games service has asked this one to anchor on a UTC day, and how much of the allowance is
+/// used. Opens the database only. If the stored state is inconsistent it says so and changes nothing:
+/// see `docs/runbooks/records-service.md` §5.1.
+fn peer_usage(args: &[String]) -> Result<(), String> {
+    let store = open_store()?;
+    let day = flag(args, "--date").unwrap_or_else(|| UltraNet::games::service::date_of(UltraNet::auth::now_seconds()));
+    let limit = env::var("RECORDS_PEER_ANCHORS_PER_DAY").ok().unwrap_or_else(|| "8 (default)".into());
+    let roots = store.peer_anchor_roots(&day).map_err(|e| e.to_string())?;
+    match store.check_fence().map_err(|e| e.to_string())? {
+        UltraNet::games::fence::FenceCheck::Intact => {}
+        UltraNet::games::fence::FenceCheck::Regressed(why) => println!("FENCE REGRESSED, this database looks restored: {why}"),
+    }
+    if let Some(hold) = store.peer_hold().map_err(|e| e.to_string())? {
+        println!("HELD after a restore, no anchor is signed until reconciled: {hold}");
+    }
+    println!("{day}: {} of {limit} slots used", roots.len());
+    for root in roots {
+        println!(
+            "  chain {} {} {:<10} attempts {} {}",
+            root.chain_id,
+            hex::encode(root.root),
+            root.state.code(),
+            root.attempts,
+            root.tx_hash.as_deref().map(|tx| format!("tx {tx}")).or(root.last_error.map(|e| format!("last error: {e}"))).unwrap_or_default()
+        );
+    }
+    Ok(())
+}
+
+/// What an operator decided about an anchor whose outcome the service could not settle, with a claimed
+/// landed transaction checked against the node first (owner, AppChain, and, once mined, chain and root).
+async fn resolution_from(
+    args: &[String],
+    chain_id: u32,
+    root: &[u8; 32],
+) -> Result<UltraNet::games::peer_usage::PeerResolution, String> {
+    use UltraNet::games::peer_usage::PeerResolution;
+    match (flag(args, "--landed"), args.iter().any(|a| a == "--not-submitted")) {
+        (Some(tx_hash), false) => {
+            use UltraNet::games::records::LandedCheck;
+            let config = RecordsServiceConfig::from_env()?;
+            let owner = config.service.owner_address.clone().ok_or("RECORDS_OWNER_ADDRESS is required")?;
+            let chain = HttpChain::new(&config.node_api_base_url).map_err(|e| e.to_string())?;
+            let checked = UltraNet::games::records::validate_landed_transaction(
+                &chain,
+                &owner,
+                chain_id,
+                root,
+                &tx_hash,
+                args.iter().any(|a| a == "--pending-unverified-ok"),
+            )
+            .await
+            .map_err(|reason| format!("not recording it: {reason}"))?;
+            match checked {
+                LandedCheck::Verified(note) => {
+                    println!("{note}");
+                    Ok(PeerResolution::Landed { tx_hash })
+                }
+                // A pending transaction is only a claim: it never marks the anchor landed.
+                LandedCheck::PendingClaim(note) => {
+                    println!("{note}");
+                    Ok(PeerResolution::PendingClaim { tx_hash })
+                }
+            }
+        }
+        (None, true) => Ok(PeerResolution::NotSubmitted),
+        _ => Err("give exactly one of --landed <tx hash> or --not-submitted".into()),
+    }
+}
+
+/// An operator's decision about a peer root whose anchor the service could not settle by itself.
+async fn peer_resolve(args: &[String]) -> Result<(), String> {
+    use UltraNet::games::peer_usage::PeerResolution;
+    let day = flag(args, "--date").ok_or("--date YYYY-MM-DD is required")?;
+    let chain: u32 = flag(args, "--chain")
+        .ok_or("--chain <id> is required")?
+        .parse()
+        .map_err(|_| "--chain must be a number")?;
+    let root: [u8; 32] = hex::decode(flag(args, "--root").ok_or("--root <64 hex> is required")?)
+        .ok()
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or("--root must be 64 hexadecimal characters")?;
+    let note = flag(args, "--note").ok_or("--note \"what you checked\" is required")?;
+    let resolution = resolution_from(args, chain, &root).await?;
+    open_store()?
+        .resolve_peer_root(&day, chain, &root, &resolution, &note, UltraNet::auth::now_seconds())
+        .map_err(|e| e.to_string())?;
+    match resolution {
+        PeerResolution::Landed { .. } => println!("recorded as landed; it will not be submitted again"),
+        PeerResolution::PendingClaim { .. } => println!("recorded as a CLAIM; the root stays in doubt (never resubmitted) and is verified automatically once the transaction is mined and indexed"),
+        PeerResolution::NotSubmitted => println!("returned to reserved; it may be submitted again (the attempt stays counted)"),
+    }
+    Ok(())
+}
+
+/// An operator's decision about a registry day whose anchor the service could not settle by itself.
+async fn registry_resolve(args: &[String]) -> Result<(), String> {
+    use UltraNet::games::peer_usage::PeerResolution;
+    let day = flag(args, "--date").ok_or("--date YYYY-MM-DD is required")?;
+    let note = flag(args, "--note").ok_or("--note \"what you checked\" is required")?;
+    let store = open_store()?;
+    let config = RecordsServiceConfig::from_env()?;
+    let record = store
+        .registry_anchor(&day)
+        .map_err(|e| e.to_string())?
+        .ok_or("that registry day has no anchor record")?;
+    let resolution = resolution_from(args, record.chain_id, &record.root).await?;
+    let _ = config;
+    store
+        .resolve_registry_anchor(&day, &resolution, &note, UltraNet::auth::now_seconds())
+        .map_err(|e| e.to_string())?;
+    match resolution {
+        PeerResolution::Landed { tx_hash } => {
+            store
+                .set_registry_anchor(&day, Some(&tx_hash), "anchored", UltraNet::auth::now_seconds())
+                .map_err(|e| e.to_string())?;
+            println!("recorded as landed; it will not be submitted again")
+        }
+        PeerResolution::PendingClaim { .. } => println!("recorded as a CLAIM; the day stays in doubt (never resubmitted) and is verified automatically once the transaction is mined and indexed"),
+        PeerResolution::NotSubmitted => println!("returned to reserved; it may be submitted again"),
+    }
+    Ok(())
+}
+
+/// After a backup has been put in place by hand, hold all anchoring until it has been reconciled with the
+/// ledger. Database only.
+fn restore_mark(args: &[String]) -> Result<(), String> {
+    let note = flag(args, "--note").ok_or("--note \"restored from <which backup>\" is required")?;
+    open_store()?
+        .set_peer_hold(&note, UltraNet::auth::now_seconds())
+        .map_err(|e| e.to_string())?;
+    println!("anchoring is held. Start the service, then run `ultranet-records peer-reconcile`.");
+    Ok(())
+}
+
+/// Compare what the ledger and the owner's history hold with what this database remembers, adopt what it has
+/// forgotten (`--apply`), baseline the owner's other transactions (`--acknowledge-owner-transactions`), and
+/// release the hold (`--clear-hold`) only when nothing is unaccounted for.
+async fn peer_reconcile(args: &[String]) -> Result<(), String> {
+    use UltraNet::games::chain::GamesChain;
+    use UltraNet::games::service::{date_of, date_start};
+    let has_flag = |name: &str| args.iter().any(|a| a == name);
+    let (apply, clear) = (has_flag("--apply"), has_flag("--clear-hold"));
+    let acknowledge = has_flag("--acknowledge-owner-transactions");
+    let acknowledged_pending = has_flag("--i-have-checked-for-pending-transactions");
+    let config = RecordsServiceConfig::from_env()?;
+    let owner = config.service.owner_address.clone().ok_or("RECORDS_OWNER_ADDRESS is required")?;
+    let store = GamesStore::open(&config.db_path).map_err(|e| e.to_string())?;
+    let chain = HttpChain::new(&config.node_api_base_url).map_err(|e| e.to_string())?;
+    let now = UltraNet::auth::now_seconds();
+    let today = date_of(now);
+    let since = date_start(&today).ok_or("today is not a date")?.saturating_sub(86_400);
+    let yesterday = date_of(since);
+
+    match store.check_fence().map_err(|e| e.to_string())? {
+        UltraNet::games::fence::FenceCheck::Intact => println!("fence: intact"),
+        UltraNet::games::fence::FenceCheck::Regressed(why) => println!("fence: REGRESSED, {why}"),
+    }
+
+    // 1. Anchors the ledger shows that this database has no record of.
+    let known = store.peer_known_roots(&[&today, &yesterday]).map_err(|e| e.to_string())?;
+    let registry_known = store.registry_known_roots().map_err(|e| e.to_string())?;
+    let mut unresolved = 0usize;
+    for chain_id in &config.service.peer_anchor_chains {
+        for point in chain.anchors_since(*chain_id, since).await.map_err(|e| format!("cannot read the ledger: {e}"))? {
+            if known.contains(&(*chain_id, point.root)) {
+                continue;
+            }
+            println!("UNKNOWN to this database: chain {chain_id} root {} tx {} (block time {})", hex::encode(point.root), point.tx_hash, point.block_timestamp);
+            if apply {
+                let day = date_of(point.block_timestamp);
+                let added = store.adopt_ledger_anchor(&day, *chain_id, &point.root, &point.tx_hash, now).map_err(|e| e.to_string())?;
+                println!("  adopted into {day} as a used slot: {added}");
+            } else {
+                unresolved += 1;
+            }
+        }
+    }
+    if let Some(registry_chain) = config.service.registry_chain_id {
+        for point in chain.anchors_since(registry_chain, since).await.map_err(|e| format!("cannot read the ledger: {e}"))? {
+            if registry_known.contains(&(registry_chain, point.root)) {
+                continue;
+            }
+            println!("UNKNOWN registry anchor: chain {registry_chain} root {} tx {}", hex::encode(point.root), point.tx_hash);
+            // A registry anchor can only be adopted against the closed day whose root it carries.
+            let mut matched = false;
+            // A registry day can be anchored days after it closes: look back across the catch-up window.
+            for back in 0..=9u64 {
+                let date = &date_of(date_start(&today).unwrap_or(now).saturating_sub(back * 86_400));
+                if let Some(day) = store.registry_day(date).map_err(|e| e.to_string())? {
+                    if day.day_root == point.root {
+                        matched = true;
+                        if apply {
+                            store.ensure_registry_anchor(date, registry_chain, &point.root, now).map_err(|e| e.to_string())?;
+                            store
+                                .resolve_registry_anchor(date, &UltraNet::games::peer_usage::PeerResolution::Landed { tx_hash: point.tx_hash.clone() }, "adopted from the ledger", now)
+                                .map_err(|e| e.to_string())?;
+                            store.set_registry_anchor(date, Some(&point.tx_hash), "confirmed", now).map_err(|e| e.to_string())?;
+                            println!("  adopted as registry day {date}");
+                        }
+                    }
+                }
+            }
+            if !matched {
+                println!("  it matches no closed registry day in this database: it cannot be adopted");
+            }
+            if !matched || !apply {
+                unresolved += 1;
+            }
+        }
+    }
+
+    // 2. The owner's own history against the attempts this database recorded.
+    let activity = chain.owner_appchain_activity(&owner, since).await.map_err(|e| format!("cannot read the owner's history: {e}"))?;
+    let pending: Vec<_> = activity.transactions.iter().filter(|t| t.pending).collect();
+    for tx in &pending {
+        println!("PENDING owner AppChain transaction {} (signed at {})", tx.hash, tx.timestamp);
+    }
+    if !activity.complete {
+        println!("note: the node could not show the owner's full history, so pending transactions may be hidden");
+    }
+    let (ack_ts, ack_attempts) = store.owner_ack().map_err(|e| e.to_string())?;
+    let recorded_now = store.recorded_attempts(&[&yesterday, &today]).map_err(|e| e.to_string())?;
+    let (counted, recorded) = if ack_ts >= since {
+        let from = date_of(ack_ts);
+        let days: Vec<&str> = if from == today { vec![&today] } else { vec![&yesterday, &today] };
+        (
+            activity.transactions.iter().filter(|t| t.timestamp > ack_ts).count() as u64,
+            store.recorded_attempts(&days).map_err(|e| e.to_string())?.saturating_sub(ack_attempts),
+        )
+    } else {
+        (activity.transactions.len() as u64, recorded_now)
+    };
+    println!("owner AppChain transactions since the baseline: {counted}; attempts this database recorded: {recorded}");
+    let mut accounted = counted <= recorded;
+    if !accounted {
+        println!("UNACCOUNTED: the owner has signed {} more AppChain transaction(s) than this database recorded attempts for", counted - recorded);
+        if acknowledge {
+            store.set_owner_ack(now, store.recorded_attempts(&[&today]).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            println!("  acknowledged: everything up to now is treated as accounted for");
+            accounted = true;
+        }
+    }
+    println!("today's allowance: {} slot(s) used", store.peer_anchor_usage(&today).map_err(|e| e.to_string())?);
+
+    if clear {
+        if unresolved > 0 {
+            return Err("not releasing the hold: anchors the ledger shows are still unaccounted for; run with --apply (and resolve any that cannot be adopted)".into());
+        }
+        if !accounted {
+            return Err("not releasing the hold: the owner's history shows transactions this database cannot account for; if you know why (for example you registered a chain), run with --acknowledge-owner-transactions".into());
+        }
+        if !pending.is_empty() {
+            return Err("not releasing the hold: the owner has pending transactions; wait for them to be mined, then run again".into());
+        }
+        if !activity.complete && !acknowledged_pending {
+            return Err("not releasing the hold: pending transactions may be hidden from the node's list. Check the node yourself, then run again with --i-have-checked-for-pending-transactions".into());
+        }
+        store.clear_peer_hold().map_err(|e| e.to_string())?;
+        store.accept_fence().map_err(|e| e.to_string())?;
+        println!("the hold is released and the fence now describes this database; anchoring may resume");
     }
     Ok(())
 }

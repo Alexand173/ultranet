@@ -121,6 +121,8 @@ pub enum GamesError {
     Forbidden(String),
     #[error("anchoring is not enabled on this service")]
     AnchoringDisabled,
+    #[error("{0}")]
+    ReconciliationRequired(String),
     #[error("the anchor was not accepted: {0}")]
     AnchorFailed(String),
     #[error("the peer could not be authenticated")]
@@ -152,6 +154,7 @@ impl GamesError {
             GamesError::RegistrationLimit => "registration_limit",
             GamesError::Forbidden(_) => "forbidden",
             GamesError::AnchoringDisabled => "anchoring_disabled",
+            GamesError::ReconciliationRequired(_) => "reconciliation_required",
             GamesError::AnchorFailed(_) => "anchor_failed",
             GamesError::PeerUnauthenticated => "peer_unauthenticated",
             GamesError::NotFound(_) => "not_found",
@@ -178,7 +181,8 @@ impl GamesError {
             GamesError::Disabled
             | GamesError::PayoutsPaused
             | GamesError::ChainUnavailable
-            | GamesError::AnchoringDisabled => 503,
+            | GamesError::AnchoringDisabled
+            | GamesError::ReconciliationRequired(_) => 503,
             GamesError::Internal(_) => 500,
         }
     }

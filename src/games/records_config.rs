@@ -16,6 +16,7 @@ pub const MAX_SANDBOX_RESULTS_PER_DAY: u64 = 10_000;
 pub const MAX_GAMES_PER_OWNER: u64 = 20;
 pub const MAX_SELF_REGISTRATIONS_PER_DAY: u64 = 5_000;
 pub const MAX_PEER_ANCHORS_PER_DAY: u64 = 100;
+pub const MAX_PEER_SUBMISSIONS_PER_ROOT: u64 = 10;
 pub const DEFAULT_NODE_API_BASE_URL: &str = "http://127.0.0.1:8081";
 
 /// Credentials this service must never hold: the Games Reward Service's payout key and its abuse key.
@@ -128,6 +129,31 @@ impl RecordsServiceConfig {
             service.peer_anchors_per_day as u64,
             MAX_PEER_ANCHORS_PER_DAY,
         )? as u32;
+        service.peer_submissions_per_root = within(
+            "RECORDS_PEER_SUBMISSIONS_PER_ROOT",
+            service.peer_submissions_per_root as u64,
+            MAX_PEER_SUBMISSIONS_PER_ROOT,
+        )? as u32;
+        service.owner_address = match lookup("RECORDS_OWNER_ADDRESS") {
+            None => None,
+            Some(value) => {
+                let value = value.trim().to_ascii_lowercase();
+                if !crate::UltraBlockchain::is_valid_address(&value) {
+                    return Err("RECORDS_OWNER_ADDRESS must be 64 lowercase hexadecimal characters".into());
+                }
+                Some(value)
+            }
+        };
+        if lookup("RECORDS_ANCHOR_CLI").is_some() && service.owner_address.is_none() {
+            return Err(
+                "RECORDS_OWNER_ADDRESS is required when RECORDS_ANCHOR_CLI is set: an anchor whose outcome is unknown, for a peer or for the registry's own day, can only be reconciled by reading the owner's transaction history".into(),
+            );
+        }
+        if lookup("RECORDS_PEER_CREDENTIAL").is_some() && service.owner_address.is_none() {
+            return Err(
+                "RECORDS_OWNER_ADDRESS is required when RECORDS_PEER_CREDENTIAL is set: an anchor whose outcome is unknown can only be reconciled by reading the owner's transaction history".into(),
+            );
+        }
         service.registry_chain_id = match lookup("RECORDS_REGISTRY_CHAIN_ID") {
             None => None,
             Some(value) => {
@@ -150,6 +176,7 @@ impl RecordsServiceConfig {
                 if !cli_path.is_absolute() {
                     return Err("RECORDS_ANCHOR_CLI must be an absolute path".into());
                 }
+                service.anchor_timeout_seconds = number("RECORDS_ANCHOR_TIMEOUT_SECONDS", 60)?;
                 Some(AnchorConfig {
                     cli_path,
                     key_credential: text(
@@ -256,6 +283,7 @@ mod tests {
             ("RECORDS_GAMES_PER_OWNER", MAX_GAMES_PER_OWNER),
             ("RECORDS_SELF_REGISTRATIONS_PER_DAY", MAX_SELF_REGISTRATIONS_PER_DAY),
             ("RECORDS_PEER_ANCHORS_PER_DAY", MAX_PEER_ANCHORS_PER_DAY),
+            ("RECORDS_PEER_SUBMISSIONS_PER_ROOT", MAX_PEER_SUBMISSIONS_PER_ROOT),
         ];
         for (name, ceiling) in ceilings {
             assert!(config(&[(name, &ceiling.to_string())]).is_ok(), "{name} at its ceiling");
@@ -265,9 +293,30 @@ mod tests {
     }
 
     #[test]
+    fn a_peer_route_needs_the_owner_address_so_ambiguous_anchors_can_be_reconciled() {
+        let owner = "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e";
+        let error = config(&[("RECORDS_PEER_CREDENTIAL", "records-peer-games.key")]).unwrap_err();
+        assert!(error.contains("RECORDS_OWNER_ADDRESS"), "{error}");
+        let ok = config(&[
+            ("RECORDS_PEER_CREDENTIAL", "records-peer-games.key"),
+            ("RECORDS_OWNER_ADDRESS", owner),
+        ])
+        .unwrap();
+        assert_eq!(ok.service.owner_address.as_deref(), Some(owner));
+        for bad in ["abc", &owner.to_uppercase()[..63], "zz"] {
+            assert!(config(&[("RECORDS_OWNER_ADDRESS", bad)]).is_err(), "{bad}");
+        }
+        // Without a peer route the address is optional.
+        assert!(config(&[]).unwrap().service.owner_address.is_none());
+    }
+
+    #[test]
     fn anchoring_needs_an_absolute_cli_path_and_this_service_reads_only_its_own_variables() {
-        assert!(config(&[("RECORDS_ANCHOR_CLI", "appchain-cli")]).unwrap_err().contains("absolute"));
-        let ok = config(&[("RECORDS_ANCHOR_CLI", "/opt/ultranet-records/appchain-cli")]).unwrap();
+        let owner = "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e";
+        assert!(config(&[("RECORDS_ANCHOR_CLI", "appchain-cli"), ("RECORDS_OWNER_ADDRESS", owner)]).unwrap_err().contains("absolute"));
+        // Any anchoring, the registry's included, needs the owner address.
+        assert!(config(&[("RECORDS_ANCHOR_CLI", "/opt/ultranet-records/appchain-cli")]).unwrap_err().contains("RECORDS_OWNER_ADDRESS"));
+        let ok = config(&[("RECORDS_ANCHOR_CLI", "/opt/ultranet-records/appchain-cli"), ("RECORDS_OWNER_ADDRESS", owner)]).unwrap();
         let anchor = ok.anchor.unwrap();
         assert_eq!(anchor.key_credential, "records-anchor-owner.key.enc");
         assert_eq!(anchor.timeout_seconds, 60);

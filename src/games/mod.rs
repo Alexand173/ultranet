@@ -7,13 +7,16 @@
 pub mod anchor;
 pub mod api;
 pub mod chain;
+pub mod fence;
 pub mod config;
 pub mod ownership;
 pub mod peer;
+pub mod peer_usage;
 pub mod records;
 pub mod records_api;
 pub mod records_config;
 pub mod registry;
+pub mod registry_anchor;
 pub mod roots;
 pub mod rules;
 pub mod service;

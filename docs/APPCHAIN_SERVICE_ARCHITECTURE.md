@@ -105,7 +105,17 @@ authentication, not confidentiality, which is why the Games service accepts only
 
 *What an authenticated peer may ask for.* Anchor a root on chains in `RECORDS_PEER_ANCHOR_CHAINS` (default
 `1,2`), and at most `RECORDS_PEER_ANCHORS_PER_DAY` (default 8) distinct roots per UTC day, so a compromised peer
-cannot drain the owner wallet. Never the registry's chain, never the L1 (`403 forbidden`). The Records Service looks at the ledger
+cannot drain the owner wallet. The allowance is **durable** (P2.1): reserved in the Records database before
+anything is submitted, with the attempt recorded before the signer is called, so a restart or a crash cannot
+reset it and a failed submission cannot exceed it (`peer_usage.rs`; runbook `records-service.md` §4.3, §5).
+Corrupt state fails closed. **Time is never evidence:** the ledger accepts a repeated root (each anchor takes the next
+sequence and pays a fee), so a root whose first outcome is unknown is never resubmitted because a window expired; it
+stays in doubt until reconciliation proves the attempt never reached the node (owner history, pending and confirmed)
+or an operator resolves it. A restored database is held and reconciled with the ledger before it may sign. The registry's own daily anchor is under the same
+rules (P2.2): an attempt row per day, never resubmitted once submitted, in doubt until proven, blocked by a pending owner transaction.
+A replaced database file is detected by a fence (a counter in the database and a copy beside it); an older state directory restored whole
+is caught only by the owner-history check over its horizon (since 00:00 UTC yesterday). Neither is claimed to be complete: the explicit
+restore procedure remains a hard prerequisite. Never the registry's chain, never the L1 (`403 forbidden`). The Records Service looks at the ledger
 before it submits (a root already there is answered, not re-signed) and remembers a submission for the resubmit
 window, so a retry, a duplicate request or a restart cannot produce a second anchor.
 
@@ -113,8 +123,9 @@ window, so a retry, a duplicate request or a restart cannot produce a second anc
 day's anchor fails, the error is recorded on the day, and the next pass anchors it once. If the Games service
 is down, the registry is unaffected. Neither stops the other's payouts or intake.
 
-*Database split without a schema change.* Both databases are created by the same schema code, so each also
-contains the other's (empty, unused) tables. Nothing in either binary reads them: the Games service has no
+*Database split.* Both databases are created by the same schema code (now version 4: P2.1 added the two
+peer-allowance tables and P2.2 the registry's anchor-attempt table, each with a transactional in-place upgrade), so each also contains the other's
+(empty, unused) tables. Nothing in either binary reads them: the Games service has no
 registry code path, the Records service no payout code path.
 
 **Modules are not built into the service.** The earlier sketch lists a Quiz module, a DAO module and a

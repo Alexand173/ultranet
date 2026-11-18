@@ -1704,7 +1704,8 @@ mod tests {
             let connection = store.lock().unwrap();
             connection
                 .execute_batch(
-                    "DROP TABLE registry_days; DROP TABLE registry_results; DROP TABLE registry_games;
+                    "DROP TABLE registry_anchor_attempts; DROP TABLE peer_anchor_roots; DROP TABLE peer_anchor_days;
+                     DROP TABLE registry_days; DROP TABLE registry_results; DROP TABLE registry_games;
                      UPDATE meta SET value = '1' WHERE key = 'schema_version';",
                 )
                 .unwrap();
@@ -1716,6 +1717,10 @@ mod tests {
             "existing balances are untouched"
         );
         assert!(upgraded.audit().unwrap().ok());
+        // Schema 1 went through 2 and 3 and arrived at 4: the later tables exist and are empty.
+        assert_eq!(upgraded.peer_anchor_usage(DAY).unwrap(), 0);
+        assert!(upgraded.peer_hold().unwrap().is_none());
+        assert!(upgraded.registry_anchor(DAY).unwrap().is_none());
         assert!(
             upgraded
                 .register_game("tetris", "Tetris", OWNER, NOW)

@@ -53,6 +53,10 @@ HOST: appchain-cli register --key-file records-anchor-owner.key.enc --name "Ultr
 - [ ] Chess chain: register only if you will anchor chess; it does **not** turn prizes on. If you do, it is
   in `RECORDS_PEER_ANCHOR_CHAINS` (default `1,2`).
 
+- [ ] **After registering chains or any other use of the owner key by hand**, run `ultranet-records peer-reconcile --acknowledge-owner-transactions`:
+  the service counts the owner's transactions against its own recorded attempts and refuses to anchor until you say that
+  the ones it did not make are yours (`records-service.md` §5.1).
+
 ## D. Configure and check, Records Service first (records §2.4, games §2.4)
 
 ```bash
@@ -60,7 +64,7 @@ HOST: sudoedit /etc/ultranet-records/records.env
 HOST: sudoedit /etc/ultranet-games/games.env
 ```
 Records: `RECORDS_ANCHOR_CLI=/opt/ultranet-records/appchain-cli`, `RECORDS_REGISTRY_CHAIN_ID=<the id from C>`,
-`RECORDS_PEER_CREDENTIAL=records-peer-games.key`. Games: `GAMES_PAYOUT_ADDRESS=<payout address>`,
+`RECORDS_PEER_CREDENTIAL=records-peer-games.key`, `RECORDS_OWNER_ADDRESS=<the OWNER address from B>` (required for any anchoring). Games: `GAMES_PAYOUT_ADDRESS=<payout address>`,
 `GAMES_RECORDS_URL=http://127.0.0.1:8096`, `GAMES_ANCHOR_GAMES=grid`. Leave `GAMES_CHESS_PAYS=false` and
 `GAMES_REQUIRE_CHAIN_PRESENCE=true`.
 ```bash
@@ -69,7 +73,7 @@ HOST: sudo systemctl start ultranet-games
 HOST: journalctl -u ultranet-records -u ultranet-games -n 60 --no-pager
 ```
 - [ ] Each journal shows the rules or limits in force and no error. `Ultra Chess: … RECORD ONLY` is correct.
-- [ ] `ultranet-records check-config` says "Payout key: not held here" and `ultranet-games check-config` says
+- [ ] `ultranet-records check-config` says "Owner address: … (matches the owner key)", "Payout key: not held here" and `ultranet-games check-config` says
   "Owner key: not held here".
 - [ ] `timedatectl show -p NTPSynchronized` says `yes` (peer requests are refused beyond 60 s of skew).
 - [ ] `curl -s 127.0.0.1:8095/api/games/status` and `curl -s 127.0.0.1:8096/api/records/status` answer on the host.
@@ -100,6 +104,8 @@ HOST: ultranet-records backup --to /var/backups/ultranet-records/records-$(date 
 ```
 - [ ] Both backups opened themselves. **Copy each elsewhere and restore it once** on another machine; a backup
   you have not restored is not yet a backup. The Records database is the registry: it cannot be rebuilt.
+  Rehearse the **restore procedure** (`records-service.md` §5.1: `restore-mark`, `peer-reconcile`, `--apply --clear-hold`) on the
+  copy before you need it.
 - [ ] Schedule both daily and alert on a non-zero exit.
 - [ ] Monitoring covers the signals in `GAMES_RULES_AND_PAYOUTS.md` §7, and `peer_unauthenticated`,
   `anchor_failed` and `chain_unavailable` in the Records Service's journal.
@@ -137,6 +143,27 @@ returns a proof, and that `python3 tools/verify_registry_proof.py proof.json` en
 - [ ] Decide how a game moves from `sandbox` to `registered` and `listed` (who you contact, what you check)
   **before** the first request arrives; check names and ids against trademarks first.
 - [ ] Only then ship the app build that shows the rewards screens (games §4 step 11).
+
+## J. Restoring a backup: a mandatory procedure, never a shortcut
+
+Run this **every time** a Records database is restored. The service has automatic checks (a fence that notices a replaced
+database file, a ledger check, an owner-history check since 00:00 UTC yesterday), but they are a net, not the plan: restoring the
+whole state directory, fence file included, is invisible to the fence, and older discrepancies are outside the history check's
+horizon. Full detail and exactly what is and is not detected: `records-service.md` §5.1.
+
+```bash
+HOST: sudo systemctl stop ultranet-records
+HOST: cp records.db records.damaged.db                         # keep the damaged one; never delete it
+HOST: rm -f records.db-wal records.db-shm && cp <backup> records.db   # leave records.db.fence where it is
+HOST: ultranet-records restore-mark --note "restored from <backup>"
+HOST: sudo systemctl start ultranet-records                    # it holds: reconciliation_required, nothing signed
+HOST: ultranet-records peer-reconcile                          # read what the ledger and the owner's history say
+HOST: ultranet-records peer-reconcile --apply                  # adopt the anchors the database forgot
+HOST: ultranet-records peer-reconcile --apply --clear-hold     # refuses until nothing is unaccounted for
+```
+- [ ] The hold was released by `--clear-hold` itself, not by editing the database; `ultranet-records peer-usage` shows no `HELD`.
+- [ ] If `UNACCOUNTED` owner transactions were reported, you know why before you add `--acknowledge-owner-transactions`.
+- [ ] You have accepted that registry records written since the backup are lost.
 
 ## If something looks wrong
 

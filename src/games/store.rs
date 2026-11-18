@@ -14,8 +14,10 @@ use std::{
 };
 use thiserror::Error;
 
-/// The schema this build writes. 1 was the games and payouts tables; 2 adds the game registry.
-const SCHEMA_VERSION: i64 = 2;
+/// The schema this build writes. 1 was the games and payouts tables; 2 adds the game registry; 3 adds the
+/// durable accounting of peer anchors (`peer_usage.rs`); 4 adds the registry's anchor attempts
+/// (`registry_anchor.rs`), so the registry day is anchored under the same fail-closed rules.
+const SCHEMA_VERSION: i64 = 4;
 pub const UTC_DAY_SECONDS: u64 = 86_400;
 
 #[derive(Debug, Error)]
@@ -237,6 +239,8 @@ impl AuditReport {
 #[derive(Clone)]
 pub struct GamesStore {
     connection: Arc<Mutex<Connection>>,
+    /// The database file, if it is one (not `:memory:`). The fence file lives beside it (`fence.rs`).
+    pub(super) path: Option<std::path::PathBuf>,
 }
 
 const WIN_COLUMNS: &str =
@@ -305,6 +309,7 @@ impl GamesStore {
         migrate(&connection)?;
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
+            path: (path != Path::new(":memory:")).then(|| path.to_path_buf()),
         })
     }
 
@@ -1065,7 +1070,18 @@ fn migrate(connection: &Connection) -> Result<(), StoreError> {
         Some(SCHEMA_VERSION) => return Ok(()),
         // A database from before the registry: add its tables and nothing else. Every existing table
         // and row is left exactly as it was.
-        Some(1) => return upgrade_to_registry(connection),
+        Some(1) => {
+            upgrade_to_registry(connection)?;
+            upgrade_to_peer_usage(connection)?;
+            return upgrade_to_registry_anchors(connection);
+        }
+        // A database from before the peer-anchor accounting: add its two tables and nothing else.
+        Some(2) => {
+            upgrade_to_peer_usage(connection)?;
+            return upgrade_to_registry_anchors(connection);
+        }
+        // A database from before the registry's anchor attempts: add that table and nothing else.
+        Some(3) => return upgrade_to_registry_anchors(connection),
         Some(other) => {
             return Err(StoreError::Malformed(format!(
                 "database schema {other} is not understood by this build (expects {SCHEMA_VERSION})"
@@ -1152,17 +1168,33 @@ fn migrate(connection: &Connection) -> Result<(), StoreError> {
         "INSERT INTO meta (key, value) VALUES ('schema_version', '1')",
         [],
     )?;
-    upgrade_to_registry(connection)
+    upgrade_to_registry(connection)?;
+    upgrade_to_peer_usage(connection)?;
+    upgrade_to_registry_anchors(connection)
 }
 
 /// Schema 1 to 2, inside one transaction so a crash leaves a database that is plainly 1 or plainly 2.
 fn upgrade_to_registry(connection: &Connection) -> Result<(), StoreError> {
+    upgrade_step(connection, super::registry::REGISTRY_SCHEMA, 2)
+}
+
+/// Schema 2 to 3, likewise: plainly 2 or plainly 3, never in between.
+fn upgrade_to_peer_usage(connection: &Connection) -> Result<(), StoreError> {
+    upgrade_step(connection, super::peer_usage::PEER_USAGE_SCHEMA, 3)
+}
+
+/// Schema 3 to 4, likewise: plainly 3 or plainly 4, never in between.
+fn upgrade_to_registry_anchors(connection: &Connection) -> Result<(), StoreError> {
+    upgrade_step(connection, super::registry_anchor::REGISTRY_ANCHOR_SCHEMA, 4)
+}
+
+fn upgrade_step(connection: &Connection, schema: &str, to_version: i64) -> Result<(), StoreError> {
     connection.execute_batch("BEGIN IMMEDIATE;")?;
     let result = (|| -> Result<(), StoreError> {
-        connection.execute_batch(super::registry::REGISTRY_SCHEMA)?;
+        connection.execute_batch(schema)?;
         connection.execute(
             "UPDATE meta SET value = ?1 WHERE key = 'schema_version'",
-            params![SCHEMA_VERSION.to_string()],
+            params![to_version.to_string()],
         )?;
         Ok(())
     })();
