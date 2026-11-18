@@ -113,7 +113,7 @@ sequence and pays a fee), so a root whose first outcome is unknown is never resu
 stays in doubt until reconciliation proves the attempt never reached the node (owner history, pending and confirmed)
 or an operator resolves it. A restored database is held and reconciled with the ledger before it may sign. The registry's own daily anchor is under the same
 rules (P2.2): an attempt row per day, never resubmitted once submitted, in doubt until proven, blocked by a pending owner transaction.
-A replaced database file is detected by a fence (a counter in the database and a copy beside it); an older state directory restored whole
+The node itself does NOT refuse a second submission while one is pending (the CLI uses a pending-aware nonce; shown by `tools/verify/records-rehearsal.sh` against the real node code), so these rules are the only protection. A replaced database file is detected by a fence (a counter in the database and a copy beside it); an older state directory restored whole
 is caught only by the owner-history check over its horizon (since 00:00 UTC yesterday). Neither is claimed to be complete: the explicit
 restore procedure remains a hard prerequisite. Never the registry's chain, never the L1 (`403 forbidden`). The Records Service looks at the ledger
 before it submits (a root already there is answered, not re-signed) and remembers a submission for the resubmit

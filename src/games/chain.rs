@@ -45,6 +45,11 @@ pub struct OwnerActivity {
     /// The *confirmed* history reaches back to `since`, whatever the node did with its pending list.
     /// Confirmed transactions come from the chain itself, so with this set none is missing from the window.
     pub confirmed_complete: bool,
+    /// The nonce after the newest transaction the owner has **sent** that is confirmed (`nonce + 1`), whatever
+    /// its recipient, or `None` if none is visible. The list always shows the newest confirmed entries, so this is
+    /// right even when the list is full. The account's own nonce counts pending transactions too, so
+    /// `account nonce − this` is exactly the number of pending transactions, hidden or not.
+    pub confirmed_next_nonce: Option<u64>,
 }
 
 /// One transaction as the node reports it by hash.
@@ -64,6 +69,10 @@ pub trait GamesChain: Send + Sync {
         owner: &str,
         since: u64,
     ) -> Result<OwnerActivity, ChainError>;
+
+    /// The account's nonce as the node reports it. **On the real node this counts pending transactions**: it is the
+    /// nonce the next transaction will carry, which is why a second signer call while one is pending is accepted.
+    async fn account_nonce(&self, address: &str) -> Result<u64, ChainError>;
 
     /// One transaction by hash, or `None` if the node has neither mined nor pending one.
     async fn transaction(&self, hash: &str) -> Result<Option<TxView>, ChainError>;
@@ -188,12 +197,17 @@ pub fn parse_owner_activity(
     let list = body["transactions"].as_array().ok_or(ChainError::Invalid)?;
     let mut transactions = Vec::new();
     let mut oldest = u64::MAX;
+    let mut confirmed_next_nonce: Option<u64> = None;
     for row in list {
         let timestamp = row["timestamp"].as_u64().ok_or(ChainError::Invalid)?;
         oldest = oldest.min(timestamp);
         let status = row["status"].as_str().ok_or(ChainError::Invalid)?;
         if status != "pending" && status != "confirmed" {
             return Err(ChainError::Invalid);
+        }
+        if status == "confirmed" && row["sender"].as_str() == Some(owner) {
+            let nonce = row["nonce"].as_u64().ok_or(ChainError::Invalid)?;
+            confirmed_next_nonce = Some(confirmed_next_nonce.map_or(nonce + 1, |known| known.max(nonce + 1)));
         }
         if row["recipient"].as_str() == Some("appchain")
             && row["sender"].as_str() == Some(owner)
@@ -219,6 +233,7 @@ pub fn parse_owner_activity(
         transactions,
         complete: room_for_pending && reaches_back,
         confirmed_complete: reaches_back,
+        confirmed_next_nonce,
     })
 }
 
@@ -236,6 +251,14 @@ impl GamesChain for HttpChain {
             .await?
             .ok_or(ChainError::Invalid)?;
         parse_owner_activity(&body, owner, since)
+    }
+
+    async fn account_nonce(&self, address: &str) -> Result<u64, ChainError> {
+        let body = self
+            .get(&format!("/api/account/{address}"))
+            .await?
+            .ok_or(ChainError::Invalid)?;
+        body["data"]["nonce"].as_u64().ok_or(ChainError::Invalid)
     }
 
     async fn transaction(&self, hash: &str) -> Result<Option<TxView>, ChainError> {
@@ -382,8 +405,8 @@ mod tests {
     }
 
     fn history(rows: &[(&str, &str, u64, &str)]) -> Value {
-        json!({"transactions": rows.iter().map(|(recipient, status, ts, hash)| json!({
-            "sender": OWNER, "recipient": recipient, "status": status, "timestamp": ts, "hash": hash,
+        json!({"transactions": rows.iter().enumerate().map(|(i, (recipient, status, ts, hash))| json!({
+            "sender": OWNER, "recipient": recipient, "status": status, "timestamp": ts, "hash": hash, "nonce": 100 - i as u64,
         })).collect::<Vec<_>>()})
     }
 
@@ -430,6 +453,28 @@ mod tests {
         let not_reaching: Vec<(&str, &str, u64, &str)> = (0..100).map(|i| ("appchain", "confirmed", 1_000 + i, h.as_str())).collect();
         let activity = parse_owner_activity(&history(&not_reaching), OWNER, 500).unwrap();
         assert!(!activity.confirmed_complete && !activity.complete);
+    }
+
+    #[test]
+    fn the_next_confirmed_nonce_is_the_newest_confirmed_owner_nonce_plus_one_even_when_the_list_is_full() {
+        let h = "ab".repeat(32);
+        // Newest first, as the node lists them: a pending one (nonce 7), then confirmed 6, 5, ... The pending
+        // transaction does not count; only a confirmed one the owner SENT does.
+        let body = json!({"transactions": [
+            {"sender": OWNER, "recipient": "appchain", "status": "pending", "timestamp": 900, "hash": h, "nonce": 7},
+            {"sender": OWNER, "recipient": "appchain", "status": "confirmed", "timestamp": 800, "hash": h, "nonce": 6},
+            {"sender": "someone-else", "recipient": OWNER, "status": "confirmed", "timestamp": 850, "hash": h, "nonce": 40},
+            {"sender": OWNER, "recipient": "deadbeef", "status": "confirmed", "timestamp": 700, "hash": h, "nonce": 5},
+        ]});
+        let activity = parse_owner_activity(&body, OWNER, 0).unwrap();
+        assert_eq!(activity.confirmed_next_nonce, Some(7), "6 + 1, ignoring the pending one and another sender's");
+        // Nothing the owner sent is confirmed: unknown, not zero.
+        let none = json!({"transactions": [{"sender": OWNER, "recipient": "appchain", "status": "pending", "timestamp": 900, "hash": h, "nonce": 0}]});
+        assert_eq!(parse_owner_activity(&none, OWNER, 0).unwrap().confirmed_next_nonce, None);
+        assert_eq!(parse_owner_activity(&history(&[]), OWNER, 0).unwrap().confirmed_next_nonce, None);
+        // A confirmed owner transaction without a nonce is refused, not guessed.
+        let bad = json!({"transactions": [{"sender": OWNER, "recipient": "appchain", "status": "confirmed", "timestamp": 1, "hash": h}]});
+        assert_eq!(parse_owner_activity(&bad, OWNER, 0), Err(ChainError::Invalid));
     }
 
     #[test]

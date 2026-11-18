@@ -58,6 +58,11 @@ struct FakeChain {
     index_lag: AtomicBool,
     /// Transactions by some other sender, for tests of an operator naming the wrong transaction.
     other_txs: Mutex<HashMap<String, TxView>>,
+    /// The node's history list is full of confirmed entries, so it leaves its pending transactions out (as the
+    /// real node does once the owner has 100 of them). The account nonce still counts them.
+    hide_pending: AtomicBool,
+    /// Report this as the account nonce instead of the number of owner transactions.
+    nonce_override: Mutex<Option<u64>>,
 }
 
 impl FakeChain {
@@ -84,18 +89,29 @@ impl GamesChain for FakeChain {
         if self.down.load(Ordering::SeqCst) {
             return Err(ChainError::Unavailable);
         }
+        let hide = self.hide_pending.load(Ordering::SeqCst);
+        let all = self.owner_txs.lock().unwrap().clone();
+        let confirmed = all.iter().filter(|tx| !tx.pending).count() as u64;
         Ok(OwnerActivity {
-            transactions: self
-                .owner_txs
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|tx| tx.timestamp >= since)
-                .cloned()
+            transactions: all
+                .into_iter()
+                .filter(|tx| tx.timestamp >= since && !(hide && tx.pending))
                 .collect(),
-            complete: !self.history_incomplete.load(Ordering::SeqCst),
+            complete: !hide && !self.history_incomplete.load(Ordering::SeqCst),
             confirmed_complete: !self.history_incomplete.load(Ordering::SeqCst),
+            confirmed_next_nonce: (confirmed > 0).then_some(confirmed),
         })
+    }
+
+    async fn account_nonce(&self, _address: &str) -> Result<u64, ChainError> {
+        if self.down.load(Ordering::SeqCst) {
+            return Err(ChainError::Unavailable);
+        }
+        if let Some(forced) = *self.nonce_override.lock().unwrap() {
+            return Ok(forced);
+        }
+        // Like the real node, the account nonce counts pending transactions too.
+        Ok(self.owner_txs.lock().unwrap().len() as u64)
     }
 
     async fn transaction(&self, hash: &str) -> Result<Option<TxView>, ChainError> {
@@ -5164,5 +5180,55 @@ mod split {
             }
         }
         assert!(architecture.contains("Neither is claimed to be complete"));
+    }
+
+    // --- pending transactions the node hides are counted by the nonce, because the node accepts duplicates ----
+
+    #[actix_web::test]
+    async fn a_pending_transaction_the_nodes_list_hides_is_still_detected_and_blocks_a_submission() {
+        let path = db_file("hidden-pending");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, signer.clone());
+        // One anchor is made and mined; the owner's history is now "full", so pending ones are left out of it.
+        records.anchor_for_peer(1, [1u8; 32]).await.unwrap();
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: "a1".repeat(32), timestamp: records.now(), pending: false });
+        chain.hide_pending.store(true, Ordering::SeqCst);
+        // Nothing is pending (account nonce == the next confirmed nonce): a submission goes ahead.
+        records.anchor_for_peer(1, [2u8; 32]).await.unwrap();
+        // That second anchor is accepted and pending, and the node's list does not show it.
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: "a2".repeat(32), timestamp: records.now(), pending: true });
+        let error = records.anchor_for_peer(1, [3u8; 32]).await.unwrap_err();
+        assert!(error.to_string().contains("still pending"), "{error}");
+        assert_eq!(signer.calls(), 2, "nothing was signed on top of a pending transaction the list hid");
+        assert_eq!(records.store().peer_anchor_usage(&records.today()).unwrap(), 3, "the slot is held; no attempt is counted");
+        // Mined: the nonce and the newest confirmed transaction agree again, and the submission goes ahead.
+        chain.owner_txs.lock().unwrap()[1].pending = false;
+        assert!(records.anchor_for_peer(1, [3u8; 32]).await.is_ok());
+        assert_eq!(signer.calls(), 3);
+    }
+
+    #[actix_web::test]
+    async fn when_pending_transactions_cannot_be_counted_at_all_nothing_is_submitted() {
+        let path = db_file("hidden-unknown");
+        let (clock, chain) = (fresh_clock(), open_chain());
+        let signer = ScriptedAnchorer::new(Mode::Accept);
+        let records = records_on(&path, &clock, &chain, signer.clone());
+        // The list hides pending ones and shows no confirmed transaction of the owner's to measure against.
+        chain.hide_pending.store(true, Ordering::SeqCst);
+        let error = records.anchor_for_peer(1, [1u8; 32]).await.unwrap_err();
+        assert!(error.to_string().contains("cannot show whether the owner has a pending transaction"), "{error}");
+        // The node's answers disagree (the account nonce is behind its newest confirmed transaction).
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: "b1".repeat(32), timestamp: records.now(), pending: false });
+        chain.owner_txs.lock().unwrap().push(OwnerTx { hash: "b2".repeat(32), timestamp: records.now(), pending: false });
+        *chain.nonce_override.lock().unwrap() = Some(1);
+        records.store().set_owner_ack(records.now(), 0).unwrap();
+        let error = records.anchor_for_peer(1, [1u8; 32]).await.unwrap_err();
+        assert!(error.to_string().contains("disagree"), "{error}");
+        // The account cannot be read at all.
+        *chain.nonce_override.lock().unwrap() = None;
+        chain.down.store(true, Ordering::SeqCst);
+        assert!(records.anchor_for_peer(1, [1u8; 32]).await.is_err());
+        assert_eq!(signer.calls(), 0, "no submission on any unknown");
     }
 }

@@ -231,18 +231,23 @@ UTC day, across all chains. The count lives in the Records database (`peer_ancho
   a transaction in the window (even a long-confirmed one: it could be this anchor), cannot be shown completely, or
   the node cannot be read, the root stays in doubt. This needs `RECORDS_OWNER_ADDRESS`, which `check-config` checks
   against the owner key.
-* **A pending owner transaction blocks a new submission** while the node lets us see it. The node also refuses a
-  second pending transaction with the same nonce, and the CLI reads the same confirmed nonce each time. That
-  protects the *pending* case. It does not protect a first transaction that has already been mined: the nonce has
-  moved on and a retry would be accepted. That case is exactly what the ledger lookup and the rules above cover.
+* **A pending owner transaction blocks a new submission. The node does not protect against a duplicate.** The rehearsal
+  against the real node code (`tools/verify/records-rehearsal.sh`) showed that `appchain-cli` signs with a
+  **pending-aware** account nonce, so a second signer call while the first transaction is still pending is **accepted**,
+  with the next nonce, and pays a second fee. Nothing in the node refuses it. The protection is this service's own: the
+  state recorded around every attempt (above), and this check. It counts pending transactions two ways: the node's
+  address history, and, when that list is full and hides them, the account nonce minus the newest confirmed nonce the
+  owner sent, which is exactly the number pending. If neither can be established (no confirmed owner transaction to
+  measure against, the node's answers disagree, or it cannot be read), nothing is submitted.
 * **One root may be submitted at most `RECORDS_PEER_SUBMISSIONS_PER_ROOT` (3) times a day**, so a root that keeps
   failing cannot be retried into a pile of fees. The next UTC day is a new allowance and a new count.
 * **Concurrent requests**, from threads or from two processes on one database, are serialised by SQLite's write
   lock: exactly the allowance is granted.
-* **What the node does not show.** The node lists pending transactions only when the confirmed history leaves room
-  in its 100-entry list. For an owner with 100 or more transactions the pending list may be hidden; the service then
-  cannot see pending transactions, relies on the node's pending-nonce rule, and treats such a history as
-  incomplete, so a root in doubt then needs an operator (§5.2).
+* **What the node does not show.** The node lists pending transactions only when the confirmed history leaves room in
+  its 100-entry list; for an owner with 100 or more transactions they are left out of it (the rehearsal reproduces this
+  with real node code). The nonce measure above covers that. It cannot cover the case where *nothing* the owner sent is
+  listed as confirmed, which refuses. Independently, the owner-history check treats a confirmed history that does not
+  reach back to its horizon as unreadable and refuses (§5.1).
 
 `ultranet-records peer-usage` shows the day: slots used, each root, its state, attempts and transaction.
 
@@ -285,9 +290,11 @@ reconciliation_required`; nothing is signed, for peers and for the registry alik
 * **Restoring the whole state directory** (the database *and* its fence file, consistent with each other) is invisible
   to the fence. It is caught only by the owner-history check, and only for transactions inside its horizon. A
   discrepancy older than yesterday 00:00 UTC is not seen.
-* **A hidden pending transaction.** The node leaves pending transactions out of the owner's history once the confirmed
-  history fills its 100-entry list. A pending anchor lost with a restore is then invisible until it is mined; the node's
-  rule that one sender may hold only one pending transaction per nonce is the only protection meanwhile.
+* **A pending transaction the node hides, lost with a restore.** The node leaves pending transactions out of the owner's
+  history once the confirmed history fills its list. The service counts them by the account nonce when it is about to
+  submit (§4.3), so a restored database does not submit on top of one; but a pending anchor that this database has *no
+  record of* is not counted against any root, so it is not recognised as the same anchor. It is mined within a block or
+  two and then visible to the ledger and the owner-history checks.
 * **Owner transactions made elsewhere** (registering a chain, a manual `appchain-cli` call) look exactly like a
   forgotten attempt. The service refuses until you acknowledge them. This is a false alarm by design, not a miss.
 * Someone with root on the host can edit or replace the database and the fence file together, and could as easily

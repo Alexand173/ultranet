@@ -502,18 +502,50 @@ impl RecordsService {
         Ok(())
     }
 
-    /// Best effort: refuse while the node lists a pending AppChain transaction from the owner. When the node
-    /// cannot show its pending list (the history is full), this cannot see them and proceeds, relying on the
-    /// node's own rule that a sender may have only one pending transaction per nonce.
+    /// Refuse to submit on top of a pending transaction of the owner's.
+    ///
+    /// **The node does not protect against this.** On the real node the account nonce counts pending transactions,
+    /// so the CLI signs a second transaction with the next nonce and the node accepts it: a duplicate pays a second
+    /// fee (shown by `tools/verify/records-rehearsal.sh`). This check is therefore the only thing between a pending
+    /// anchor and another one.
+    ///
+    /// The node's address history lists pending transactions only if the confirmed history leaves room in its
+    /// 100-entry list. When it does not, they are hidden, so the check uses a second measure that is always
+    /// available: the account's nonce counts pending transactions and the newest confirmed one the owner sent is
+    /// always listed, so `account nonce − (that nonce + 1)` is exactly how many are pending. Anything that leaves
+    /// the answer unknown refuses.
     async fn require_no_pending_owner_tx(&self, owner: &str, now: u64) -> Result<(), GamesError> {
         let activity = self
             .chain
             .owner_appchain_activity(owner, now.saturating_sub(7_200))
             .await
             .map_err(|_: ChainError| GamesError::ChainUnavailable)?;
+        let pending_msg = || {
+            GamesError::AnchorFailed("a transaction from the owner is still pending; try again later".into())
+        };
         if activity.transactions.iter().any(|tx| tx.pending) {
+            return Err(pending_msg());
+        }
+        if activity.complete {
+            return Ok(()); // the whole pending list was shown, and it holds none
+        }
+        // The pending list may be hidden. Count them by the nonce instead.
+        let Some(confirmed_next) = activity.confirmed_next_nonce else {
             return Err(GamesError::AnchorFailed(
-                "a transaction from the owner is still pending; try again later".into(),
+                "the node's history cannot show whether the owner has a pending transaction, and no confirmed transaction of the owner's is listed to measure against; refusing until that can be established".into(),
+            ));
+        };
+        let account_nonce = self
+            .chain
+            .account_nonce(owner)
+            .await
+            .map_err(|_: ChainError| GamesError::ChainUnavailable)?;
+        if account_nonce > confirmed_next {
+            return Err(pending_msg());
+        }
+        if account_nonce < confirmed_next {
+            return Err(GamesError::AnchorFailed(
+                "the owner's account nonce is behind its newest confirmed transaction: the node's answers disagree, so nothing is submitted".into(),
             ));
         }
         Ok(())
@@ -731,8 +763,7 @@ impl RecordsService {
                 return Ok(reply(tx, "submitted"));
             }
         }
-        // Never submit on top of a transaction of the owner's that is still pending, when the node lets us
-        // see it. (The node itself also refuses a second pending transaction with the same nonce.)
+        // Never submit on top of a transaction of the owner's that is still pending. The node would accept it.
         if row.state != PeerState::Submitted {
             self.require_no_pending_owner_tx(&owner, now).await?;
         }

@@ -224,12 +224,15 @@ fn check_config() -> Result<(), String> {
             }
             println!("Anchoring:         enabled via {}", anchor.cli_path.display());
             if let Some(owner) = &config.service.owner_address {
+                // `appchain-cli address` does not honour `--password-file` (only the signing commands do), so the
+                // passphrase reaches that one child through its environment, for the length of the call.
+                let passphrase = read_secret(&config.credential_path(&anchor.password_credential), 1)?;
+                let passphrase = String::from_utf8_lossy(&passphrase).lines().next().unwrap_or_default().trim().to_string();
                 let output = std::process::Command::new(&anchor.cli_path)
                     .arg("address")
                     .arg("--key-file")
                     .arg(config.credential_path(&anchor.key_credential))
-                    .arg("--password-file")
-                    .arg(config.credential_path(&anchor.password_credential))
+                    .env("ULTRANET_APPCHAIN_KEY_PASSWORD", passphrase)
                     .stdin(std::process::Stdio::null())
                     .output()
                     .map_err(|e| format!("cannot run {}: {e}", anchor.cli_path.display()))?;
