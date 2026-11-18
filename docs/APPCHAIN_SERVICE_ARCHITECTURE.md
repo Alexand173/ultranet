@@ -305,7 +305,13 @@ Nothing is live, so no operator has a file to migrate.
 
 - [ ] Chain #1, its id, its owner and its existing anchor are untouched.
 - [ ] `UltraGrid/*` and `UltraChess/*` layouts, and their pinned vectors, are unchanged.
-- [ ] Every `/api/games/*` route returns the same fields as before; the Android tests still pass.
+- [ ] Every `/api/games/*` route returns the same fields as before. The proof is the **server-side route contract
+  tests** — `mod http` in `src/games/tests.rs`, which asserts each client route field by field, and
+  `each_service_serves_only_its_own_routes`. The contract belongs to the server, so only a test that calls the
+  server can prove it.
+- [ ] The **Android instrumented suite passes**, as a *client-side release check*. It runs against
+  `FakeGamesServer` and never reaches the Rust code, so it shows the client still works; it says nothing about
+  whether the server kept its contract, and it is **not** evidence for the line above.
 - [ ] The database upgrades in place from the previous version, and `audit` agrees before and after.
 - [ ] A proof produced before the change still verifies after it (a recorded fixture, not a promise).
 - [ ] Environment variable names in `games.env` are unchanged (new ones may be added).
