@@ -285,6 +285,11 @@ Each report prints four classes — registry `submitted`, `confirmed`, `awaiting
 anchor is never called confirmed here: its evidence belongs to the Games database, and the service does not infer what
 it cannot see. `confirmed` describes this node's own ledger sync, so a lagging sync under-counts and never overstates.
 
+The text report gives each cost column of its day table its own heading, so no two labels run together, and states the
+unit under the table — base units, with `1,000,000 base units = 1 ULTRA` — because a bare `1,000` otherwise reads as a
+token amount. The summary repeats every total in both, and the JSON names the unit in its keys (`base_units`,
+`attributed_base_units`), so a consumer cannot mistake one for the other either.
+
 **Proposal:** the service **reports** and does not **collect**.
 
 - It counts, per application and per day, the records accepted and the anchors that covered them.
