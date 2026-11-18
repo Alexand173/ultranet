@@ -282,10 +282,15 @@ reported as `peer_without_evidence` under both bases, and under `confirmed` they
 at all — this database holds no evidence for them and none of the records to apportion them against.
 
 **What the day table says.** One row per UTC day, with the cost columns labelled separately — `cost`, `confirmed`,
-`awaiting`, `peer cost`, `attributed` — so no two headings can run together. Every figure in that table is **base
-units**, and the report prints the conversion directly under it (`1,000,000 base units = 1 ULTRA`); the summary then
-repeats each total in base units and in ULTRA beside it. Counts are written the way they read: `1 day`, `1 anchor`,
-`1 app`, never `1 days`.
+`awaiting`, `peer cost`, `attributed` — so no two headings can run together. At the submitted basis a row's `cost` is
+that day's `confirmed + awaiting + peer cost`; at the confirmed basis it is `confirmed` alone, and the other two columns
+are printed but not counted into it. Every figure in that table is **base units**, and the report prints the conversion
+directly under it (`1,000,000 base units = 1 ULTRA`); the summary then repeats every cost class, and each total, in base
+units with its ULTRA equivalent beside it. Counts are written the way they read: `1 day`, `1 anchor`, `1 app`, never
+`1 days`.
+
+`--json` echoes the basis as `cost_basis`, and inside `totals.cost` and every `days[].cost` it prints the same four
+classes plus `total_at_basis`, so a consumer never has to re-derive which subset the headline counted.
 
 It answers four questions and nothing else: how many records each application had accepted per UTC day, which anchor
 transactions were charged, which records each charge covered, and how much of the spend carried no records. It opens
