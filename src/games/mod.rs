@@ -21,6 +21,7 @@ pub mod roots;
 pub mod rules;
 pub mod service;
 pub mod store;
+pub mod usage;
 
 #[cfg(test)]
 mod tests;

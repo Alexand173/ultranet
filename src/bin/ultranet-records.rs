@@ -11,6 +11,9 @@
 //! ultranet-records backup --to /var/backups/ultranet-records/records-YYYYMMDD.db
 //! ultranet-records close-day --date YYYY-MM-DD                          # close (and anchor) a registry day
 //! ultranet-records peer-usage [--date YYYY-MM-DD]    # the Games service's anchor allowance for a day (database only)
+//! ultranet-records usage-report [--date D | --from D --to D] [--days N] [--json]
+//!                                                    # accepted records, anchor cost and each app's share of it,
+//!                                                    # from the database read-only: no key, no network (P3)
 //! ultranet-records peer-resolve --date D --chain C --root <64 hex> (--landed <tx hash> [--pending-unverified-ok] | --not-submitted) --note "..."
 //! ultranet-records registry-resolve --date D (--landed <tx hash> [--pending-unverified-ok] | --not-submitted) --note "..."
 //!                                                    # an operator's decision about an anchor whose outcome is unknown;
@@ -61,6 +64,7 @@ async fn main() {
         "backup" => backup(&args[1..]),
         "close-day" => close_day(&args[1..]).await,
         "peer-usage" => peer_usage(&args[1..]),
+        "usage-report" => usage_report(&args[1..]),
         "peer-resolve" => peer_resolve(&args[1..]).await,
         "registry-resolve" => registry_resolve(&args[1..]).await,
         "restore-mark" => restore_mark(&args[1..]),
@@ -284,6 +288,64 @@ fn peer_usage(args: &[String]) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+/// Per-application, per-day usage and anchor cost: the figures D3 needs to decide who pays.
+///
+/// This is the only report that can be trusted about cost, because it reads what the service actually
+/// did. It opens the database read-only and does nothing else: no key, no network, no child process. It
+/// reads `RECORDS_DB_PATH` and `RECORDS_REGISTRY_CHAIN_ID` straight from the environment for the same
+/// reason `peer-usage` does — building the full service configuration is how a report would end up
+/// holding a credential it never needs.
+fn usage_report(args: &[String]) -> Result<(), String> {
+    let path = db_path();
+    // The operator reads this line, so a plain reason beats an internal prefix.
+    let store = GamesStore::open_read_only(&path).map_err(|error| match error {
+        UltraNet::games::store::StoreError::Malformed(reason) => reason,
+        other => other.to_string(),
+    })?;
+    let today = UltraNet::games::service::date_of(UltraNet::auth::now_seconds());
+
+    let (from, to) = match flag(args, "--date") {
+        Some(date) => (date.clone(), date),
+        None => {
+            let days = match flag(args, "--days") {
+                Some(value) => value
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|days| *days > 0)
+                    .ok_or_else(|| format!("--days needs a positive whole number, got {value}"))?,
+                None => 7,
+            };
+            let to = flag(args, "--to").unwrap_or_else(|| today.clone());
+            let from = flag(args, "--from").unwrap_or_else(|| {
+                days_before(&to, days.saturating_sub(1)).unwrap_or_else(|| to.clone())
+            });
+            (from, to)
+        }
+    };
+
+    let registry_chain_id = env::var("RECORDS_REGISTRY_CHAIN_ID")
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok());
+
+    let report = UltraNet::games::usage::build(&store, &from, &to, &today, registry_chain_id)
+        .map_err(|e| e.to_string())?;
+    if args.iter().any(|argument| argument == "--json") {
+        let json = serde_json::to_string_pretty(&report.to_json()).map_err(|e| e.to_string())?;
+        println!("{json}");
+    } else {
+        print!("{}", report.render_text(&path.display().to_string()));
+    }
+    Ok(())
+}
+
+/// The UTC date `days` days before `date`, for the report's default window.
+fn days_before(date: &str, days: u64) -> Option<String> {
+    let start = UltraNet::games::service::date_start(date)?;
+    Some(UltraNet::games::service::date_of(
+        start.saturating_sub(days.saturating_mul(86_400)),
+    ))
 }
 
 /// What an operator decided about an anchor whose outcome the service could not settle, with a claimed

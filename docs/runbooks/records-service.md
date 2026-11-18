@@ -251,6 +251,46 @@ UTC day, across all chains. The count lives in the Records database (`peer_ancho
 
 `ultranet-records peer-usage` shows the day: slots used, each root, its state, attempts and transaction.
 
+### 4.4 Usage and cost: the figures behind who pays
+
+```bash
+ultranet-records usage-report                     # the last 7 UTC days, today included
+ultranet-records usage-report --date 2026-11-17   # one day
+ultranet-records usage-report --from 2026-11-01 --to 2026-11-30
+ultranet-records usage-report --days 30 --json    # same figures, for diffing month to month
+```
+
+It answers four questions and nothing else: how many records each application had accepted per UTC day, which anchor
+transactions were charged, which records each charge covered, and how much of the spend carried no records. It opens
+the database **read-only** and needs no key, no network and no `appchain-cli`:
+
+* `RECORDS_DB_PATH` and `RECORDS_REGISTRY_CHAIN_ID` are read straight from the environment. The full service
+  configuration is deliberately not built, because that is how a report would end up holding a credential.
+* The database is never created, migrated or modified. If `RECORDS_DB_PATH` is wrong the command says `no database`
+  rather than creating an empty one that then reports zeroes for the wrong reason.
+* Reading a WAL database can make SQLite create the `-wal`/`-shm` companions; the database file itself is unchanged.
+  If the directory forbids even that, the command refuses with an explanation instead of opening the database
+  writable to get its numbers.
+
+**How a charge is apportioned.** An allocation set is a `(chain_id, attribution_day)` pair — one set per anchor, so
+two chains anchoring on the same day are two sets and no charge is ever counted twice. Inside a set, each application
+takes its integer share of the charge in proportion to its records; the units left over go to the largest fractional
+remainders, ties broken by ascending application id. The shares of a set therefore add up to that set's charge exactly:
+nothing is dropped, nothing is assigned twice, and nothing is carried to another day. `--json` prints every set under
+`allocation_sets`, so the arithmetic can be recomputed by hand.
+
+**What it cannot say, and the report says so itself.**
+
+| | Why |
+|---|---|
+| A per-app figure is a *share*, not a measured charge | one anchor covers every application, so per-app cost is attribution |
+| A peer anchor is reported on its **request** day, not the day it covers | the covered day lives in the Games database's `days` table, which this service does not own |
+| `reserved` and `submitting` are reported as *unsent* and cost nothing | the outcome is unknown; see §5.2 |
+| `submitted` is not called `confirmed` | only the registry's own day state, synced from the ledger, earns that word |
+
+Read it as: **cost per UTC day** is what the owner wallet actually pays, and **anchors with no records** is the part of
+it that buys nothing but liveness.
+
 ## 5. When something goes wrong
 
 | Symptom | Likely cause | What to do |

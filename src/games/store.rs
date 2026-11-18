@@ -313,6 +313,46 @@ impl GamesStore {
         })
     }
 
+    /// Open an **existing** database with no ability to write it, for operator reports (`usage.rs`).
+    ///
+    /// Unlike [`open`](Self::open) this never creates the file or its parent directory, never runs the
+    /// migration, and never sets the journal mode, because all three write. If the database cannot be
+    /// read under those terms — a WAL file whose shared memory is missing, a directory the process may
+    /// not write — this returns an error. It must not fall back to a writable connection: a report that
+    /// needs write access to read its own figures could change the figures it is reporting.
+    pub fn open_read_only(path: &Path) -> Result<Self, StoreError> {
+        if path == Path::new(":memory:") {
+            return Err(StoreError::Malformed(
+                "an operator report needs a database file; :memory: holds nothing to report".into(),
+            ));
+        }
+        if !path.exists() {
+            return Err(StoreError::Malformed(format!(
+                "no database at {}; set RECORDS_DB_PATH",
+                path.display()
+            )));
+        }
+        let connection = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|error| {
+            StoreError::Malformed(format!(
+                "cannot open {} read-only ({error}); a report never falls back to a writable \
+                 connection. If the service is stopped, run `ultranet-records backup` and report \
+                 against the copy instead",
+                path.display()
+            ))
+        })?;
+        // Per-connection settings only: neither writes to the file.
+        connection.busy_timeout(std::time::Duration::from_secs(5))?;
+        Ok(Self {
+            connection: Arc::new(Mutex::new(connection)),
+            path: Some(path.to_path_buf()),
+        })
+    }
+
     pub(super) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, StoreError> {
         self.connection.lock().map_err(|_| StoreError::LockPoisoned)
     }

@@ -1,6 +1,6 @@
 # UltraNet AppChain Service — architecture and migration plan
 
-**Status: proposal for review, except phases P0, P1 and P2 (§3, §6, §7, §10), which the owner approved and which are built locally (P2 is not deployed).
+**Status: proposal for review, except phases P0, P1, P2 and P3 (§3, §6, §7, §9, §10), which the owner approved and which are built locally (none of them is deployed).
 Everything else here is unbuilt, and nothing in production changes until the owner approves it.** It describes how the existing `ultranet-games` service grows into a general
 record-anchoring service without breaking anything that already exists.
 
@@ -264,6 +264,15 @@ this limitation should be told to an application before it registers, not after.
 **Today:** the Registry chain's owner pays 0.001 `$ULTRA` a day, from the owner wallet, for all applications
 together. Applications pay nothing. There is no source of income behind it.
 
+**Built (P3):** `ultranet-records usage-report` produces the numbers this section needs, from the service's own
+database and nothing else. Per UTC day: records accepted per application, the anchors that were charged, and each
+application's share of those charges. It is read-only in both senses — a `SQLITE_OPEN_READ_ONLY` connection, and no
+key, no network and no child process. An allocation set is a `(chain_id, attribution_day)` pair, one per anchor, and
+inside a set each application takes its integer share with the leftover units going to the largest remainders
+(ties by ascending application id), so a set's shares sum to its charge exactly and nothing is carried between days.
+Two limits are printed with the figures: a per-app cost is a *share* of a shared anchor, not a measured charge, and a
+peer anchor is reported on its request day because the day it covers lives in the Games database.
+
 **Proposal:** the service **reports** and does not **collect**.
 
 - It counts, per application and per day, the records accepted and the anchors that covered them.
@@ -284,7 +293,7 @@ and the previous API unchanged.
 | **P0 (done)** | Decide D1. If yes: rename the registry tags, recompute and re-pin every vector (Rust, Python, Node), update the docs. **Before** any registry anchor | D1 |
 | **P1 (done)** | Add `/api/records` and `/api/apps` as aliases over the existing registry. Add `subject`/`value` naming and the "hash any identifier" rule to the docs. Old routes untouched | §7 |
 | **P2 (done, not deployed)** | Split the process: a records service with the anchor key only. The games service calls it. Database: one registry file per service | D2 |
-| **P3** | Usage reporting per application per day (§9). Read-only | D3 |
+| **P3 (done, not deployed)** | `ultranet-records usage-report`: accepted records per application per day, the anchor transactions that were charged, and each application's largest-remainder share of them. Read-only: no key, no network, no schema change (§9) | D3 |
 | **P4** | Model B: per-application chain id, cadence and owner; on-demand anchoring; a paid-tier switch | D3, D4 |
 | **P5** | Rename the binary, the unit and the directory to `ultranet-appchain-service`, leaving `ultranet-games` as the games service and keeping the old unit name working for one release | last |
 | **P6** | Application modules, only when a real second operator asks for one | demand |
@@ -323,7 +332,7 @@ Nothing is live, so no operator has a file to migrate.
 |---|---|---|
 | D1 | Rename the registry's domain tags to `UltraRecord/*` before the first registry anchor | **Yes.** Free now, impossible later |
 | D2 | Split the records service from the games (payout) service | **Yes, at P2.** Not before the combined service is live and quiet |
-| D3 | Who pays the anchors, and how: owner, developers (annual or per-use), sponsors | Report usage first (P3); decide the price from real numbers |
+| D3 | Who pays the anchors, and how: owner, developers (annual or per-use), sponsors | The P3 report supplies the numbers (cost per UTC day, records and share per application, cost with nothing to attribute); **the price itself is still the owner's decision** |
 | D4 | On-demand anchoring: offered, at what price, to whom | Only for dedicated chains and paid tiers |
 | D5 | Legal review before certificates, healthcare, voting and any prize game are advertised | Required before launch of those uses |
 | D6 | Retention: what the platform tells an application about erasure (§8) | Say it at registration |
