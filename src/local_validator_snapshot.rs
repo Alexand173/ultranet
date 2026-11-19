@@ -732,22 +732,46 @@ mod tests {
         let handle = server.handle();
         let server_task = actix_web::rt::spawn(server);
 
-        let response_result = reqwest::Client::builder()
+        let client = reqwest::Client::builder()
             .no_proxy()
             .timeout(std::time::Duration::from_secs(5))
             .build()
-            .expect("build isolated loopback client")
-            .get(format!("http://{address}{ROUTE}"))
-            .bearer_auth(token)
-            .send()
-            .await;
-        handle.stop(true).await;
-        assert!(server_task.await.unwrap().is_ok());
-
-        let response = response_result.expect("loopback snapshot request should succeed");
+            .expect("build isolated loopback client");
+        let url = format!("http://{address}{ROUTE}");
+        // The server has been spawned but the listener is not necessarily accepting yet, so the
+        // first connect can be refused. That is a start-up race rather than a platform property:
+        // wait for the listener instead of treating the first refusal as the result.
+        let mut sent = None;
+        let mut last_error = None;
+        for _ in 0..40 {
+            match client.get(&url).bearer_auth(token).send().await {
+                Ok(response) => {
+                    sent = Some(response);
+                    break;
+                }
+                Err(error) => {
+                    last_error = Some(error);
+                    actix_web::rt::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }
+        }
+        let response = match sent {
+            Some(response) => response,
+            None => panic!(
+                "loopback snapshot request should succeed: {}",
+                last_error
+                    .map(|error| error.to_string())
+                    .unwrap_or_else(|| "no attempt was made".to_string())
+            ),
+        };
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
-        let body = response.text().await.unwrap();
+        // Read the body *before* stopping the server. `stop(true)` closes the connection, so a body
+        // that has not been consumed yet fails to read — which surfaces as a timeout rather than as
+        // a request that was never answered.
+        let body = response.text().await.expect("read the snapshot body");
+        handle.stop(true).await;
+        assert!(server_task.await.unwrap().is_ok());
         let snapshot: serde_json::Value = serde_json::from_str(&body).unwrap();
 
         // UltraBlockchain::new creates five bootstrap validators; this fixture adds one to each view.
