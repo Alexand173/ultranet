@@ -313,10 +313,17 @@ mod tests {
     #[test]
     fn anchoring_needs_an_absolute_cli_path_and_this_service_reads_only_its_own_variables() {
         let owner = "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e";
+        // `/opt/...` is not an absolute path on Windows, so the fixture is built per platform: the
+        // rule under test is that only an absolute path is accepted, not which one.
+        let cli = if cfg!(windows) {
+            r"C:\opt\ultranet-records\appchain-cli"
+        } else {
+            "/opt/ultranet-records/appchain-cli"
+        };
         assert!(config(&[("RECORDS_ANCHOR_CLI", "appchain-cli"), ("RECORDS_OWNER_ADDRESS", owner)]).unwrap_err().contains("absolute"));
         // Any anchoring, the registry's included, needs the owner address.
-        assert!(config(&[("RECORDS_ANCHOR_CLI", "/opt/ultranet-records/appchain-cli")]).unwrap_err().contains("RECORDS_OWNER_ADDRESS"));
-        let ok = config(&[("RECORDS_ANCHOR_CLI", "/opt/ultranet-records/appchain-cli"), ("RECORDS_OWNER_ADDRESS", owner)]).unwrap();
+        assert!(config(&[("RECORDS_ANCHOR_CLI", cli)]).unwrap_err().contains("RECORDS_OWNER_ADDRESS"));
+        let ok = config(&[("RECORDS_ANCHOR_CLI", cli), ("RECORDS_OWNER_ADDRESS", owner)]).unwrap();
         let anchor = ok.anchor.unwrap();
         assert_eq!(anchor.key_credential, "records-anchor-owner.key.enc");
         assert_eq!(anchor.timeout_seconds, 60);
