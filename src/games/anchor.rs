@@ -166,7 +166,10 @@ impl Anchorer for CliAnchorer {
     }
 }
 
-#[cfg(test)]
+// Every test below drives a real `#!/bin/sh` fake CLI and chmods it, so the module is Unix-shaped by
+// construction: a Windows runner has no shell to execute. Gating the module rather than individual
+// tests keeps the reason in one place, since all of them go through `script()`.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;

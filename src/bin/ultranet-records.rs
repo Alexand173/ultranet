@@ -596,12 +596,15 @@ fn backup(args: &[String]) -> Result<(), String> {
     let destination = PathBuf::from(flag(args, "--to").ok_or("--to <new file> is required")?);
     let store = open_store()?;
     store.backup_to(&destination).map_err(|e| e.to_string())?;
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(&destination, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+    let owner_only = UltraNet::platform::restrict_to_owner(&destination).map_err(|e| e.to_string())?;
     // Open the copy: a backup nobody has opened is a hope, not a backup.
     let copy = GamesStore::open(&destination).map_err(|e| e.to_string())?;
     let games = copy.games().map_err(|e| e.to_string())?.len();
-    println!("backup written to {} (mode 0600); the copy opens and lists {games} game(s)", destination.display());
+    println!(
+        "backup written to {} ({}); the copy opens and lists {games} game(s)",
+        destination.display(),
+        UltraNet::platform::describe_owner_only(owner_only)
+    );
     Ok(())
 }
 
