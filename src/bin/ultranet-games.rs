@@ -191,12 +191,10 @@ async fn serve() -> Result<(), String> {
     let worker = tokio::spawn(service.clone().run_worker(shutdown_rx.clone()));
     tracing::info!(bind = %config.bind, "ultranet-games listening");
 
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .map_err(|e| e.to_string())?;
     let result = tokio::select! {
         result = api::run_server(service, config.bind, shutdown_rx) => result.map_err(|e| e.to_string()),
         _ = tokio::signal::ctrl_c() => Ok(()),
-        _ = terminate.recv() => Ok(()),
+        _ = UltraNet::platform::terminate() => Ok(()),
     };
     let _ = shutdown_tx.send(true);
     // Let an in-flight payout step finish rather than cutting it off between signing and saving.

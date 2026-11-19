@@ -28,6 +28,28 @@ pub fn restrict_to_owner(path: &Path) -> io::Result<bool> {
     }
 }
 
+/// Resolve when the platform asks this process to stop.
+///
+/// Unix has SIGTERM and the service units send it. Elsewhere there is no portable equivalent, so this
+/// future never resolves and the `ctrl_c` arm of the caller's select is what stops the process — which
+/// is why Ctrl-C is kept as its own arm rather than folded in here.
+#[cfg(unix)]
+pub async fn terminate() {
+    use tokio::signal::unix::{signal, SignalKind};
+    match signal(SignalKind::terminate()) {
+        Ok(mut stream) => {
+            stream.recv().await;
+        }
+        // A failed registration must not spin the select loop: wait forever instead.
+        Err(_) => std::future::pending::<()>().await,
+    }
+}
+
+#[cfg(not(unix))]
+pub async fn terminate() {
+    std::future::pending::<()>().await
+}
+
 /// The words that go next to a path whose permissions were just restricted, so the same sentence is
 /// not rewritten in each command and does not overstate what happened.
 pub fn describe_owner_only(applied: bool) -> &'static str {

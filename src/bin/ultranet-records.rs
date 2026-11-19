@@ -181,12 +181,10 @@ async fn serve() -> Result<(), String> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let worker = tokio::spawn(service.clone().run_worker(shutdown_rx.clone()));
     tracing::info!(bind = %config.bind, "ultranet-records listening");
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .map_err(|e| e.to_string())?;
     let result = tokio::select! {
         result = records_api::run_records_server(service, config.bind, shutdown_rx) => result.map_err(|e| e.to_string()),
         _ = tokio::signal::ctrl_c() => Ok(()),
-        _ = terminate.recv() => Ok(()),
+        _ = UltraNet::platform::terminate() => Ok(()),
     };
     let _ = shutdown_tx.send(true);
     let _ = tokio::time::timeout(Duration::from_secs(20), worker).await;
