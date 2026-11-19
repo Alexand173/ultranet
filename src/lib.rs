@@ -5530,10 +5530,15 @@ mod appchain_ledger_tests {
             (owner.address.as_str(), START_BALANCE),
             (stranger.address.as_str(), START_BALANCE),
         ];
-        let mut node_a = node_at(path_a, &balances);
+        let node_a = node_at(path_a, &balances);
         node_a.storage.flush().unwrap();
-        // Node B starts from the same genesis and balances, then only ever sees blocks.
+        // The store keeps its files open, and Windows refuses to copy a file another handle has
+        // open. Close it, copy the directory, then reopen both nodes from their own paths: the
+        // seeded balances live in storage, so reopening preserves them.
+        drop(node_a);
         copy_dir(Path::new(path_a), Path::new(path_b));
+        let mut node_a = UltraBlockchain::with_storage(Arc::new(Storage::new(path_a).unwrap()));
+        // Node B starts from the same genesis and balances, then only ever sees blocks.
         let mut node_b = UltraBlockchain::with_storage(Arc::new(Storage::new(path_b).unwrap()));
         assert_eq!(node_a.chain[0].hash, node_b.chain[0].hash);
 
@@ -5635,9 +5640,13 @@ mod appchain_ledger_tests {
             (owner.address.as_str(), START_BALANCE),
             (stranger.address.as_str(), START_BALANCE),
         ];
-        let mut node_a = node_at(path_a, &balances);
+        let node_a = node_at(path_a, &balances);
         node_a.storage.flush().unwrap();
+        // Same reason as the replay test above: a store that is still open cannot be copied on
+        // Windows, so close it before the directory copy and reopen afterwards.
+        drop(node_a);
         copy_dir(Path::new(path_a), Path::new(path_b));
+        let mut node_a = UltraBlockchain::with_storage(Arc::new(Storage::new(path_a).unwrap()));
         let mut node_b = UltraBlockchain::with_storage(Arc::new(Storage::new(path_b).unwrap()));
 
         let register = signed(
