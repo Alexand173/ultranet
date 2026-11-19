@@ -5459,8 +5459,6 @@ mod appchain_ledger_tests {
         APPCHAIN_TX_RECIPIENT, APPCHAIN_TX_VERSION,
     };
     use std::fs;
-    use std::path::Path;
-
     const START_BALANCE: u64 = 1_000_000; // 1 $ULTRA
 
     fn node_at(path: &str, balances: &[(&str, u64)]) -> UltraBlockchain {
@@ -5469,19 +5467,6 @@ mod appchain_ledger_tests {
             storage.save_state(address, *balance).expect("seed balance");
         }
         UltraBlockchain::with_storage(storage)
-    }
-
-    fn copy_dir(from: &Path, to: &Path) {
-        fs::create_dir_all(to).unwrap();
-        for entry in fs::read_dir(from).unwrap() {
-            let entry = entry.unwrap();
-            let target = to.join(entry.file_name());
-            if entry.file_type().unwrap().is_dir() {
-                copy_dir(&entry.path(), &target);
-            } else {
-                fs::copy(entry.path(), target).unwrap();
-            }
-        }
     }
 
     fn signed(
@@ -5530,17 +5515,19 @@ mod appchain_ledger_tests {
             (owner.address.as_str(), START_BALANCE),
             (stranger.address.as_str(), START_BALANCE),
         ];
-        let node_a = node_at(path_a, &balances);
+        let mut node_a = node_at(path_a, &balances);
         node_a.storage.flush().unwrap();
-        // The store keeps its files open, and Windows refuses to copy a file another handle has
-        // open. Close it, copy the directory, then reopen both nodes from their own paths: the
-        // seeded balances live in storage, so reopening preserves them.
-        drop(node_a);
-        copy_dir(Path::new(path_a), Path::new(path_b));
-        let mut node_a = UltraBlockchain::with_storage(Arc::new(Storage::new(path_a).unwrap()));
-        // Node B starts from the same genesis and balances, then only ever sees blocks.
-        let mut node_b = UltraBlockchain::with_storage(Arc::new(Storage::new(path_b).unwrap()));
+        // Node B starts from the same genesis and balances, then only ever sees A's blocks. It is
+        // built rather than copied from A's database: the genesis hash is computed, not read from a
+        // clock, and both nodes are seeded with the same balances, so the two genesis state roots
+        // agree. B is created before A mines anything, which keeps its genesis older than the blocks
+        // it later receives. Copying the directory cost minutes per run on Windows.
+        let mut node_b = node_at(path_b, &balances);
         assert_eq!(node_a.chain[0].hash, node_b.chain[0].hash);
+        assert_eq!(
+            node_a.chain[0].state_root, node_b.chain[0].state_root,
+            "the two nodes must agree on the genesis state, not merely on its hash"
+        );
 
         // Block 1: registration. The signer becomes the owner; ID 1 is assigned.
         let register = signed(
@@ -5640,14 +5627,10 @@ mod appchain_ledger_tests {
             (owner.address.as_str(), START_BALANCE),
             (stranger.address.as_str(), START_BALANCE),
         ];
-        let node_a = node_at(path_a, &balances);
+        let mut node_a = node_at(path_a, &balances);
         node_a.storage.flush().unwrap();
-        // Same reason as the replay test above: a store that is still open cannot be copied on
-        // Windows, so close it before the directory copy and reopen afterwards.
-        drop(node_a);
-        copy_dir(Path::new(path_a), Path::new(path_b));
-        let mut node_a = UltraBlockchain::with_storage(Arc::new(Storage::new(path_a).unwrap()));
-        let mut node_b = UltraBlockchain::with_storage(Arc::new(Storage::new(path_b).unwrap()));
+        // Built, not copied — see the replay test above for why the genesis is equivalent.
+        let mut node_b = node_at(path_b, &balances);
 
         let register = signed(
             &node_a,
