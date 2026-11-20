@@ -134,7 +134,9 @@ jobs:
       # start-up race. The runner has two vCPUs and a thin memory margin, so a flaky check costs more
       # than a slow one. Expect roughly 30 minutes more than the parallel run, well inside the job's
       # timeout.
+      # Bounded so a hang fails naming this step instead of the job dying at the 180-minute limit.
       - name: Run complete Windows test suite serially
+        timeout-minutes: 150
         shell: msys2 {0}
         env:
           LIBCLANG_PATH: C:/Program Files/LLVM/bin
