@@ -470,3 +470,36 @@ pass anchors them.
 
 The database records its schema version, and a build refuses to open a database whose version it does not
 understand. `backup` first, install the new binary, restart. Build both services from the same revision.
+
+## 7. Building and testing: what it costs, and what has to be green
+
+Both services must compile and pass the suite on **Windows** as well as Linux: `ultranet-records` and
+`ultranet-games` are built for `x86_64-pc-windows-gnu` by `windows-tests.yml`, so a Unix-only call in either
+binary breaks the build for every platform. The rules and the local cross-check recipe are in
+[ci-windows.md](ci-windows.md); this section records what the job costs, measured before and after the
+work that brought it green.
+
+| Stage | Measured | Run |
+|---|---|---|
+| Linux `check --all-targets` (warm) | 88 s | `44593267714` |
+| Windows job setup (checkout, MSYS2, LLVM, Rust, cache) | ~3-4 min | all runs |
+| Windows lib suite | 1818-2062 s | `44577058371`, `44558639858` |
+| Windows whole job | 56 m - 1 h 37 m | see below |
+
+The whole-job figures, in the order they were obtained:
+
+* **1 h 18 m** — `44577063466`, before the two ledger tests stopped copying a database directory.
+* **56 m 18 s** — `44577559864`, after they were built instead of copied: about **22 minutes** recovered.
+* **1 h 37 m 00 s** — `44593267714`, the run that took the records service green, including the slower
+  `--all-targets` build for both new binaries.
+
+Locally on the development workstation, the same two tests went from **158 s to 94 s**, and a cold
+`cargo check --all-targets --target x86_64-pc-windows-gnu` takes **~12 min** (RocksDB's C++ dominates);
+warm it is seconds. A red Windows run that is not a compile error is almost always a test assuming Unix:
+`/opt/...` is not absolute there, `#!/bin/sh` scripts do not run, a store's directory cannot be copied while
+the store holds it open, and a loopback request must wait for the listener and read its body before the
+server stops.
+
+Four defects of that class reached CI and each cost a full cycle; all are now fixed and gated. The audit
+before pushing is one line: `grep -rnE 'unix::|libc::' src/ tests/`, and every hit must be behind a `cfg`
+gate or inside `src/platform.rs`.
