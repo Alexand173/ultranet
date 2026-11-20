@@ -23,6 +23,12 @@ These are the numbers to judge a new run against. A 20% drift is worth reading t
 | Integration targets | 125-1255 s each | `test_live_actix_*` and the faucet tests are the slow ones |
 | Whole job | 47-82 min | depends almost entirely on the cache state |
 
+**The suite runs serially (`-- --test-threads=1`).** Two failures on this runner were concurrency, not
+logic: `restart_replay_tests` panicked inside sled with `failed to allocate Arc` while several stores were
+open at once (`main` at `451dc86`, run `44762293962`), and the loopback snapshot test lost a start-up race.
+Two vCPUs and a thin memory margin mean a flaky check costs more than a slow one; serial adds roughly 30
+minutes and stays well inside the job timeout.
+
 Locally, on this workstation: the two ledger tests went from **158 s to 94 s** once they stopped copying
 a RocksDB directory, and `cargo check --all-targets` takes ~10 s when warm.
 
