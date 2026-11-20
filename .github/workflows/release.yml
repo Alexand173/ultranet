@@ -86,7 +86,7 @@ jobs:
           rm -rf dist/package
 
       - name: Upload Linux archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: UltraNetNode-linux-x64
           path: dist/UltraNetNode-linux-x64.tar.gz
@@ -149,7 +149,7 @@ jobs:
           rm -rf dist/package
 
       - name: Upload macOS archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: UltraNetNode-macos-x64
           path: dist/UltraNetNode-macos-x64.tar.gz
@@ -165,12 +165,13 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
+      # No `update: true`: a full MSYS2 upgrade per run is slow and was the step that failed on a
+      # main run after 46 seconds, before any compilation. Only these packages are needed.
       - name: Install MinGW toolchain
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
           path-type: inherit
-          update: true
           install: >-
             mingw-w64-x86_64-toolchain
             mingw-w64-x86_64-clang
@@ -178,14 +179,20 @@ jobs:
             mingw-w64-x86_64-llvm-libs
             mingw-w64-x86_64-cmake
 
-      - name: Install native LLVM for bindgen
+      - name: Locate LLVM for bindgen
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          choco install llvm -y --no-progress
-          $llvmPath = "C:\Program Files\LLVM\bin"
+          # Use the LLVM the windows-2022 image ships; install only when it is absent, at a pinned
+          # version, so the release build does not depend on whatever Chocolatey publishes that day.
+          $candidates = @("C:\Program Files\LLVM\bin", "C:\Program Files (x86)\LLVM\bin")
+          $llvmPath = $candidates | Where-Object { Test-Path "$_\libclang.dll" } | Select-Object -First 1
+          if (-not $llvmPath) {
+            choco install llvm --version=18.1.8 -y --no-progress
+            $llvmPath = "C:\Program Files\LLVM\bin"
+          }
           if (!(Test-Path "$llvmPath\libclang.dll")) {
-            throw "libclang.dll was not installed at $llvmPath"
+            throw "libclang.dll not found: LLVM is absent from the image and the pinned fallback did not install it"
           }
           "LIBCLANG_PATH=$llvmPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           $llvmPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
@@ -223,7 +230,7 @@ jobs:
 
       - name: Upload Windows build log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: UltraNetNode-windows-build-log
           path: windows-build.log
@@ -328,7 +335,7 @@ jobs:
           Remove-Item -Recurse -Force dist/package
 
       - name: Upload Windows archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: UltraNetNode-windows-x64
           path: dist/UltraNetNode-windows-x64.zip
@@ -351,12 +358,13 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
+      # No `update: true`: a full MSYS2 upgrade per run is slow and was the step that failed on a
+      # main run after 46 seconds, before any compilation. Only these packages are needed.
       - name: Install MinGW toolchain
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
           path-type: inherit
-          update: true
           install: >-
             mingw-w64-x86_64-toolchain
             mingw-w64-x86_64-clang
@@ -364,14 +372,20 @@ jobs:
             mingw-w64-x86_64-llvm-libs
             mingw-w64-x86_64-cmake
 
-      - name: Install native LLVM for bindgen
+      - name: Locate LLVM for bindgen
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          choco install llvm -y --no-progress
-          $llvmPath = "C:\Program Files\LLVM\bin"
+          # Use the LLVM the windows-2022 image ships; install only when it is absent, at a pinned
+          # version, so the release build does not depend on whatever Chocolatey publishes that day.
+          $candidates = @("C:\Program Files\LLVM\bin", "C:\Program Files (x86)\LLVM\bin")
+          $llvmPath = $candidates | Where-Object { Test-Path "$_\libclang.dll" } | Select-Object -First 1
+          if (-not $llvmPath) {
+            choco install llvm --version=18.1.8 -y --no-progress
+            $llvmPath = "C:\Program Files\LLVM\bin"
+          }
           if (!(Test-Path "$llvmPath\libclang.dll")) {
-            throw "libclang.dll was not installed at $llvmPath"
+            throw "libclang.dll not found: LLVM is absent from the image and the pinned fallback did not install it"
           }
           "LIBCLANG_PATH=$llvmPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           $llvmPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
@@ -417,7 +431,7 @@ jobs:
 
       - name: Upload Windows test log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: UltraNetNode-windows-test-log
           path: windows-test.log

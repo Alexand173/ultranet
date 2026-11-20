@@ -63,12 +63,14 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v5
 
+      # No `update: true`: a full MSYS2 package upgrade on a fresh runner every run was both the
+      # slowest part of this step and the cause of the run that failed after 46 seconds with the
+      # suite never starting. The packages below are what this build actually needs.
       - name: Install MinGW toolchain
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
           path-type: inherit
-          update: true
           install: >-
             mingw-w64-x86_64-toolchain
             mingw-w64-x86_64-clang
@@ -76,14 +78,22 @@ jobs:
             mingw-w64-x86_64-llvm-libs
             mingw-w64-x86_64-cmake
 
-      - name: Install native LLVM for bindgen
+      - name: Locate LLVM for bindgen
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          choco install llvm -y --no-progress
-          $llvmPath = "C:\Program Files\LLVM\bin"
+          # The windows-2022 image already ships LLVM. Downloading it again on every run costs network
+          # time and pins nothing; use the image's copy, and fall back to a pinned install only when
+          # the image has none, so the fallback is a deliberate, reproducible choice rather than a race
+          # against whatever Chocolatey publishes that day.
+          $candidates = @("C:\Program Files\LLVM\bin", "C:\Program Files (x86)\LLVM\bin")
+          $llvmPath = $candidates | Where-Object { Test-Path "$_\libclang.dll" } | Select-Object -First 1
+          if (-not $llvmPath) {
+            choco install llvm --version=18.1.8 -y --no-progress
+            $llvmPath = "C:\Program Files\LLVM\bin"
+          }
           if (!(Test-Path "$llvmPath\libclang.dll")) {
-            throw "libclang.dll was not installed at $llvmPath"
+            throw "libclang.dll not found: LLVM is absent from the image and the pinned fallback did not install it"
           }
           "LIBCLANG_PATH=$llvmPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           $llvmPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
@@ -134,7 +144,7 @@ jobs:
 
       - name: Upload Windows test log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ultranet-windows-test-log-${{ github.run_id }}
           path: windows-test.log
