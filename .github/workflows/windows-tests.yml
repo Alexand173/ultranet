@@ -129,13 +129,18 @@ jobs:
           rustc --version
           clang --version
 
-      - name: Run complete Windows test suite with default parallelism
+      # Serial on purpose. Two failures on this runner were concurrency, not logic: sled panicked with
+      # "failed to allocate Arc" while several stores were open at once, and a loopback request lost a
+      # start-up race. The runner has two vCPUs and a thin memory margin, so a flaky check costs more
+      # than a slow one. Expect roughly 30 minutes more than the parallel run, well inside the job's
+      # timeout.
+      - name: Run complete Windows test suite serially
         shell: msys2 {0}
         env:
           LIBCLANG_PATH: C:/Program Files/LLVM/bin
         run: |
           set -o pipefail
-          cargo test --target x86_64-pc-windows-gnu --locked --all-targets 2>&1 | tee windows-test.log
+          cargo test --target x86_64-pc-windows-gnu --locked --all-targets -- --test-threads=1 2>&1 | tee windows-test.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             echo "::error title=Windows tests::The complete Windows all-targets suite failed"
