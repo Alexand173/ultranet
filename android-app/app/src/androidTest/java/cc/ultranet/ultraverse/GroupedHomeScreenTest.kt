@@ -55,7 +55,7 @@ class GroupedHomeScreenTest {
         assertEquals(4, ServiceCatalog.groups.size)
         assertEquals(listOf(3, 5, 6, 2), ServiceCatalog.groups.map { it.services.size })
         assertEquals(16, ServiceCatalog.groups.sumOf { it.services.size })
-        // Contacts replaced the Name Service concept, and Ultra Chess replaced the Games concept.
+        // Contacts replaced the Name Service concept; the Games tile is a directory holding the games.
         assertEquals(7, ServiceCatalog.supportedCount)
         assertEquals(9, ServiceCatalog.unavailableCount)
         val payments = ServiceCatalog.groups.first { it.id == "payments-addresses" }
@@ -65,7 +65,7 @@ class GroupedHomeScreenTest {
         )
         val applications = ServiceCatalog.groups.first { it.id == "applications" }
         assertEquals(
-            listOf(ServiceCatalog.CHESS_ID, "nft-marketplace"),
+            listOf(ServiceCatalog.GAMES_ID, "nft-marketplace"),
             applications.services.map { it.id },
         )
         // Mining lives inside Build & participate, next to the validator application tile.

@@ -76,7 +76,10 @@ pub use zk_snarks::{ProofType, ZKProof};
 mod block_stm;
 mod multi_version_memory; // ← OVAKO! (isti naziv kao fajl) // ← OVAKO!
 use block_stm::BlockSTM; // ← OVAKO!
+pub mod platform;
 pub mod appchain;
+pub mod ultragrid;
+pub mod games;
 use appchain::AppChainRegistry;
 mod move_vm;
 use move_core_types::account_address::AccountAddress;

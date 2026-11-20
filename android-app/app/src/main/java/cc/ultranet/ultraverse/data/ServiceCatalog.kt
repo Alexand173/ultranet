@@ -47,7 +47,7 @@ internal object ServiceCatalog {
     const val APPCHAINS_ID = "appchains"
     const val VALIDATOR_ID = "validator"
     const val MINING_ID = "validate-transactions"
-    const val CHESS_ID = "ultra-chess"
+    const val GAMES_ID = "games"
 
     val groups = listOf(
         ServiceGroup(
@@ -129,12 +129,12 @@ internal object ServiceCatalog {
             title = "Applications",
             services = listOf(
                 ServiceEntry(
-                    id = CHESS_ID,
-                    name = "Ultra Chess",
+                    id = GAMES_ID,
+                    name = "Games",
                     availability = Availability.Supported,
                     icon = Icons.Outlined.SportsEsports,
-                    detail = "Three modes against the computer",
-                    actionLabel = "Play",
+                    detail = "Ultra Chess · UltraGrid",
+                    actionLabel = "Open games",
                 ),
                 concept("nft-marketplace", "NFT marketplace", Icons.Outlined.Image),
             ),

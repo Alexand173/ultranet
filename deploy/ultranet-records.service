@@ -1,0 +1,77 @@
+[Unit]
+Description=UltraNet Records Service (third-party games and generic records: roots, proofs and anchoring)
+Documentation=https://github.com/Alexand173/ultranet/blob/main/docs/runbooks/records-service.md
+After=network-online.target ultranet.service
+Wants=network-online.target
+
+StartLimitIntervalSec=5min
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=ultranet-records
+Group=ultranet-records
+WorkingDirectory=/opt/ultranet-records
+EnvironmentFile=-/etc/ultranet-records/records.env
+
+# Secrets are supplied as systemd credentials, never through the general env file.
+#   records-anchor-owner.key.enc  the chain owner's key file made by `appchain-cli generate-key`
+#   records-anchor.pass           that key file's passphrase
+#   records-peer-games.key        the secret shared with the Games Reward Service (the same bytes as its
+#                                 games-records-peer.key); it opens the signed /internal/v1/anchor route
+# This service holds NO payout key: `check-config` refuses to start if games-payout-signer.json or
+# games-abuse.key is in this unit's credentials. Drop the two anchor lines and leave RECORDS_ANCHOR_CLI
+# unset to run without anchoring; drop the peer line and leave RECORDS_PEER_CREDENTIAL unset to close the
+# internal route.
+LoadCredentialEncrypted=records-anchor-owner.key.enc:/etc/ultranet-records/secrets/records-anchor-owner.key.enc.cred
+LoadCredentialEncrypted=records-anchor.pass:/etc/ultranet-records/secrets/records-anchor.pass.cred
+LoadCredentialEncrypted=records-peer-games.key:/etc/ultranet-records/secrets/records-peer-games.key.cred
+
+ExecStartPre=/opt/ultranet-records/ultranet-records check-config
+ExecStart=/opt/ultranet-records/ultranet-records serve
+
+StateDirectory=ultranet-records
+StateDirectoryMode=0700
+UMask=0077
+LimitNOFILE=4096
+TasksMax=64
+MemoryAccounting=true
+MemoryHigh=512M
+MemoryMax=1024M
+CPUWeight=50
+
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=30s
+# An anchor that is mid-way between signing and saving is allowed to finish.
+TimeoutStopSec=30s
+
+# The service talks to the local node API only. The one program it runs, appchain-cli, does the same.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+InaccessiblePaths=/var/lib/ultranet /etc/ultranet /etc/ultranet-faucet /var/lib/ultranet-faucet /etc/ultranet-records/secrets /opt/ultranet /opt/ultranet-faucet /etc/ultranet-games /var/lib/ultranet-games /opt/ultranet-games /root
+ReadOnlyPaths=/etc/ultranet-records/records.env
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/var/lib/ultranet-records
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ultranet-records
+
+[Install]
+WantedBy=multi-user.target
