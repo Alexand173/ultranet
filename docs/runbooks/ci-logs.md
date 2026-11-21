@@ -94,3 +94,19 @@ renumber, and would otherwise be off by one from here on.
 *Lint website*, *Type-check website* and *Test website* together are 12 s, so a red run there is a real
 finding rather than a timing artefact. *Run guarded VPS deployment* being 131 s means the server-side rebuild
 dominates the deployment; if it grows, look at `npm ci` on the host before anything else.
+
+After the 2026-11-21 split, both paths were exercised in the same hour:
+
+| Run | Input | Outcome |
+|---|---|---|
+| `44895124879` | push to `main` | green end to end in **3 m 34 s** (214 s, warm cache — the earlier run was 321 s), through *Verify public website* |
+| `44895129990` | dispatch with `commit_sha=cdc59d5` | failed at *Reject malformed deployment inputs* in **0 s**, checkout and everything after it `skipped` |
+
+The failing run's whole message was one line:
+
+```
+::error::commit_sha must be a 40-character commit SHA, but got 'cdc59d5'. Resolve a short SHA with: git rev-parse <short sha>
+```
+
+That is the difference the ordering buys: one second and a line naming the value, instead of three failed
+fetches of `+refs/heads/cdc59d5*` at checkout.
