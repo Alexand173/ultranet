@@ -1,0 +1,9 @@
+# The compiler this project is built and tested with, pinned.
+#
+# CI used to float on `stable`, so a Rust release could change how this tree builds with no
+# repository change, and yesterday's green run was no evidence about today's. 1.97.0 is the
+# version this tree is known to build with; moving it is a deliberate one-line change with its
+# own PR, not something a Tuesday release does on our behalf.
+[toolchain]
+channel = "1.97.0"
+components = ["rustfmt", "clippy"]
