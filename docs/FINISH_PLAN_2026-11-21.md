@@ -19,7 +19,9 @@ Items marked **OWNER** need the owner's key, money or decision and cannot be don
 ## 2. Finishing order
 
 ### Phase A — chain safety (blocks everything else)
-1. **Unattended block production.** Set `ULTRANET_AUTO_MINE_INTERVAL_SECONDS` on the live node, or run a scheduled sealer; add an alert when the head is older than N minutes. (OWNER: node config change.)
+1. **Unattended block production is already configured — the 138-hour head is an idle chain, not a stalled miner.** Verified on 2026-11-21: the live env carries `ULTRANET_AUTO_MINE_INTERVAL_SECONDS=10` and `ULTRANET_AUTO_MINE_MAX_BLOCKS_PER_MINUTE=6`, and `auto_mine_tick` returns `Ok(None)` before touching the chain when the mempool is empty (`src/auto_miner.rs:131-134`, "the common, quiet case"). `/api/stats` agrees: `mempool_size 0`, `auto_mined_blocks 1`, `auto_mine_last_at` about 51 minutes after genesis.
+   What is actually missing is **detection**, and the naive form of it would be wrong: an alert on head age alone fires permanently on an idle chain and gets muted within a week. Alert on `mempool_size > 0` **and** head older than N minutes — a queued transaction that cannot confirm is the failure worth waking someone for. `/api/stats` already exposes `auto_mine_last_at` and `auto_mined_blocks` for it.
+   Separately, a product decision: if the chain must show progress for an explorer's benefit, periodic empty blocks are a consensus policy change with their own consequences, not a configuration fix. (OWNER decision, not a config change.)
 2. **Move VM unknown-function fix.** Make an unknown function fail instead of reporting success. Small change, but it touches execution semantics, so it needs explicit approval and a test per rule.
 3. **Ratify the open economic parameters** (R4, R4b, F-1, F-2, rest of the §9 sheet). (OWNER decision.) Nothing downstream should hard-code them before this.
 
