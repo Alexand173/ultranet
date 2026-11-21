@@ -291,6 +291,22 @@ sudo systemctl enable --now ultranet
 curl --fail http://127.0.0.1:8081/api/stats
 ```
 
+### Service names on the host
+
+Three units run in production, and none of them is named after the binary:
+
+| Unit | Runs |
+|---|---|
+| `ultranet.service` | the node (`/opt/ultranet/target/release/UltraNet`) |
+| `ultranet-faucet.service` | the isolated faucet |
+| `ultranet-dashboard.service` | the Next.js website on `127.0.0.1:3000` |
+
+`systemctl is-active UltraNet` prints `inactive`, because systemd answers for a unit that was never loaded. That output is indistinguishable from a stopped node — it caused a false alarm on 2026-11-21 while the node was serving `8081` normally. Use `systemctl is-active ultranet.service`, or ask what is actually running:
+
+```bash
+systemctl list-units --type=service --state=running | grep -i ultra
+```
+
 ### VPS memory safety
 
 The production validator service includes a containment profile for the current 8 GiB VPS: `MemoryHigh=6912M`, `MemoryMax=7168M`, and `MemorySwapMax=4096M`. The 7 GiB hard limit keeps a runaway node cgroup from consuming the whole host; 32 GB RAM remains the recommended capacity for sustained validator workloads. Swap is emergency headroom, not a replacement for adequate RAM.
@@ -436,7 +452,13 @@ npm run a11y -- --routes /,/docs --json a11y.json              # subset + machin
 
 ### Manual redeploy and rollback
 
-To redeploy a specific commit after the production secrets are configured, use the workflow's **Run workflow** action and enter its full commit SHA. The server helper builds and verifies the candidate before swapping `/opt/ultranet/website`. If the dashboard restart, local whitepaper routes, PDF route, validator state, or generated asset checks fail, it restores the previous website and restarts the prior dashboard release. `ultranet.service` is never restarted by this workflow.
+To redeploy a specific commit after the production secrets are configured, use the workflow's **Run workflow** action and enter its full commit SHA. `commit_sha` must be the full 40-character SHA: the step named *Reject malformed deployment inputs* runs before checkout and refuses anything else in about a second, naming the value it rejected. A short SHA is not expanded — resolve it first:
+
+```bash
+gh workflow run deploy-website.yml --ref main -f commit_sha="$(git rev-parse cdc59d5)"
+```
+
+The server helper builds and verifies the candidate before swapping `/opt/ultranet/website`. If the dashboard restart, local whitepaper routes, PDF route, validator state, or generated asset checks fail, it restores the previous website and restarts the prior dashboard release. `ultranet.service` is never restarted by this workflow.
 
 Keep the previous release directory until the public HTTPS verification passes — the helper does this automatically and only prunes after a candidate is live and verified.
 
@@ -461,6 +483,8 @@ To reclaim space between deploys, without a deploy or a restart:
 sudo /usr/local/sbin/ultranet-dashboard-deploy --prune-dry-run   # list what would be removed
 sudo /usr/local/sbin/ultranet-dashboard-deploy --prune-only      # remove it
 ```
+
+A healthy host after several deploys therefore holds **three** snapshots of roughly 939 MB — the live rollback slot plus the two timestamped ones — which is about 2.8 GB. Measured on 2026-11-21 at `65%` of a 75 GB disk with 26 GB free, alongside release trees of only 192 KB each. If you see that figure, retention is working; it is worth running `--prune-dry-run` only when the count is above the table, or when `/` crosses roughly 85%.
 
 The counts are compiled in as `ULTRANET_DEPLOY_KEEP_PREVIOUS`, `ULTRANET_DEPLOY_KEEP_FAILED`, `ULTRANET_DEPLOY_KEEP_COMMIT_RELEASES` and `ULTRANET_DEPLOY_STAGE_ARCHIVE_DAYS`. The installed sudo rule does not pass the environment through, so treat the defaults as policy and change them in this repository, then reinstall the helper. Hosts that deploy rarely should run `--prune-only` from a weekly timer instead of relying on deploys.
 

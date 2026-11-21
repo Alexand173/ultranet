@@ -36,20 +36,19 @@ jobs:
       DEPLOY_KNOWN_HOSTS: ${{ secrets.ULTRANET_DEPLOY_KNOWN_HOSTS }}
       REQUESTED_COMMIT_SHA: ${{ inputs.commit_sha || github.sha }}
     steps:
-      - name: Check out selected commit
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ inputs.commit_sha || github.sha }}
-          fetch-depth: 1
-
-      - name: Validate deployment inputs
+      # Everything that can be judged without a working tree is judged here, before anything
+      # consumes the input. This check used to sit after checkout, which had already handed the
+      # value to actions/checkout as `ref`: a short SHA read as a branch name, fetched three
+      # times, and the run died at checkout with every later step skipped (run 44889235144,
+      # commit_sha=cdc59d5). A format check needs no tree, so it must precede the step that does.
+      - name: Reject malformed deployment inputs
         shell: bash
         run: |
           set -euo pipefail
-          [[ "${REQUESTED_COMMIT_SHA}" =~ ^[0-9a-fA-F]{40}$ ]] || {
-            echo "::error::commit_sha must be a 40-character commit SHA"
+          if [[ ! "${REQUESTED_COMMIT_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::commit_sha must be a 40-character commit SHA, but got '${REQUESTED_COMMIT_SHA}'. Resolve a short SHA with: git rev-parse <short sha>"
             exit 1
-          }
+          fi
           missing_secrets=()
           [[ -n "${DEPLOY_HOST}" ]] || missing_secrets+=(ULTRANET_DEPLOY_HOST)
           [[ "${DEPLOY_USER}" == "ultranet-deploy" ]] || missing_secrets+=(ULTRANET_DEPLOY_USER)
@@ -59,6 +58,18 @@ jobs:
             printf '::error::Missing or invalid production secret(s): %s\n' "${missing_secrets[*]}"
             exit 1
           fi
+
+      - name: Check out selected commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.commit_sha || github.sha }}
+          fetch-depth: 1
+
+      # This half genuinely needs the tree: it proves the commit git handed us is the one asked for.
+      - name: Verify the checked-out commit
+        shell: bash
+        run: |
+          set -euo pipefail
           actual_sha="$(git rev-parse HEAD)"
           [[ "${actual_sha,,}" == "${REQUESTED_COMMIT_SHA,,}" ]] || {
             echo "::error::checked out SHA ${actual_sha} does not match requested SHA ${REQUESTED_COMMIT_SHA}"

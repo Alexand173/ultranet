@@ -35,7 +35,7 @@ Both runs show one job, `Build and deploy website`, ending in `failure`. They ar
 | Run | Duration | Failing step | Message | Cause |
 |---|---|---|---|---|
 | `43734551644` | 44 s | 8. Test website | `AssertionError: use text-platinum-muted (5.48:1) instead of an alpha step that measures below 4.5:1` | three `text-platinum/45` spans in `components/appchains/`, below the WCAG AA floor — **code**, fixed |
-| `43720284113` | 3 m 19 s | 17. Upload deployment inputs | `scp: /var/lib/<service>/staging/<sha>.tar.gz: Permission denied` | the deploy user cannot write the staging directory on the host — **server permissions, owner action** |
+| `43720284113` | 3 m 19 s | Upload deployment inputs | `scp: /var/lib/<service>/staging/<sha>.tar.gz: Permission denied` | the deploy user cannot write the staging directory on the host — **server permissions, owner action** |
 
 The second one never reached the deployment itself: steps 18 (guarded VPS deployment) and 19 (verify public
 website) were skipped. So "the website deploy is broken" described two different problems, and only one of
@@ -51,35 +51,46 @@ drwxr-x--- root            root             /var/lib/ultranet-deploy/staging
 
 The deploy account could traverse the staging directory but not create a file in it. `chown
 ultranet-deploy:ultranet-deploy` plus `chmod 0750` on that one directory, verified by touching a file as
-that user, and the next run (`44889603109`) passed step 17 in 3 s and finished green through step 19 in
-5 m 21 s. The lesson is in the shape of the output, not the fix: `namei` names the exact component of a
-path that denies, which `ls -l` on the full path does not.
+that user, and the next run (`44889603109`) passed *Upload deployment inputs* in 3 s and finished green
+through *Verify public website* in 5 m 21 s. The lesson is in the shape of the output, not the fix: `namei`
+names the exact component of a path that denies, which `ls -l` on the full path does not.
+
+**Steps are cited by name here, not by number.** Adding a step at the top of this workflow renumbered every
+later one — which happened on 2026-11-21 when *Reject malformed deployment inputs* was inserted as step 1 —
+so a number in a runbook silently starts pointing at the wrong step.
 
 ## 4. Details worth knowing when reading these logs
 
 - Secrets print as `***`. Their presence is not evidence they are valid; the workflow's own
-  *Validate deployment inputs* step exists to fail loudly when one is missing, and it passed in both runs.
+  *Reject malformed deployment inputs* step fails loudly, naming any missing secret, and it passed in both
+  runs. Read that step's messages literally: it reports names, never values.
 - A `cancelled` conclusion is not a failure: `concurrency: cancel-in-progress` supersedes a run when a newer
   commit lands on the same ref. Check the `event` and `headSha` before chasing it.
 - Duration is a clue: a 44-second failure never built anything, so it is upstream of the build.
-- **`commit_sha` must be the full 40-character SHA.** The step passes it to `actions/checkout` as `ref`, and
-  a short SHA reads as a branch name: the fetch becomes `+refs/heads/cdc59d5*`, fails three times, and the
-  run dies at *Check out selected commit* before any build. Use `git rev-parse cdc59d5` and pass the result.
+- **`commit_sha` must be the full 40-character SHA.** That value is handed to `actions/checkout` as `ref`,
+  and a short SHA reads as a branch name: the fetch becomes `+refs/heads/cdc59d5*`, fails three times, and
+  the run dies at *Check out selected commit*. Run `44889235144` did exactly that on 2026-11-21 with
+  `commit_sha=cdc59d5`, which is why the format check now runs **before** checkout: *Reject malformed
+  deployment inputs* is step 1 and fails in seconds, naming the value it refused. Use `git rev-parse` and
+  pass the result.
 
 ## 5. Measured durations, 2026-11-21
 
 `deploy-website.yml`, run `44889603109` (commit `cdc59d5`), green end to end in **5 m 21 s**. The step
 durations are worth having because they say where the time is when something looks slow:
 
+Durations are ordered by when they ran, but steps are named: these numbers were measured before the 2026-11-21
+renumber, and would otherwise be off by one from here on.
+
 | Step | Time | Reading |
 |---|---|---|
-| 5. Install website dependencies | 49 s | the single largest build-side cost |
-| 9. Build website | 28 s | |
-| 14. Accessibility gate | 60 s | second largest; Chromium install is a further 10 s |
-| 17. Upload deployment inputs | 3 s | fails in 3 s when the staging directory denies — the same order as a real upload |
-| 18. Run guarded VPS deployment | 131 s | `npm ci`, lint, type-check, build, whitepaper verify, restart |
-| 19. Verify public website | 2 s | |
+| Install website dependencies | 49 s | the single largest build-side cost |
+| Build website | 28 s | |
+| Accessibility gate | 60 s | second largest; Chromium install is a further 10 s |
+| Upload deployment inputs | 3 s | fails in 3 s when the staging directory denies — the same order as a real upload |
+| Run guarded VPS deployment | 131 s | `npm ci`, lint, type-check, build, whitepaper verify, restart |
+| Verify public website | 2 s | |
 
-Steps 6-8 (lint, type-check, test) together are 12 s, so a red run there is a real finding rather than a
-timing artefact. Step 18 being 131 s means the server-side rebuild dominates the deployment; if it grows,
-look at `npm ci` on the host before anything else.
+*Lint website*, *Type-check website* and *Test website* together are 12 s, so a red run there is a real
+finding rather than a timing artefact. *Run guarded VPS deployment* being 131 s means the server-side rebuild
+dominates the deployment; if it grows, look at `npm ci` on the host before anything else.
