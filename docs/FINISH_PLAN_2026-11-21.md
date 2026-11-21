@@ -10,7 +10,7 @@ Items marked **OWNER** need the owner's key, money or decision and cannot be don
 | Node / L1 | Rust node, 3.0.0. Lib suite green: 497 passed, 0 failed, 1 ignored (§6). One real validator. |
 | Live chain | 13 blocks. Blocks are sealed only by `POST /api/mine` unless `ULTRANET_AUTO_MINE_INTERVAL_SECONDS` is set. Last auto-mined block was ~138 h ago; mempool empty. |
 | Website | Lint, vitest (141/141), `tsc` and build all green. No developer, games or records pages. |
-| Android (UltraVerse) | 26/26 instrumented classes passed on 2026-11-18. v0.1.0 / versionCode 1. Release is signed with the debug key; no store pipeline. Many services inactive. |
+| Android (UltraVerse) | 26/26 instrumented classes passed on 2026-11-18. 0.1.0 / versionCode 1. Release is signed with the debug key; no store pipeline. Many services inactive. |
 | Faucet | Live, 0.1 `$ULTRA` per claim, funded and paying since 2026-10-31. |
 | Records + Games services | Code, tests, runbooks and a real-node rehearsal done. **Not deployed** (live endpoints return 404). |
 | Move VM | Unknown-function arm still reports success (Gate 0 item, not fixed). |
