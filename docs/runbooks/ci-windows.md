@@ -1,8 +1,9 @@
 # The Windows job: what it proves, how long it takes, and how to check it locally
 
 `.github/workflows/windows-tests.yml` has two jobs. `Linux check (all targets)` compiles every target
-on a warm cache in a few minutes and catches structural drift. `Windows x64 Rust tests` builds and runs
-the whole suite for `x86_64-pc-windows-gnu`; it is the only place platform assumptions are exercised.
+on a warm cache in **9 m 13 s measured on 2026-11-21** and catches structural drift. `Windows x64 Rust
+tests` builds and runs the whole suite for `x86_64-pc-windows-gnu`; it is the only place platform
+assumptions are exercised.
 
 Both jobs run on `push` to `main`, on `pull_request` to `main`, and on `workflow_dispatch`. **A push to a
 feature branch triggers nothing** — to get a signal before opening a PR, dispatch it explicitly:
@@ -11,23 +12,39 @@ feature branch triggers nothing** — to get a signal before opening a PR, dispa
 gh workflow run windows-tests.yml --ref <branch>
 ```
 
-## 1. Baseline durations, measured 2026-11-19
+## 1. Baseline durations, measured 2026-11-21
 
-These are the numbers to judge a new run against. A 20% drift is worth reading the log for.
+These are the numbers to judge a new run against. A 20% drift is worth reading the log for. Both columns
+are a single measured run, not an average, and both are from the API
+(`jobs[].steps[].started_at`/`completed_at`), so they exclude queue time.
 
-| Stage | Windows runner | Notes |
-|---|---|---|
-| Setup (checkout, MSYS2, LLVM, Rust, cache, toolchain verify) | ~3-4 min | every run, unchanged by caching |
-| Compile of the full graph | ~10-15 min cold | `target/` is cached now, so warm runs skip most of this |
-| Lib suite (`--lib`) | 1817-2061 s | 480+ tests; the two ledger tests used to dominate |
-| Integration targets | 125-1255 s each | `test_live_actix_*` and the faucet tests are the slow ones |
-| Whole job | 47-82 min | depends almost entirely on the cache state |
+| Stage | `windows-tests.yml` (serial) | `release.yml` (parallel) | Notes |
+|---|---|---|---|
+| Setup: checkout, MSYS2, LLVM, Rust, cache, toolchain verify | 286 s | 91 s | MSYS2 install alone is 71-76 s; the cache restore is 1 s warm and 192 s cold |
+| Compile, link, package | inside the suite step | 1587 s | `release.yml` builds and packages a binary; `windows-tests.yml` compiles through `cargo test` |
+| Full suite | 5597 s | 3300 s | 480+ tests; the two ledger tests still dominate |
+| Whole job | 5897 s (98 min) | 3540 s (59 min) | both well inside `timeout-minutes: 180` |
 
-**The suite runs serially (`-- --test-threads=1`).** Two failures on this runner were concurrency, not
-logic: `restart_replay_tests` panicked inside sled with `failed to allocate Arc` while several stores were
-open at once (`main` at `451dc86`, run `44762293962`), and the loopback snapshot test lost a start-up race.
-Two vCPUs and a thin memory margin mean a flaky check costs more than a slow one; serial adds roughly 30
-minutes and stays well inside the job timeout.
+**Where the numbers come from:** the parallel column is `release.yml` run `44884199956` (2026-11-21,
+`ci/release-dry-run`, which exercised the whole release path without publishing). The serial column is
+`windows-tests.yml` run `44885315754` (2026-11-21, PR #12). An earlier serial run on the pre-hardening
+workflow, `44877932589`, took **4730 s (78.8 min)** with a 4429 s suite and a 281 s setup — so the MSYS2
+change and the caching moved setup by seconds, not minutes, and the suite duration is what varies.
+
+**The suite alone ranged 4429-5597 s across these two serial runs**, on identical test counts and the same
+runner class: 26% spread, which is why a single slow run is not evidence of a regression. Setup, by
+contrast, was 281 s and 286 s — the stable part, and the reason a spike there is worth reading.
+
+**What the setup cost actually is.** Of the 286 s, 192 s is the Cargo cache restore and 71 s the MSYS2
+install. Caching `target/` buys back far more than it costs, but the restore is the step to watch if setup
+grows: it is 67% of setup time.
+
+The parallel release job is 20 minutes shorter than the serial gate and proved the same portability fixes.
+The serial run stays the gate anyway: two failures on this runner were concurrency, not logic —
+`restart_replay_tests` panicked inside sled with `failed to allocate Arc` while several stores were open at
+once (`main` at `451dc86`, run `44762293962`), and the loopback snapshot test lost a start-up race. Two
+vCPUs and a thin memory margin mean a flaky check costs more than a slow one; serialising fits inside the
+job timeout comfortably.
 
 Locally, on this workstation: the two ledger tests went from **158 s to 94 s** once they stopped copying
 a RocksDB directory, and `cargo check --all-targets` takes ~10 s when warm.
