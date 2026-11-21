@@ -348,7 +348,7 @@ A 32-byte root is a 32-byte root. The L1 cannot price by state size, because the
 size by construction — so **frequency is the only honest meter**, and v2 says so instead of pretending
 otherwise.
 
-**C-1 (ratify).** Fees stay flat: 10,000 to register, 1,000 per anchor, 1,000 per handover.
+**C-1 (ratified 2026-11-21).** Fees stay flat: 10,000 to register, 1,000 per anchor, 1,000 per handover.
 
 **C-2 (ratify).** A chain that wants to be **listed as live** in the app must anchor at least **once per
 day**. This is a product rule enforced by the app, not a consensus rule — the L1 never judges it. It
@@ -591,7 +591,7 @@ Sign each line, or change it here first. This is the only approval mechanism.
 | V-1 | Fee split | **RATIFIED + IMPLEMENTED 2026-11-15:** by weight, remainder to the largest weight, no unit destroyed | ☑ |
 | V-2 | Placeholder validators | **RATIFIED + IMPLEMENTED 2026-11-15:** `reward_eligible = false` for genesis entries | ☑ |
 | V-3 | Validator bond (phase 4) | 1,000 `$ULTRA`, forfeited on third slash | ☐ |
-| C-1 | AppChain prices | 0.01 register, 0.001 anchor, 0.001 handover | ☐ |
+| C-1 | AppChain prices | **RATIFIED 2026-11-21 (owner):** 0.01 register (10,000 base units), 0.001 anchor (1,000), 0.001 handover (1,000); already the coded `APPCHAIN_REGISTER_FEE`, `APPCHAIN_ANCHOR_FEE`, `APPCHAIN_TRANSFER_FEE` | ☑ |
 | C-2 | "Live" listing rule | ≥ 1 anchor/day, enforced by the app | ☐ |
 | C-3 | Volume-tiered anchor fee (phase 3) | halve per 10× chains above 10,000 | ☐ |
 | R3b | Per-AppChain anchor price | **rejected as an L1 revenue lever**; price by verifiable anchor frequency instead | ☐ |
@@ -636,6 +636,7 @@ updated in the same commit.
 | v2.3 | 2026-11-15 | P1 implemented: V-0 payout address, V-1 weighted split without loss, V-2 placeholder exclusion. §3.3 rewritten as ratified | Fees were credited to `hex(public_key)` — an unspendable phantom account — so validators had never actually been paid. Also fixes the remainder destroyed on every block |
 | v2.2 | 2026-11-15 | R1 ratified: 0.5 `$ULTRA`/block, cap 32,557,379.0968, deployed by reset. §2.2 rewritten for the chosen schedule | The coded 3,061 emission was 0.3% of the allocation — the inverse of the intended Bitcoin-shaped distribution. Implemented in `GENESIS_REWARD`, `MAX_SUPPLY_BASE_UNITS` and `genesis.json` |
 | v2.1 | 2026-11-15 | Added §2.1 (cap derivation and its upper bound) and §4.3 (per-AppChain anchor pricing), rows R3b and R3c | Review questioned the emission total and claimed per-chain anchor pricing already worked. §2.1 shows 97 is the *sum* of era rewards, not era 0's reward, so 3,061.0872 stands and 6,074.34 exceeds the geometric ceiling. §4.3 shows the per-chain field lives only in the retired prototype and that floor-plus-choice pricing collects *less* than the flat fee. |
+| v2.4 | 2026-11-21 | C-1 ratified by the owner with the existing fees: 10,000 / 1,000 / 1,000 base units (register / anchor / handover). §9 row ticked, §4.2 label updated | The same values were already coded and already charged on the live chain (blocks 11 and 12), so the sheet recorded no decision for them. No code or parameter changes |
 
 Both challenges are recorded rather than quietly absorbed: a document that cannot show why it survived a
 review will be challenged again by the next reader.
