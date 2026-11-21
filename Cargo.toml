@@ -2,6 +2,9 @@
 name = "UltraNet"
 version = "3.0.0"
 edition = "2021"
+# The floor, matching rust-toolchain.toml: an older compiler should say so plainly instead of
+# failing somewhere in a dependency with a confusing type error.
+rust-version = "1.97"
 authors = ["Vladan Jotov"]
 license = "ISC"
 
