@@ -55,8 +55,28 @@ Follow `docs/runbooks/games-go-live-checklist.md` in order. All of it is OWNER-r
 ## 4. Standing rules
 No push, merge or deploy, no chain registration or anchoring, no production key generation, payouts or balance changes, and no consensus/protocol/hash-layout/domain-tag changes without explicit approval. Stop for review after each phase.
 
-## 5. Not yet verified
-Windows CI status, Android build on `main` today, live explorer/dashboard data.
+## 5. Verification status, checked 2026-11-21 11:14Z
+
+All three items that were open at the time of writing are now checked:
+
+| Item | Result |
+|---|---|
+| Windows CI | The gate for `aa96201` was **still running** at 11:14Z. The last completed gate on `main` is `cdc59d5`, **success** (5897 s), and the pull-request gate for the toolchain pin (`b1e2d6b`) passed. The four commits in between (`a71e2c2`, `21921ce`, `4a074ab`, `e4acdd0`) show `cancelled`, which is `cancel-in-progress` supersede on `main`, not failure — so only `aa96201` will carry a verdict for this batch |
+| Android build on `main` today | **Verified.** `:app:assembleDebug` succeeded at 11:13Z with `JAVA_HOME`/`ANDROID_HOME` from `android-app/.toolchains`; `app-debug.apk` rebuilt to 36,784,284 B. The earlier build failed only because `ANDROID_HOME` was unset, not because of the code |
+| Live explorer/dashboard data | **Verified.** `chain_length` 13 and `/api/block/12` returns the head block, so indices agree; `dashboard.ultranetwork.cc` answers 200 with the expected title. The master branch API and the dashboard read the same node |
+
+Two observations from the live check, neither of which blocks anything:
+
+- Block 12 carries `"aggregated_signature": null`. With one real validator there is no aggregate to
+  produce, but this is the same field that surfaced as a P0 finding earlier in the project, so it is
+  worth confirming the intended semantics rather than assuming it resolves itself when a second
+  validator joins.
+- `release` builds still use the debug signing config (`android-app/app/build.gradle.kts:39`,
+  `signingConfigs.getByName("debug")`), which confirms the Phase C item: there is no release identity
+  to publish with.
+
+## 6. Rust suite on `main`
+`cargo test --lib -- --test-threads=1` on `main`: 497 passed, 0 failed, 1 ignored (562 s), exit 0.
 
 ## 6. Rust suite on `main`
 `cargo test --lib -- --test-threads=1` on `main`: 497 passed, 0 failed, 1 ignored (562 s), exit 0.
