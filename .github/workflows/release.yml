@@ -10,6 +10,11 @@ on:
         description: "Existing semver tag to rebuild and publish"
         required: true
         type: string
+      dry_run:
+        description: "Build and test every platform, then skip publishing"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -440,6 +445,10 @@ jobs:
   publish:
     name: Publish GitHub release
     needs: [build-linux, build-macos, build-windows, test-windows]
+    # A dry run builds and tests every platform and stops here, which is how a toolchain change is
+    # validated without touching a published release. A tag push carries no inputs context, so this
+    # is null there and publication proceeds as before.
+    if: ${{ inputs.dry_run != true }}
     runs-on: ubuntu-22.04
     steps:
       - name: Download packaged archives
