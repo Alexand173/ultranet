@@ -40,6 +40,25 @@ pub struct MoveModuleInfo {
     pub bytecode: Vec<u8>,
 }
 
+/// The `module.function` pairs `MoveVM::execute_function` really handles.
+///
+/// Admission (`UltraBlockchain::validate_transaction`) refuses any other `MoveCall`, because
+/// the VM would only log "simulated" and change nothing while the sender still pays for it.
+/// This is an admission rule only: block validation and replay do not consult it, so blocks
+/// that already contain other calls keep replaying exactly as before.
+pub const SUPPORTED_MOVE_CALLS: [(&str, &str); 4] = [
+    ("UltraCoin", "mint"),
+    ("UltraCoin", "transfer"),
+    ("FheCoin", "mint"),
+    ("FheCoin", "transfer"),
+];
+
+pub fn is_supported_move_call(module_name: &str, function_name: &str) -> bool {
+    SUPPORTED_MOVE_CALLS
+        .iter()
+        .any(|(module, function)| *module == module_name && *function == function_name)
+}
+
 // ============================================================
 // 2. MOVE VM WRAPPER (SLED BACKED)
 // ============================================================

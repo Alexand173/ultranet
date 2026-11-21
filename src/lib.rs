@@ -2416,6 +2416,19 @@ impl UltraBlockchain {
                     .to_string(),
             );
         }
+        // Admission only: the block-validation path deliberately has no such rule, so history replays.
+        if let TransactionPayload::MoveCall {
+            module_name,
+            function_name,
+            ..
+        } = &tx.payload
+        {
+            if !move_vm::is_supported_move_call(module_name, function_name) {
+                return Err(format!(
+                    "unknown Move function {module_name}.{function_name}"
+                ));
+            }
+        }
 
         self.verify_transaction_signature(tx)?;
 
@@ -6088,5 +6101,234 @@ mod restart_replay_tests {
         );
 
         let _ = fs::remove_dir_all(path);
+    }
+}
+
+#[cfg(test)]
+mod move_call_admission_tests {
+    //! Unknown `MoveCall` pairs are refused at admission, and only there: blocks that already
+    //! contain such a call keep replaying, because block validation has no such rule.
+    use super::*;
+    use std::fs;
+    const START_BALANCE: u64 = 1_000_000;
+
+    fn node_at(path: &str, balances: &[(&str, u64)]) -> UltraBlockchain {
+        let storage = Arc::new(Storage::new(path).expect("test storage should open"));
+        for (address, balance) in balances {
+            storage.save_state(address, *balance).expect("seed balance");
+        }
+        UltraBlockchain::with_storage(storage)
+    }
+
+    fn move_call(
+        chain: &UltraBlockchain,
+        wallet: &UltraWallet,
+        nonce: u64,
+        module: &str,
+        function: &str,
+    ) -> Transaction {
+        let mut nullifier = [0u8; 32];
+        nullifier[..8].copy_from_slice(&nonce.to_le_bytes());
+        nullifier[8..16].copy_from_slice(&wallet.address.as_bytes()[..8]);
+        nullifier[16] = 0x4D;
+        let mut tx = Transaction {
+            sender: wallet.address.clone(),
+            sender_public_key: wallet.keypair.public_key.clone(),
+            recipient: "0x1".to_string(),
+            amount: 0,
+            signature: vec![],
+            zk_proof: vec![1, 2, 3],
+            nullifier,
+            timestamp: Utc::now().timestamp() as u64,
+            fee: 500,
+            nonce,
+            gas_limit: 500_000,
+            gas_price: 1,
+            proof_type: ProofType::Transaction,
+            payload: TransactionPayload::MoveCall {
+                module_address: "0x1".to_string(),
+                module_name: module.to_string(),
+                function_name: function.to_string(),
+                args: vec![],
+            },
+            chain_id: UltraBlockchain::L1_CHAIN_ID,
+            version: UltraBlockchain::LEGACY_TRANSACTION_VERSION,
+        };
+        let message = chain.create_transaction_message(&tx);
+        tx.signature = wallet.keypair.sign(&message);
+        tx
+    }
+
+    fn pending(chain: &UltraBlockchain) -> usize {
+        chain.mempool.read().get_pending_count()
+    }
+
+    #[test]
+    fn an_unknown_move_call_is_refused_at_admission() {
+        let path = "test_db_movecall_unknown";
+        let _ = fs::remove_dir_all(path);
+        let wallet = UltraWallet::new();
+        let node = node_at(path, &[(wallet.address.as_str(), START_BALANCE)]);
+
+        let tx = move_call(&node, &wallet, 0, "Escrow", "release");
+        let error = node.add_transaction(tx).unwrap_err();
+        assert_eq!(error, "unknown Move function Escrow.release");
+
+        drop(node);
+        let _ = fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn a_supported_move_call_is_not_stopped_by_the_new_rule() {
+        let path = "test_db_movecall_known";
+        let _ = fs::remove_dir_all(path);
+        let wallet = UltraWallet::new();
+        let node = node_at(path, &[(wallet.address.as_str(), START_BALANCE)]);
+
+        for (nonce, (module, function)) in
+            [("UltraCoin", "transfer"), ("FheCoin", "mint"), ("FheCoin", "transfer")]
+                .into_iter()
+                .enumerate()
+        {
+            let tx = move_call(&node, &wallet, nonce as u64, module, function);
+            if let Err(error) = node.validate_transaction(&tx) {
+                assert!(
+                    !error.contains("unknown Move function"),
+                    "{module}.{function} must not be refused as unknown: {error}"
+                );
+            }
+        }
+        // The one pair that stays refused does so for its own, older reason.
+        let mint = move_call(&node, &wallet, 9, "UltraCoin", "mint");
+        assert!(node
+            .validate_transaction(&mint)
+            .unwrap_err()
+            .contains("UltraCoin mint is restricted"));
+        // And a supported call is really admitted end to end.
+        let tx = move_call(&node, &wallet, 0, "UltraCoin", "transfer");
+        node.add_transaction(tx).expect("a supported call is admitted");
+        assert_eq!(pending(&node), 1);
+
+        drop(node);
+        let _ = fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn a_refused_call_leaves_nothing_behind_and_costs_nothing() {
+        let path = "test_db_movecall_nothing_left";
+        let _ = fs::remove_dir_all(path);
+        let wallet = UltraWallet::new();
+        let node = node_at(path, &[(wallet.address.as_str(), START_BALANCE)]);
+        let before = node.get_unadjusted_balance(&wallet.address);
+
+        let tx = move_call(&node, &wallet, 0, "Escrow", "release");
+        let nullifier = tx.nullifier;
+        assert!(node.add_transaction(tx).is_err());
+
+        assert_eq!(pending(&node), 0, "not in the mempool");
+        assert!(node.storage.get_transaction_by_nullifier(&nullifier).is_none(), "nullifier not reserved");
+        assert!(node.storage.get_all_pending_transactions().unwrap().is_empty(), "nothing persisted as pending");
+        assert!(
+            node.pending_nonces.read().get(&wallet.address).is_none(),
+            "the sender's nonce is not held"
+        );
+        assert_eq!(node.get_unadjusted_balance(&wallet.address), before, "no fee applied");
+
+        // The same nonce is still free for a call that is supported.
+        let retry = move_call(&node, &wallet, 0, "UltraCoin", "transfer");
+        node.add_transaction(retry).expect("the nonce was not consumed by the refusal");
+        assert_eq!(pending(&node), 1);
+
+        drop(node);
+        let _ = fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn a_historical_block_with_an_unknown_call_still_replays() {
+        let path_a = "test_db_movecall_history_a";
+        let path_b = "test_db_movecall_history_b";
+        let _ = fs::remove_dir_all(path_a);
+        let _ = fs::remove_dir_all(path_b);
+        let wallet = UltraWallet::new();
+        let balances = [(wallet.address.as_str(), START_BALANCE)];
+        let mut node_a = node_at(path_a, &balances);
+        let mut node_b = node_at(path_b, &balances);
+
+        // Build a block that holds an unknown call, the way a block from before the rule would.
+        // Mining refuses such a call today (it re-runs admission), so mine a supported call
+        // with the same shape, swap in the unknown one, and re-seal the block honestly:
+        // new Merkle root, new hash. The unknown call is validly signed.
+        let supported = move_call(&node_a, &wallet, 0, "UltraCoin", "transfer");
+        node_a.add_transaction(supported).expect("a supported call is admitted");
+        let mut block = node_a.mine_block().expect("a block containing the supported call");
+        let old = move_call(&node_a, &wallet, 0, "Escrow", "release");
+        assert!(node_a.validate_transaction(&old).is_err(), "admission now refuses it");
+        assert_eq!(block.transactions.len(), 1);
+        block.transactions[0] = old.clone();
+        let mut tree = MerkleTree::new(256);
+        UltraBlockchain::bind_block_transaction_merkle(&mut tree, &old);
+        block.merkle_root.copy_from_slice(&tree.get_root()[0..32]);
+        block.hash = node_a.calculate_block_hash(
+            block.index,
+            block.timestamp,
+            &block.previous_hash,
+            block.nonce,
+            &block.transactions,
+            &block.merkle_root,
+            &block.shard_roots,
+        );
+        assert!(
+            block.transactions.iter().any(|tx| matches!(
+                &tx.payload,
+                TransactionPayload::MoveCall { module_name, .. } if module_name == "Escrow"
+            )),
+            "the block really contains the unknown call"
+        );
+        assert!(
+            node_b.validate_block_transaction_authorization(&old).is_ok(),
+            "the block path has no admission rule"
+        );
+
+        node_b
+            .add_remote_block(block, vec![])
+            .expect("block validation has no admission rule, so the block replays");
+        assert_eq!(node_b.chain.len(), node_a.chain.len());
+        assert_eq!(
+            node_b.get_unadjusted_balance(&wallet.address),
+            node_a.get_unadjusted_balance(&wallet.address)
+        );
+
+        drop(node_a);
+        drop(node_b);
+        let _ = fs::remove_dir_all(path_a);
+        let _ = fs::remove_dir_all(path_b);
+    }
+
+    #[test]
+    fn a_persisted_pending_unknown_call_is_restored_at_startup_without_panicking() {
+        let path = "test_db_movecall_restore";
+        let _ = fs::remove_dir_all(path);
+        let wallet = UltraWallet::new();
+        let node = node_at(path, &[(wallet.address.as_str(), START_BALANCE)]);
+        let old = move_call(&node, &wallet, 0, "Escrow", "release");
+        node.storage.save_pending_transaction(&old).expect("persist as pending");
+        drop(node);
+
+        let restored = node_at(path, &[]);
+        assert_eq!(pending(&restored), 1, "restore does not apply the admission rule");
+
+        drop(restored);
+        let _ = fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn every_supported_pair_has_a_real_handler_in_the_vm() {
+        let source = include_str!("move_vm.rs");
+        for (module, function) in move_vm::SUPPORTED_MOVE_CALLS {
+            let arm = format!("(\"{module}\", \"{function}\") =>");
+            assert!(source.contains(&arm), "{module}.{function} is listed but has no dispatch arm");
+        }
+        assert!(!move_vm::is_supported_move_call("Escrow", "release"));
+        assert!(!move_vm::is_supported_move_call("UltraCoin", "burn"));
     }
 }
