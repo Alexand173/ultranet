@@ -304,6 +304,11 @@ fn ensure_private_key_permissions(path: &Path) -> Result<(), String> {
             ));
         }
     }
+    #[cfg(not(unix))]
+    {
+        // Windows has no POSIX file mode bits; the caller still reads and validates the file.
+        let _ = path;
+    }
     Ok(())
 }
 

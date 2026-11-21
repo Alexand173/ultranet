@@ -581,6 +581,11 @@ fn ensure_private_file_permissions(path: &Path) -> Result<(), String> {
             ));
         }
     }
+    #[cfg(not(unix))]
+    {
+        // Windows has no POSIX file mode bits; the caller still reads and validates the file.
+        let _ = path;
+    }
     Ok(())
 }
 
@@ -599,6 +604,11 @@ fn ensure_owner_auth_permissions(path: &Path) -> Result<(), String> {
                 path.display()
             ));
         }
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows has no POSIX file mode bits; the caller still reads and validates the file.
+        let _ = path;
     }
     Ok(())
 }

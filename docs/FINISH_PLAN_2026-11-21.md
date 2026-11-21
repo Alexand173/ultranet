@@ -8,7 +8,7 @@ Items marked **OWNER** need the owner's key, money or decision and cannot be don
 | Area | State |
 |---|---|
 | Node / L1 | Rust node, 3.0.0. Lib suite green: 497 passed, 0 failed, 1 ignored (§6). One real validator. |
-| Live chain | 13 blocks. Blocks are sealed only by `POST /api/mine` unless `ULTRANET_AUTO_MINE_INTERVAL_SECONDS` is set. Last auto-mined block was ~138 h ago; mempool empty. |
+| Live chain | 13 blocks. Unattended block production is configured: `ULTRANET_AUTO_MINE_INTERVAL_SECONDS=10`. The chain is currently idle because the mempool is empty, so the head is old; that is not a miner failure (§2 Phase A item 1). |
 | Website | Lint, vitest (141/141), `tsc` and build all green. No developer, games or records pages. |
 | Android (UltraVerse) | 26/26 instrumented classes passed on 2026-11-18. 0.1.0 / versionCode 1. Release is signed with the debug key; no store pipeline. Many services inactive. |
 | Faucet | Live, 0.1 `$ULTRA` per claim, funded and paying since 2026-10-31. |
@@ -19,8 +19,8 @@ Items marked **OWNER** need the owner's key, money or decision and cannot be don
 ## 2. Finishing order
 
 ### Phase A — chain safety (blocks everything else)
-1. **Unattended block production is already configured — the 138-hour head is an idle chain, not a stalled miner.** Verified on 2026-11-21: the live env carries `ULTRANET_AUTO_MINE_INTERVAL_SECONDS=10` and `ULTRANET_AUTO_MINE_MAX_BLOCKS_PER_MINUTE=6`, and `auto_mine_tick` returns `Ok(None)` before touching the chain when the mempool is empty (`src/auto_miner.rs:131-134`, "the common, quiet case"). `/api/stats` agrees: `mempool_size 0`, `auto_mined_blocks 1`, `auto_mine_last_at` about 51 minutes after genesis.
-   What is actually missing is **detection**, and the naive form of it would be wrong: an alert on head age alone fires permanently on an idle chain and gets muted within a week. Alert on `mempool_size > 0` **and** head older than N minutes — a queued transaction that cannot confirm is the failure worth waking someone for. `/api/stats` already exposes `auto_mine_last_at` and `auto_mined_blocks` for it.
+1. **Idle chain and block-production alerting.** Unattended block production is already configured; an old chain head means an idle chain, not a stalled miner. Verified on 2026-11-21: the live env carries `ULTRANET_AUTO_MINE_INTERVAL_SECONDS=10` and `ULTRANET_AUTO_MINE_MAX_BLOCKS_PER_MINUTE=6`, and `auto_mine_tick` returns `Ok(None)` before touching the chain when the mempool is empty (`src/auto_miner.rs:131-134`, "the common, quiet case"). `/api/stats` agrees: `mempool_size 0`, `auto_mined_blocks 1`, `auto_mine_last_at` about 51 minutes after genesis.
+   What is actually missing is **detection**, and the naive form of it would be wrong: an alert on head age alone fires permanently on an idle chain and gets muted within a week. The rule is `mempool_size > 0 AND head_age > threshold` — a queued transaction that cannot confirm is the failure worth waking someone for. This step only records the rule; the alerting itself is not implemented or changed here. `/api/stats` already exposes `auto_mine_last_at` and `auto_mined_blocks` for it.
    Separately, a product decision: if the chain must show progress for an explorer's benefit, periodic empty blocks are a consensus policy change with their own consequences, not a configuration fix. (OWNER decision, not a config change.)
 2. **Move VM unknown-call admission — done (local commit `a7deb34`, not pushed).** `validate_transaction` now refuses a `MoveCall` whose `module.function` the VM does not handle (`unknown Move function <module>.<function>`). Design and history check: `docs/MOVE_VM_ADMISSION_PROPOSAL_2026-11-21.md`.
    - **Scope:** admission only. Block validation, replay, VM dispatch, gas and fees are unchanged, so blocks that already contain such calls keep replaying. A pending unknown call already in a mempool is no longer mined (`mine_block` re-runs admission); the live chain had none (13 blocks, no `MoveCall`, empty mempool).
@@ -61,15 +61,29 @@ Follow `docs/runbooks/games-go-live-checklist.md` in order. All of it is OWNER-r
 ## 4. Standing rules
 No push, merge or deploy, no chain registration or anchoring, no production key generation, payouts or balance changes, and no consensus/protocol/hash-layout/domain-tag changes without explicit approval. Stop for review after each phase.
 
-## 5. Verification status, checked 2026-11-21 11:14Z
+## 5. Verification status, checked 2026-11-21 14:31Z
 
 All three items that were open at the time of writing are now checked:
 
 | Item | Result |
 |---|---|
-| Windows CI | The gate for `aa96201` was **still running** at 11:14Z. The last completed gate on `main` is `cdc59d5`, **success** (5897 s), and the pull-request gate for the toolchain pin (`b1e2d6b`) passed. The four commits in between (`a71e2c2`, `21921ce`, `4a074ab`, `e4acdd0`) show `cancelled`, which is `cancel-in-progress` supersede on `main`, not failure — so only `aa96201` will carry a verdict for this batch |
+| Windows CI | **Green.** Every commit that carries content has a Windows verdict — 518 passed, 0 failed, 1 ignored on both `62afe40` and `b38f6af`. See the gate history below the table |
 | Android build on `main` today | **Verified.** `:app:assembleDebug` succeeded at 11:13Z with `JAVA_HOME`/`ANDROID_HOME` from `android-app/.toolchains`; `app-debug.apk` rebuilt to 36,784,284 B. The earlier build failed only because `ANDROID_HOME` was unset, not because of the code |
 | Live explorer/dashboard data | **Verified.** `chain_length` 13 and `/api/block/12` returns the head block, so indices agree; `dashboard.ultranetwork.cc` answers 200 with the expected title. The master branch API and the dashboard read the same node |
+
+### Windows gate history
+
+| Commit | Run | Result |
+|---|---|---|
+| `aa96201` | `44895977034` | **cancelled** — superseded by a later push (`cancel-in-progress`), not a failed test |
+| `62afe40` | `44898222530` | **success** — 518 passed, 0 failed, 1 ignored |
+| `b38f6af` | `44906758391` | **success** — 518 passed, 0 failed, 1 ignored (job 5323 s, suite step 4910 s, 27 binaries) |
+
+`Verify release version consistency` on `b38f6af`: **success**, run `44906758360`.
+
+`a71e2c2`, `21921ce`, `4a074ab` and `e4acdd0` also show `cancelled`: each was replaced by a newer push
+to `main` before its Windows job finished. A cancellation is not evidence that a test failed, and none
+of those four carried source changes.
 
 Two observations from the live check, neither of which blocks anything:
 
@@ -80,9 +94,6 @@ Two observations from the live check, neither of which blocks anything:
 - `release` builds still use the debug signing config (`android-app/app/build.gradle.kts:39`,
   `signingConfigs.getByName("debug")`), which confirms the Phase C item: there is no release identity
   to publish with.
-
-## 6. Rust suite on `main`
-`cargo test --lib -- --test-threads=1` on `main`: 497 passed, 0 failed, 1 ignored (562 s), exit 0.
 
 ## 6. Rust suite on `main`
 `cargo test --lib -- --test-threads=1` on `main`: 497 passed, 0 failed, 1 ignored (562 s), exit 0.

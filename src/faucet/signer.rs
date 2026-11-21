@@ -243,6 +243,11 @@ fn ensure_private_permissions(path: &Path) -> Result<(), SignerError> {
             return Err(SignerError::InvalidCredential);
         }
     }
+    #[cfg(not(unix))]
+    {
+        // Windows has no POSIX file mode bits; the caller still reads and validates the file.
+        let _ = path;
+    }
     Ok(())
 }
 

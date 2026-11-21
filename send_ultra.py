@@ -16,6 +16,9 @@ Three values are deliberately not constants:
 
 Pass `--amount` in ULTRA (default 100). The fee is charged on top of it, so moving 201 needs
 203.010000 of balance.
+
+Pass `--to <64 hex>` to send somewhere other than the faucet. The recipient is validated before any
+owner key is read, and it is part of the digest, so a mistyped address is refused rather than signed.
 """
 import argparse
 import hashlib
@@ -51,12 +54,28 @@ parser.add_argument(
     help="float to transfer, in ULTRA with up to six decimals (default 100). The node charges a "
          "1%% minimum fee on top, so 201 needs 203.010000 of balance.",
 )
+parser.add_argument(
+    "--to",
+    default="",
+    help="recipient, 64 lowercase hex. Defaults to the faucet address so existing runs keep their "
+         "behaviour; pass this to send anywhere else.",
+)
 args = parser.parse_args()
 
 # CONFIG
 NODE_URL = "https://api.ultranetwork.cc"
 SOVEREIGN_ADDR = "3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c"
 FAUCET_ADDR = "fe0b9a9227ebb2bb40b408c5b10b0155a2591fdf97ce43580a1ab873271af1f8"
+
+# The recipient is the faucet unless `--to` says otherwise. It is validated here, before any key is
+# read: the recipient is part of the signed digest, so a typo would be signed and irreversible.
+RECIPIENT = (args.to.strip().lower() or FAUCET_ADDR)
+if len(RECIPIENT) != 64 or any(c not in "0123456789abcdef" for c in RECIPIENT):
+    raise SystemExit(
+        f"--to must be 64 lowercase hexadecimal characters; received {RECIPIENT!r}. Refusing to sign."
+    )
+if RECIPIENT == SOVEREIGN_ADDR:
+    raise SystemExit("The recipient is the Sovereign account itself. Refusing to sign.")
 
 BASE_UNITS = 1_000_000      # six decimals, as the node counts
 CHAIN_ID = 0
@@ -140,9 +159,9 @@ account = node_get(f"/api/account/{SOVEREIGN_ADDR}")
 NONCE = account["nonce"]
 balance = account["balance_base_units"]
 
-query = urllib.parse.urlencode({"recipient": FAUCET_ADDR, "amount": AMOUNT})
+query = urllib.parse.urlencode({"recipient": RECIPIENT, "amount": AMOUNT})
 estimate = node_get("/api/transaction/estimate?" + query)
-if estimate["recipient"] != FAUCET_ADDR or estimate["amount"] != AMOUNT:
+if estimate["recipient"] != RECIPIENT or estimate["amount"] != AMOUNT:
     raise SystemExit("The node quoted a different transfer than the one configured here.")
 if estimate["fee"] != EXPECTED_FEE:
     raise SystemExit(
@@ -183,7 +202,7 @@ timestamp = node_timestamp()
 total = AMOUNT + FEE
 
 print(f"Sovereign : {SOVEREIGN_ADDR}")
-print(f"Faucet    : {FAUCET_ADDR}")
+print(f"Recipient : {RECIPIENT}")
 print(f"Amount    : {AMOUNT / BASE_UNITS:.6f} ULTRA")
 print(f"Network fee: {FEE / BASE_UNITS:.6f} ULTRA  (gas_limit {GAS_LIMIT}, gas_price {GAS_PRICE})")
 print(f"Total debit: {total / BASE_UNITS:.6f} ULTRA of {balance / BASE_UNITS:.6f} ULTRA")
@@ -197,7 +216,7 @@ nullifier_bytes = secrets.token_bytes(32)
 nullifier_list = list(nullifier_bytes)
 
 sender_bytes = SOVEREIGN_ADDR.encode('utf-8')
-recipient_bytes = FAUCET_ADDR.encode('utf-8')
+recipient_bytes = RECIPIENT.encode('utf-8')
 amount_bytes = AMOUNT.to_bytes(8, 'little')
 fee_bytes = FEE.to_bytes(8, 'little')
 timestamp_bytes = timestamp.to_bytes(8, 'little')
@@ -230,7 +249,7 @@ if len(combined_sig) != 9254:
 tx = {
     "sender": SOVEREIGN_ADDR,
     "sender_public_key": sender_pubkey_list,
-    "recipient": FAUCET_ADDR,
+    "recipient": RECIPIENT,
     "amount": AMOUNT,
     "fee": FEE,
     "nonce": NONCE,
@@ -261,7 +280,7 @@ if args.check_file:
                 # as "invalid signature" after submission.
                 "signed_fields": {
                     "sender": SOVEREIGN_ADDR,
-                    "recipient": FAUCET_ADDR,
+                    "recipient": RECIPIENT,
                     "amount": AMOUNT,
                     "fee": FEE,
                     "nonce": NONCE,
