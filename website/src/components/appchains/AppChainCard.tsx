@@ -54,7 +54,7 @@ export default function AppChainCard({ chain, action, onArm, onCancel, onConfirm
           <dt className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted"><CircleDollarSign className="h-3.5 w-3.5 text-cyan-glow/60" aria-hidden="true" /> Balance</dt>
           <dd className="mt-2 font-space-grotesk text-lg font-bold text-platinum">
             {chain.source === "ledger"
-              ? <span className="font-mono text-[10px] font-normal leading-5 text-platinum/45">No treasury — anchors are paid by the owner wallet.</span>
+              ? <span className="font-mono text-[10px] font-normal leading-5 text-platinum-muted">No treasury — anchors are paid by the owner wallet.</span>
               : <>{formatUltraAmount(chain.balanceBaseUnits)} <span className="font-mono text-[10px] text-cyan-glow">$ULTRA</span></>}
           </dd>
         </div>
