@@ -13,7 +13,7 @@ Items marked **OWNER** need the owner's key, money or decision and cannot be don
 | Android (UltraVerse) | 26/26 instrumented classes passed on 2026-11-18. 0.1.0 / versionCode 1. Release is signed with the debug key; no store pipeline. Many services inactive. |
 | Faucet | Live, 0.1 `$ULTRA` per claim, funded and paying since 2026-10-31. |
 | Records + Games services | Code, tests, runbooks and a real-node rehearsal done. **Not deployed** (live endpoints return 404). |
-| Move VM | Unknown-function arm still reports success (Gate 0 item, not fixed). |
+| Move VM | Admission patch **done** in local commit `a7deb34` (not pushed): unknown `MoveCall` pairs are refused at admission. The VM's unknown-function arm itself is unchanged. Other VM defects remain (§2 Phase A item 2). |
 | Economics | R1–V-2 ratified. R4, R4b, F-1, F-2 and others still open. |
 
 ## 2. Finishing order
@@ -22,7 +22,11 @@ Items marked **OWNER** need the owner's key, money or decision and cannot be don
 1. **Unattended block production is already configured — the 138-hour head is an idle chain, not a stalled miner.** Verified on 2026-11-21: the live env carries `ULTRANET_AUTO_MINE_INTERVAL_SECONDS=10` and `ULTRANET_AUTO_MINE_MAX_BLOCKS_PER_MINUTE=6`, and `auto_mine_tick` returns `Ok(None)` before touching the chain when the mempool is empty (`src/auto_miner.rs:131-134`, "the common, quiet case"). `/api/stats` agrees: `mempool_size 0`, `auto_mined_blocks 1`, `auto_mine_last_at` about 51 minutes after genesis.
    What is actually missing is **detection**, and the naive form of it would be wrong: an alert on head age alone fires permanently on an idle chain and gets muted within a week. Alert on `mempool_size > 0` **and** head older than N minutes — a queued transaction that cannot confirm is the failure worth waking someone for. `/api/stats` already exposes `auto_mine_last_at` and `auto_mined_blocks` for it.
    Separately, a product decision: if the chain must show progress for an explorer's benefit, periodic empty blocks are a consensus policy change with their own consequences, not a configuration fix. (OWNER decision, not a config change.)
-2. **Move VM unknown-function fix.** Make an unknown function fail instead of reporting success. Small change, but it touches execution semantics, so it needs explicit approval and a test per rule.
+2. **Move VM unknown-call admission — done (local commit `a7deb34`, not pushed).** `validate_transaction` now refuses a `MoveCall` whose `module.function` the VM does not handle (`unknown Move function <module>.<function>`). Design and history check: `docs/MOVE_VM_ADMISSION_PROPOSAL_2026-11-21.md`.
+   - **Scope:** admission only. Block validation, replay, VM dispatch, gas and fees are unchanged, so blocks that already contain such calls keep replaying. A pending unknown call already in a mempool is no longer mined (`mine_block` re-runs admission); the live chain had none (13 blocks, no `MoveCall`, empty mempool).
+   - **Tests:** the 6 new admission tests passed (6/6).
+   - **Not re-run:** the complete Rust suite was **not** re-run after the commit. It was run once on the patch before the commit (503 passed, 0 failed, 1 ignored); the commit itself was checked only with the 6 new tests.
+   - **Still open, separate defects** (proposal §7): silent `Ok` on too few arguments in `persistent_mint`/`persistent_transfer`; a panic on `args[0][..8]` when an argument is shorter than 8 bytes, reachable through peer gossip; `MoveDeploy` bytecode is never executed; `FheCoin.mint` has no restriction like `UltraCoin.mint`.
 3. **Ratify the open economic parameters** (R4, R4b, F-1, F-2, rest of the §9 sheet). (OWNER decision.) Nothing downstream should hard-code them before this.
 
 ### Phase B — Records and Games services go-live
