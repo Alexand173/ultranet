@@ -484,6 +484,33 @@ pub struct RegistryDay {
     pub updated_at: u64,
 }
 
+/// One stored day, as the public day list needs it: roots, state, and how many applications
+/// contributed. It never carries results, players, scores or data hashes.
+#[derive(Debug, Clone)]
+pub struct RegistryDaySummary {
+    pub date: String,
+    pub merkle_root: [u8; 32],
+    pub day_root: [u8; 32],
+    pub state: String,
+    pub anchor_tx: Option<String>,
+    pub app_count: usize,
+}
+
+/// Every stored day, counted. This is the one window the public counters describe: all closed days,
+/// from `from_day` to `to_day`. `days_anchored` counts by **state** (`anchored` or `confirmed`);
+/// the presence of `anchor_tx` is never used as a state test here.
+#[derive(Debug, Clone, Default)]
+pub struct RegistryDayTotals {
+    pub from_day: Option<String>,
+    pub to_day: Option<String>,
+    pub days_closed: u64,
+    pub days_with_root: u64,
+    pub days_confirmed: u64,
+    pub days_anchored: u64,
+    pub days_pending_anchor: u64,
+    pub latest_anchored_day: Option<String>,
+}
+
 impl RegistryDay {
     fn leaves(&self) -> Vec<[u8; 32]> {
         self.games
@@ -979,6 +1006,106 @@ impl GamesStore {
             last_error,
             updated_at: to_u64(updated_at)?,
         }))
+    }
+
+    /// The newest days, newest first, older than `before` if given. The caller asks for one row more
+    /// than it will show, so it learns whether more exist without a second query.
+    pub fn registry_day_page(
+        &self,
+        before: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<RegistryDaySummary>, RegistryError> {
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT day, merkle_root, day_root, state, anchor_tx, leaves
+             FROM registry_days
+             WHERE (?1 IS NULL OR day < ?1)
+             ORDER BY day DESC
+             LIMIT ?2",
+        )?;
+        let rows = statement.query_map(
+            params![before, i64::try_from(limit).unwrap_or(i64::MAX)],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<Vec<u8>>>(1)?,
+                    row.get::<_, Option<Vec<u8>>>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            },
+        )?;
+        let mut days = Vec::new();
+        for row in rows {
+            let (date, merkle, day_root, state, anchor_tx, leaves) = row?;
+            let to32 = |value: Option<Vec<u8>>| -> Result<[u8; 32], RegistryError> {
+                value
+                    .ok_or_else(|| RegistryError::Store("a stored root is missing".into()))?
+                    .try_into()
+                    .map_err(|_| RegistryError::Store("a stored root is not 32 bytes".into()))
+            };
+            let encoded: Vec<(String, String)> =
+                serde_json::from_str(&leaves).map_err(|e| RegistryError::Store(e.to_string()))?;
+            days.push(RegistryDaySummary {
+                date,
+                merkle_root: to32(merkle)?,
+                day_root: to32(day_root)?,
+                state,
+                anchor_tx,
+                app_count: encoded.len(),
+            });
+        }
+        Ok(days)
+    }
+
+    /// Counts over every stored day. States are counted as strings, exactly as they are stored:
+    /// `anchored` and `confirmed` together are "anchored"; `anchored` alone is "pending".
+    pub fn registry_day_totals(&self) -> Result<RegistryDayTotals, RegistryError> {
+        let connection = self.lock()?;
+        let (from_day, to_day, closed, with_root, confirmed, anchored, pending) = connection
+            .query_row(
+                "SELECT MIN(day), MAX(day), COUNT(*),
+                        SUM(CASE WHEN day_root IS NOT NULL THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN state = 'confirmed' THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN state IN ('anchored', 'confirmed') THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN state = 'anchored' THEN 1 ELSE 0 END)
+                 FROM registry_days",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                        row.get::<_, Option<i64>>(4)?,
+                        row.get::<_, Option<i64>>(5)?,
+                        row.get::<_, Option<i64>>(6)?,
+                    ))
+                },
+            )?;
+        let latest_anchored_day = connection
+            .query_row(
+                "SELECT MAX(day) FROM registry_days WHERE state IN ('anchored', 'confirmed')",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+        let count = |value: Option<i64>| -> Result<u64, RegistryError> {
+            u64::try_from(value.unwrap_or(0))
+                .map_err(|_| RegistryError::Store("a day count is negative".into()))
+        };
+        Ok(RegistryDayTotals {
+            from_day,
+            to_day,
+            days_closed: count(Some(closed))?,
+            days_with_root: count(with_root)?,
+            days_confirmed: count(confirmed)?,
+            days_anchored: count(anchored)?,
+            days_pending_anchor: count(pending)?,
+            latest_anchored_day,
+        })
     }
 
     /// Record where a registry day's anchor stands. Never touches the roots.

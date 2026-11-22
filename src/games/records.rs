@@ -1079,6 +1079,25 @@ impl RecordsService {
         })
     }
 
+    /// The public day list: newest first, with an exclusive date cursor. A caller that wants `limit`
+    /// rows asks for `limit + 1` so it can tell whether more exist.
+    pub fn registry_days_page(
+        &self,
+        before: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<registry::RegistryDaySummary>, GamesError> {
+        if let Some(before) = before {
+            Self::day_arg(before)?;
+        }
+        Ok(self.store.registry_day_page(before, limit)?)
+    }
+
+    /// Counts over **every** stored day — one window for all of them, never a rolling one, and never
+    /// influenced by a pagination limit.
+    pub fn registry_day_totals(&self) -> Result<registry::RegistryDayTotals, GamesError> {
+        Ok(self.store.registry_day_totals()?)
+    }
+
     /// The short proof that one game's day is inside the day's anchored root.
     pub fn registry_proof(
         &self,

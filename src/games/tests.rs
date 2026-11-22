@@ -5232,3 +5232,312 @@ mod split {
         assert_eq!(signer.calls(), 0, "no submission on any unknown");
     }
 }
+
+/// `/api/records/v1`: the public read contract. These pin the envelope and its headers, the 404 for
+/// every method that is not GET or HEAD, the day-state counters (by state alone, over one window) and
+/// the day list's date cursor.
+mod v1_api {
+    use super::*;
+    use actix_web::{
+        dev::ServiceResponse,
+        http::{Method, StatusCode},
+        test::{call_service, init_service, read_body_json, TestRequest},
+        web, App,
+    };
+    use serde_json::{json, Value};
+
+    macro_rules! app {
+        ($harness:expr) => {
+            init_service(
+                App::new()
+                    .app_data(web::Data::from($harness.records.clone()))
+                    .configure(crate::games::records_api::configure_records_routes),
+            )
+            .await
+        };
+    }
+
+    fn header(response: &ServiceResponse, name: &str) -> Option<String> {
+        response
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string)
+    }
+
+    fn close(harness: &Harness, days: &[&str]) {
+        for day in days {
+            harness
+                .records
+                .store()
+                .close_registry_day(day, harness.records.now())
+                .unwrap();
+        }
+    }
+
+    #[actix_web::test]
+    async fn v1_responses_carry_the_envelope_headers_and_an_id() {
+        let h = harness(Options::default());
+        let app = app!(h);
+        let response = call_service(
+            &app,
+            TestRequest::get()
+                .uri("/api/records/v1/status")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(header(&response, "cache-control").as_deref(), Some("no-store"));
+        assert_eq!(header(&response, "etag"), None, "this phase never emits a validator");
+        let id = header(&response, "x-request-id").expect("an id on every response");
+        assert_eq!(id.len(), 32, "a generated id is 32 hex characters: {id}");
+        let body: Value = read_body_json(response).await;
+        assert_eq!(body["success"], json!(true));
+        assert_eq!(body["schema_version"], json!(1));
+        assert_eq!(body["served_chain_ids"], json!([3]));
+        assert_eq!(body["request_id"], json!(id));
+        assert!(body["as_of"].as_str().unwrap().ends_with('Z'));
+        assert_eq!(body["service"]["accepting"], json!(true));
+    }
+
+    #[actix_web::test]
+    async fn a_client_request_id_is_echoed_only_when_it_is_well_formed() {
+        let h = harness(Options::default());
+        let app = app!(h);
+        let echoed = "client-supplied-1234";
+        let response = call_service(
+            &app,
+            TestRequest::get()
+                .uri("/api/records/v1/status")
+                .insert_header(("X-Request-Id", echoed))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(header(&response, "x-request-id").as_deref(), Some(echoed));
+
+        let response = call_service(
+            &app,
+            TestRequest::get()
+                .uri("/api/records/v1/status")
+                .insert_header(("X-Request-Id", "not an id"))
+                .to_request(),
+        )
+        .await;
+        let replaced = header(&response, "x-request-id").unwrap();
+        assert_ne!(replaced, "not an id");
+        assert_eq!(replaced.len(), 32);
+    }
+
+    #[actix_web::test]
+    async fn an_unserved_chain_is_404_and_never_a_fallback() {
+        let h = harness(Options::default());
+        let app = app!(h);
+        let response = call_service(
+            &app,
+            TestRequest::get()
+                .uri("/api/records/v1/chains/9/status")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body: Value = read_body_json(response).await;
+        assert_eq!(body["error"]["code"], json!("unknown_chain"));
+        assert_eq!(body["error"]["retryable"], json!(false));
+
+        let response = call_service(
+            &app,
+            TestRequest::get()
+                .uri("/api/records/v1/chains/3/status")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = read_body_json(response).await;
+        assert_eq!(body["chain_id"], json!(3));
+        assert_eq!(body["window"]["days_total"], json!(0));
+        assert_eq!(body["commitment"]["days_anchored"], json!(0));
+        assert_eq!(
+            body["commitment"]["confirmation"]["finality_checked"],
+            json!(false)
+        );
+        assert_eq!(
+            body["commitment"]["confirmation"]["scanned_anchors"],
+            json!(150)
+        );
+    }
+
+    #[actix_web::test]
+    async fn no_method_other_than_get_or_head_is_served() {
+        let h = harness(Options::default());
+        let app = app!(h);
+        for method in [
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::PATCH,
+            Method::OPTIONS,
+        ] {
+            let response = call_service(
+                &app,
+                TestRequest::default()
+                    .method(method.clone())
+                    .uri("/api/records/v1/status")
+                    .to_request(),
+            )
+            .await;
+            assert_eq!(
+                response.status(),
+                StatusCode::NOT_FOUND,
+                "{method} must be 404, not actix's 405"
+            );
+            assert_eq!(
+                header(&response, "cache-control").as_deref(),
+                Some("no-store"),
+                "{method}"
+            );
+            let body: Value = read_body_json(response).await;
+            assert_eq!(body["error"]["code"], json!("not_found"), "{method}");
+        }
+        let response = call_service(
+            &app,
+            TestRequest::default()
+                .method(Method::HEAD)
+                .uri("/api/records/v1/status")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(header(&response, "x-request-id").is_some());
+    }
+
+    #[actix_web::test]
+    async fn the_day_list_is_newest_first_and_cursor_bounded() {
+        let h = harness(Options::default());
+        close(&h, &["2026-11-13", "2026-11-14", "2026-11-15"]);
+        let app = app!(h);
+        let response = call_service(
+            &app,
+            TestRequest::get()
+                .uri("/api/records/v1/chains/3/days?limit=2")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = read_body_json(response).await;
+        assert_eq!(body["days"].as_array().unwrap().len(), 2);
+        assert_eq!(body["days"][0]["date"], json!("2026-11-15"));
+        assert_eq!(body["days"][1]["date"], json!("2026-11-14"));
+        assert_eq!(body["has_more"], json!(true));
+        assert_eq!(body["next_before"], json!("2026-11-14"));
+
+        let response = call_service(
+            &app,
+            TestRequest::get()
+                .uri("/api/records/v1/chains/3/days?limit=2&before=2026-11-14")
+                .to_request(),
+        )
+        .await;
+        let body: Value = read_body_json(response).await;
+        assert_eq!(body["days"].as_array().unwrap().len(), 1);
+        assert_eq!(body["days"][0]["date"], json!("2026-11-13"));
+        assert_eq!(body["has_more"], json!(false));
+        assert_eq!(body["next_before"], Value::Null);
+
+        for query in ["limit=0", "limit=101", "before=16-11-2026"] {
+            let uri = format!("/api/records/v1/chains/3/days?{query}");
+            let response = call_service(&app, TestRequest::get().uri(&uri).to_request()).await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
+            let body: Value = read_body_json(response).await;
+            assert_eq!(body["error"]["code"], json!("invalid_request"), "{query}");
+        }
+    }
+
+    #[actix_web::test]
+    async fn counters_count_by_state_alone_and_keep_the_invariant() {
+        let h = harness(Options::default());
+        close(&h, &["2026-11-13", "2026-11-14", "2026-11-15"]);
+        let tx = "a".repeat(64);
+        h.records
+            .store()
+            .set_registry_anchor("2026-11-13", Some(&tx), "anchored", h.records.now())
+            .unwrap();
+        h.records
+            .store()
+            .set_registry_anchor("2026-11-14", Some(&tx), "confirmed", h.records.now())
+            .unwrap();
+        let app = app!(h);
+        let uri = "/api/records/v1/chains/3/status";
+        let response = call_service(&app, TestRequest::get().uri(uri).to_request()).await;
+        let before: Value = read_body_json(response).await;
+        let commitment = before["commitment"].clone();
+        assert_eq!(commitment["days_closed"], json!(3));
+        assert_eq!(commitment["days_with_root"], json!(3));
+        assert_eq!(commitment["days_anchored"], json!(2));
+        assert_eq!(commitment["days_pending_anchor"], json!(1));
+        assert_eq!(commitment["days_confirmed"], json!(1));
+        assert_eq!(commitment["latest_anchored_day"], json!("2026-11-14"));
+        assert_eq!(
+            commitment["days_anchored"].as_u64().unwrap(),
+            commitment["days_pending_anchor"].as_u64().unwrap()
+                + commitment["days_confirmed"].as_u64().unwrap(),
+        );
+        assert_eq!(before["window"]["from_day"], json!("2026-11-13"));
+        assert_eq!(before["window"]["to_day"], json!("2026-11-15"));
+        assert_eq!(before["window"]["days_total"], json!(3));
+
+        // A transaction hash on a day that is still `closed` must move no counter: the state is the
+        // only test, never the presence of `anchor_tx`.
+        h.records
+            .store()
+            .set_registry_anchor("2026-11-15", Some(&tx), "closed", h.records.now())
+            .unwrap();
+        let response = call_service(&app, TestRequest::get().uri(uri).to_request()).await;
+        let after: Value = read_body_json(response).await;
+        assert_eq!(after["commitment"], commitment);
+    }
+
+    #[actix_web::test]
+    async fn day_reads_use_the_apps_vocabulary_and_never_expose_games() {
+        let h = harness(Options::default());
+        close(&h, &["2026-11-15"]);
+        let app = app!(h);
+        let response = call_service(
+            &app,
+            TestRequest::get()
+                .uri("/api/records/v1/chains/3/days/2026-11-15")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = read_body_json(response).await;
+        assert_eq!(body["date"], json!("2026-11-15"));
+        assert_eq!(body["state"], json!("closed"));
+        assert_eq!(body["chain_id"], json!(3));
+        assert_eq!(body["apps"], json!([]));
+        assert!(
+            body["games"].is_null(),
+            "the v1 vocabulary has no `games`: {}",
+            body
+        );
+
+        // An unclosed day and an app with no results that day are both 404, never an empty root.
+        let response = call_service(
+            &app,
+            TestRequest::get()
+                .uri("/api/records/v1/chains/3/days/2026-11-16")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let response = call_service(
+            &app,
+            TestRequest::get()
+                .uri("/api/records/v1/chains/3/days/2026-11-15/apps/chess/proof")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body: Value = read_body_json(response).await;
+        assert_eq!(body["error"]["code"], json!("not_found"));
+    }
+}

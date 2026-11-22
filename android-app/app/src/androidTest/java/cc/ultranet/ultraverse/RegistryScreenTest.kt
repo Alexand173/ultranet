@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import cc.ultranet.ultraverse.data.UltraNetOperatorApi
+import cc.ultranet.ultraverse.data.UltraNetRecordsApi
 import cc.ultranet.ultraverse.ui.registry.RegistryScreen
 import cc.ultranet.ultraverse.ui.theme.UltraVerseTheme
 import org.junit.After
@@ -28,13 +29,16 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.thread
 
 /**
- * The Registry screen's promises, against a local fake of the two public ledger routes:
- * it shows chain #2, it shows anchors newest-first, it says "no anchor yet" only when that is true,
- * it reports an unreadable ledger as an error rather than as an empty history, and it reads nothing
- * but the public ledger routes — no Authorization header, no Records endpoint, no wallet.
+ * The Registry screen's promises, against a local fake of the three public read surfaces: the two
+ * ledger routes on the node and the two v1 routes of the Records API.
+ *
+ * It shows chain #2, it shows anchors newest-first, it says "no anchor yet" only when that is true,
+ * it reports an unreadable ledger as an error rather than as an empty history, it keeps the "not
+ * published" wording when the Records API is absent, and it never renders a pending anchor as a
+ * confirmation.
  *
  * The screen is driven directly rather than through `MainActivity`, so no request can escape to a
- * production host: the client is constructed with the fake's loopback base URL.
+ * production host: both clients are constructed with the fake's loopback base URL.
  */
 @RunWith(AndroidJUnit4::class)
 class RegistryScreenTest {
@@ -59,8 +63,16 @@ class RegistryScreenTest {
     }
 
     @Test
-    fun showsChainTwoRegistrationDetailsAndTheRecordsPlaceholder() {
-        server.handler = { target -> if (target.contains("/anchors")) 200 to anchorsBody() else 200 to twoChainLedger(2) }
+    fun showsChainTwoRegistrationDetailsAndThePublishedRecords() {
+        server.handler = { target ->
+            when {
+                target.startsWith("/api/records/v1/chains/2/status") -> 200 to chainStatusBody()
+                target.startsWith("/api/records/v1/chains/2/days") ->
+                    200 to daysBody("2026-11-21" to "closed", "2026-11-20" to "closed")
+                target.contains("/anchors") -> 200 to anchorsBody()
+                else -> 200 to twoChainLedger(2)
+            }
+        }
         startScreen()
 
         compose.onNodeWithTag("registry-chain-name").assertTextEquals("Registry")
@@ -77,9 +89,13 @@ class RegistryScreenTest {
         compose.onNodeWithContentDescription("Copy owner address").assertExists()
         compose.onNodeWithContentDescription("Copy registration transaction").assertExists()
 
+        // The published service is read, not guessed at.
         scrollTo("registry-service-status")
-        compose.onNodeWithTag("registry-service-status").assertTextEquals("Not published by a public endpoint.")
-        compose.onNodeWithTag("registry-daily-records").assertTextEquals("Not published by a public endpoint.")
+        compose.onNodeWithTag("registry-service-status").assertTextEquals("Accepting and anchoring")
+        compose.onNodeWithTag("registry-daily-records").assertTextEquals("2 closed, last 2026-11-21")
+        scrollTo("registry-days-confirmed")
+        compose.onNodeWithTag("registry-days-confirmed").assertTextEquals("0")
+        compose.onNodeWithTag("registry-days-pending").assertTextEquals("0")
     }
 
     @Test
@@ -135,7 +151,7 @@ class RegistryScreenTest {
     }
 
     @Test
-    fun readsOnlyPublicLedgerRoutesWithoutAuthorization() {
+    fun readsOnlyPublicReadRoutesWithoutAuthorization() {
         server.handler = { target -> if (target.contains("/anchors")) 200 to anchorsBody() else 200 to twoChainLedger(0) }
         startScreen()
 
@@ -146,10 +162,10 @@ class RegistryScreenTest {
                 request.headers.contains("Authorization", ignoreCase = true),
             )
             assertTrue(
-                "only the public ledger routes are read: ${request.target}",
-                request.target.startsWith("/api/appchain/ledger"),
+                "only the public read surfaces are addressed: ${request.target}",
+                request.target.startsWith("/api/appchain/ledger") ||
+                    request.target.startsWith("/api/records/v1/"),
             )
-            assertFalse("the Records service is never called: ${request.target}", request.target.contains("/api/records"))
             assertFalse("no internal route is called: ${request.target}", request.target.contains("/internal"))
             assertFalse("no private port is addressed: ${request.target}", request.target.contains("8096"))
         }
@@ -168,15 +184,97 @@ class RegistryScreenTest {
         compose.onNodeWithTag("registry-chain-name").assertTextEquals("Registry")
     }
 
+    @Test
+    fun anUnpublishedRecordsApiKeepsThePlaceholderAndSaysWhy() {
+        server.handler = { target ->
+            when {
+                target.startsWith("/api/records/v1") -> 404 to
+                    """{"success":false,"error":{"code":"unknown_chain","message":"no records are served for that chain"}}"""
+                target.contains("/anchors") -> 200 to anchorsBody()
+                else -> 200 to twoChainLedger(0)
+            }
+        }
+        startScreen()
+
+        scrollTo("registry-service-status")
+        compose.onNodeWithTag("registry-service-status")
+            .assertTextEquals("Not published by a public endpoint.")
+        compose.onNodeWithTag("registry-daily-records")
+            .assertTextEquals("Not published by a public endpoint.")
+        // A 404 is never rendered as "there are no days".
+        compose.onNodeWithText("No day has been closed yet").assertDoesNotExist()
+    }
+
+    @Test
+    fun aRestoreHoldIsShownAsPausedAndKeepsThePublishedDays() {
+        server.handler = { target ->
+            when {
+                target.startsWith("/api/records/v1/chains/2/status") -> 200 to chainStatusBody(held = true)
+                target.startsWith("/api/records/v1/chains/2/days") ->
+                    200 to daysBody("2026-11-21" to "closed")
+                target.contains("/anchors") -> 200 to anchorsBody()
+                else -> 200 to twoChainLedger(0)
+            }
+        }
+        startScreen()
+
+        scrollTo("registry-service-status")
+        compose.onNodeWithTag("registry-service-status")
+            .assertTextEquals("Restore hold in place, anchoring paused")
+        // Held means anchoring is paused, not that the stored commitments vanished.
+        scrollTo("registry-day-2026-11-21")
+        compose.onNodeWithTag("registry-day-2026-11-21").assertExists()
+    }
+
+    @Test
+    fun anAnchoredDayReadsAsPendingAndOnlyAConfirmedOneReadsAsConfirmed() {
+        server.handler = { target ->
+            when {
+                target.startsWith("/api/records/v1/chains/2/status") -> 200 to chainStatusBody(
+                    daysAnchored = 2,
+                    daysConfirmed = 1,
+                    daysPending = 1,
+                    latestAnchored = "2026-11-20",
+                )
+                target.startsWith("/api/records/v1/chains/2/days") ->
+                    200 to daysBody("2026-11-21" to "anchored", "2026-11-20" to "confirmed")
+                target.contains("/anchors") -> 200 to anchorsBody()
+                else -> 200 to twoChainLedger(0)
+            }
+        }
+        startScreen()
+
+        scrollTo("registry-day-state-2026-11-21")
+        // The freeze that matters: a submitted-but-unmined anchor is not a confirmation.
+        compose.onNodeWithTag("registry-day-state-2026-11-21")
+            .assertTextEquals("Submitted, awaiting inclusion")
+        scrollTo("registry-day-state-2026-11-20")
+        compose.onNodeWithTag("registry-day-state-2026-11-20")
+            .assertTextEquals("Confirmed in the L1 anchor index")
+
+        scrollTo("registry-days-confirmed")
+        compose.onNodeWithTag("registry-days-confirmed").assertTextEquals("1")
+        compose.onNodeWithTag("registry-days-pending").assertTextEquals("1")
+        compose.onNodeWithTag("registry-latest-anchored-day").assertTextEquals("2026-11-20")
+    }
+
     private fun startScreen(expectSummary: Boolean = true) {
         val api = UltraNetOperatorApi(
             baseUrl = server.baseUrl,
             connectTimeoutMillis = 3_000,
             readTimeoutMillis = 3_000,
         )
+        // Same fake, different prefix: the Records client is loopback-only for the test and cannot
+        // reach a production host.
+        val records = UltraNetRecordsApi(
+            baseUrl = server.baseUrl + "/api/records/v1",
+            connectTimeoutMillis = 3_000,
+            readTimeoutMillis = 3_000,
+            allowHttpForTests = true,
+        )
         compose.setContent {
             UltraVerseTheme(darkTheme = true) {
-                RegistryScreen(onBack = {}, api = api)
+                RegistryScreen(onBack = {}, api = api, records = records)
             }
         }
         if (expectSummary) awaitChainSummary() else awaitTag("registry-error")
@@ -287,6 +385,35 @@ private fun anchorsBody(vararg records: Anchor): String =
             """"tx_hash":"${"cc".repeat(32)}","block_index":${record.block},""" +
             """"block_timestamp":${1_700_000_000L + record.sequence}}"""
     }}]}"""
+
+/** A per-chain status body; the counters are the caller's, so each test states its own shape. */
+private fun chainStatusBody(
+    held: Boolean = false,
+    daysClosed: Long = 2,
+    daysAnchored: Long = 0,
+    daysConfirmed: Long = 0,
+    daysPending: Long = 0,
+    latestAnchored: String? = null,
+): String {
+    val anchored = latestAnchored?.let { "\"$it\"" } ?: "null"
+    return """{"success":true,"schema_version":1,"as_of":"2026-11-22T10:48:30Z",""" +
+        """"request_id":"test","chain_id":2,"accepting":true,"anchoring":true,"held":$held,""" +
+        """"today":"2026-11-22","last_closed_day":"2026-11-21",""" +
+        """"window":{"from_day":"2026-11-15","to_day":"2026-11-21","days_total":$daysClosed},""" +
+        """"commitment":{"days_closed":$daysClosed,"days_with_root":$daysClosed,""" +
+        """"days_confirmed":$daysConfirmed,"days_anchored":$daysAnchored,""" +
+        """"days_pending_anchor":$daysPending,"latest_anchored_day":$anchored,""" +
+        """"confirmation":{"source":"l1_anchor_index","finality_checked":false,"scanned_anchors":150}},""" +
+        """"stale":false,"days_behind":1}"""
+}
+
+/** date to state, newest first, exactly as the route answers. */
+private fun daysBody(vararg days: Pair<String, String>): String =
+    """{"success":true,"schema_version":1,"chain_id":2,"limit":5,"days":[""" +
+        days.joinToString(",") { (date, state) ->
+            """{"date":"$date","day_root":"${"ab".repeat(32)}","merkle_root":"${"cd".repeat(32)}",""" +
+                """"state":"$state","anchor_tx":null,"app_count":0}"""
+        } + """],"next_before":null,"has_more":false}"""
 
 private data class RecordedRequest(val target: String, val headers: String)
 

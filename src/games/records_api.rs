@@ -63,6 +63,8 @@ pub fn configure_records_routes(config: &mut web::ServiceConfig) {
         .route("/api/apps/{id}", web::get().to(apps_get))
         .route("/api/apps/{id}/rotate-key", web::post().to(registry_rotate_generic))
         .route("/api/apps/{id}/proof/{date}", web::get().to(apps_proof));
+    // The versioned public read API. Additive: it renames nothing and changes no route above.
+    config.configure(super::records_v1::configure_v1_routes);
 }
 
 pub async fn run_records_server(
