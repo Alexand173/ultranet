@@ -82,6 +82,13 @@ dependencies {
     // Profile screen can draw the code without a second scanner dependency.
     implementation(libs.zxing.core)
 
+    // JVM tests for the logic that has no business needing a device: payload admission, node
+    // address validation, and the idle-session policy.
+    testImplementation("junit:junit:4.13.2")
+    // Android's org.json is a throwaway stub on the JVM; a real implementation lets the prepared
+    // payload parser be tested as written instead of around the stub.
+    testImplementation("org.json:json:20240303")
+
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -29,6 +30,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -37,8 +40,11 @@ import cc.ultranet.ultraverse.data.AppChainAnchorRecord
 import cc.ultranet.ultraverse.data.AppChainLedger
 import cc.ultranet.ultraverse.data.AppChainLedgerChain
 import cc.ultranet.ultraverse.data.AppChainOutcome
+import cc.ultranet.ultraverse.data.NodeEndpoint
+import cc.ultranet.ultraverse.data.NodeEndpointStore
 import cc.ultranet.ultraverse.data.UltraNetOperatorApi
 import cc.ultranet.ultraverse.wallet.AppChainSigner
+import cc.ultranet.ultraverse.wallet.PreparedAnchorIntake
 import cc.ultranet.ultraverse.ui.theme.UltraVerseColors
 import cc.ultranet.ultraverse.ui.tool.ToolActionRow
 import cc.ultranet.ultraverse.ui.tool.ToolFact
@@ -71,7 +77,13 @@ internal fun AppChainsScreen(
     onAnchor: suspend (Int, String) -> AppChainOutcome,
     onTransfer: suspend (Int, String) -> AppChainOutcome,
 ) {
-    val api = remember { UltraNetOperatorApi() }
+    val context = LocalContext.current
+    val endpointStore = remember(context) { NodeEndpointStore(context.applicationContext) }
+    // The node is a setting, not a constant (D-5D): a developer points the app at their own node or
+    // gateway, and the ledger, terms and submissions all follow that choice.
+    var nodeEndpoint by remember { mutableStateOf(endpointStore.load()) }
+    var endpointSheetOpen by remember { mutableStateOf(false) }
+    val api = remember(nodeEndpoint) { UltraNetOperatorApi(baseUrl = nodeEndpoint) }
     val scope = rememberCoroutineScope()
 
     var ledger by remember { mutableStateOf<AppChainLedger?>(null) }
@@ -82,7 +94,13 @@ internal fun AppChainsScreen(
     var anchorTarget by remember { mutableStateOf<AppChainLedgerChain?>(null) }
     var transferTarget by remember { mutableStateOf<AppChainLedgerChain?>(null) }
     var receipt by remember { mutableStateOf<AppChainOutcome.Accepted?>(null) }
+    // A receipt must name the operation it belongs to. The chain id alone cannot tell an anchor from
+    // a transfer, and a transfer reported as "Anchor submitted" is simply wrong.
+    var receiptTitle by remember { mutableStateOf("Registration submitted") }
     var notice by remember { mutableStateOf<String?>(null) }
+    var intakeOpen by remember { mutableStateOf(false) }
+    // Nothing reaches the signer from here without passing the review screen first.
+    var pendingSignature by remember { mutableStateOf<SignatureRequest?>(null) }
 
     fun load() {
         loading = true
@@ -98,7 +116,8 @@ internal fun AppChainsScreen(
         }
     }
 
-    LaunchedEffect(Unit) { load() }
+    // A different node is a different L1 view, so the ledger is re-read rather than kept.
+    LaunchedEffect(nodeEndpoint) { load() }
 
     val current = ledger?.chains?.firstOrNull { it.id == selectedId }
     if (current != null) {
@@ -122,6 +141,7 @@ internal fun AppChainsScreen(
             loading = loading,
             loadError = loadError,
             receipt = receipt,
+            receiptTitle = receiptTitle,
             notice = notice,
             onBack = onBack,
             onRetry = ::load,
@@ -142,6 +162,21 @@ internal fun AppChainsScreen(
                 }
                 if (notice == null) registering = true
             },
+            nodeEndpoint = nodeEndpoint,
+            onEditNode = { endpointSheetOpen = true },
+            // A prepared request is only worth opening when there is a ledger to check it against.
+            onIntake = {
+                notice = when {
+                    loadError != null ->
+                        "The node's ledger is unreadable, so a prepared request could not be checked against L1."
+
+                    ledger == null -> "Still reading the node's terms. Try again in a moment."
+                    else -> {
+                        intakeOpen = true
+                        null
+                    }
+                }
+            },
             onSelect = { selectedId = it.id },
         )
     }
@@ -152,18 +187,15 @@ internal fun AppChainsScreen(
             walletUnlocked = walletUnlocked,
             feeBaseUnits = ledger?.terms?.registerFeeBaseUnits ?: AppChainSigner.REGISTER_FEE_BASE_UNITS,
             onDismiss = { registering = false },
+            // The sheet collects input; the signature itself is confirmed on the review screen, which
+            // is where the owner sees exactly what the key will cover.
             onSubmit = { name ->
-                val outcome = onRegister(name)
                 registering = false
-                when (outcome) {
-                    is AppChainOutcome.Accepted -> {
-                        receipt = outcome
-                        notice = null
-                        load()
-                    }
-
-                    is AppChainOutcome.Failed -> notice = outcome.message
-                }
+                pendingSignature = SignatureRequest.Register(
+                    name = name,
+                    feeBaseUnits = ledger?.terms?.registerFeeBaseUnits
+                        ?: AppChainSigner.REGISTER_FEE_BASE_UNITS,
+                )
             },
         )
     }
@@ -174,19 +206,12 @@ internal fun AppChainsScreen(
             feeBaseUnits = ledger?.terms?.transferFeeBaseUnits,
             onDismiss = { transferTarget = null },
             onSubmit = { newOwner ->
-                val outcome = onTransfer(chain.id, newOwner)
                 transferTarget = null
-                when (outcome) {
-                    is AppChainOutcome.Accepted -> {
-                        receipt = outcome
-                        notice = null
-                        // The chain is somebody else's now: go back rather than show a stale owner.
-                        selectedId = null
-                        load()
-                    }
-
-                    is AppChainOutcome.Failed -> notice = outcome.message
-                }
+                pendingSignature = SignatureRequest.Transfer(
+                    chain = chain,
+                    newOwner = newOwner.trim().lowercase(),
+                    feeBaseUnits = ledger?.terms?.transferFeeBaseUnits,
+                )
             },
         )
     }
@@ -197,12 +222,72 @@ internal fun AppChainsScreen(
             feeBaseUnits = ledger?.terms?.anchorFeeBaseUnits ?: AppChainSigner.ANCHOR_FEE_BASE_UNITS,
             onDismiss = { anchorTarget = null },
             onSubmit = { root ->
-                val outcome = onAnchor(chain.id, root)
                 anchorTarget = null
+                pendingSignature = SignatureRequest.Anchor(
+                    AnchorApproval(
+                        chain = chain,
+                        // The value displayed and the value signed are the same normalised string.
+                        rootHex = root.trim().removePrefix("0x").removePrefix("0X").lowercase(),
+                        origin = null,
+                        feeBaseUnits = ledger?.terms?.anchorFeeBaseUnits
+                            ?: AppChainSigner.ANCHOR_FEE_BASE_UNITS,
+                    ),
+                )
+            },
+        )
+    }
+
+    if (intakeOpen) {
+        PreparedAnchorSheet(
+            ledger = ledger,
+            walletAddress = walletAddress,
+            onDismiss = { intakeOpen = false },
+            onReady = { approval ->
+                intakeOpen = false
+                pendingSignature = SignatureRequest.Anchor(approval)
+            },
+        )
+    }
+
+    if (endpointSheetOpen) {
+        NodeEndpointSheet(
+            current = nodeEndpoint,
+            store = endpointStore,
+            onDismiss = { endpointSheetOpen = false },
+            onSaved = { saved ->
+                nodeEndpoint = saved
+                endpointSheetOpen = false
+                notice = null
+                receipt = null
+                selectedId = null
+            },
+        )
+    }
+
+    pendingSignature?.let { request ->
+        SignatureReviewSheet(
+            request = request,
+            walletAddress = walletAddress,
+            walletUnlocked = walletUnlocked,
+            onDismiss = { pendingSignature = null },
+            onSign = {
+                val outcome = when (request) {
+                    is SignatureRequest.Register -> onRegister(request.name)
+                    is SignatureRequest.Anchor -> onAnchor(request.approval.chain.id, request.approval.rootHex)
+                    is SignatureRequest.Transfer -> onTransfer(request.chain.id, request.newOwner)
+                }
+                pendingSignature = null
                 when (outcome) {
                     is AppChainOutcome.Accepted -> {
+                        receiptTitle = when (request) {
+                            is SignatureRequest.Register -> "Registration submitted"
+                            is SignatureRequest.Anchor -> "Anchor submitted"
+                            is SignatureRequest.Transfer -> "Transfer submitted"
+                        }
                         receipt = outcome
                         notice = null
+                        // A transfer leaves this wallet unable to anchor: do not sit on a stale detail.
+                        if (request is SignatureRequest.Transfer) selectedId = null
                         load()
                     }
 
@@ -213,6 +298,29 @@ internal fun AppChainsScreen(
     }
 }
 
+/** What the owner is about to sign. Built only from values already shown on a screen. */
+private sealed interface SignatureRequest {
+    data class Register(val name: String, val feeBaseUnits: Long) : SignatureRequest
+    data class Anchor(val approval: AnchorApproval) : SignatureRequest
+    data class Transfer(
+        val chain: AppChainLedgerChain,
+        val newOwner: String,
+        val feeBaseUnits: Long?,
+    ) : SignatureRequest
+}
+
+/**
+ * An anchor this wallet may sign, with the chain resolved from L1 by id and the fee taken from the
+ * node's own terms. [rootHex] is normalised once, here, so the root displayed and the root signed
+ * cannot diverge.
+ */
+private data class AnchorApproval(
+    val chain: AppChainLedgerChain,
+    val rootHex: String,
+    val origin: String?,
+    val feeBaseUnits: Long,
+)
+
 @Composable
 private fun Registry(
     modifier: Modifier = Modifier,
@@ -220,17 +328,23 @@ private fun Registry(
     loading: Boolean,
     loadError: String?,
     receipt: AppChainOutcome.Accepted?,
+    receiptTitle: String,
     notice: String?,
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onOpenWallet: () -> Unit,
     onRegister: () -> Unit,
+    nodeEndpoint: String,
+    onEditNode: () -> Unit,
+    onIntake: () -> Unit,
     onSelect: (AppChainLedgerChain) -> Unit,
 ) {
     Column(modifier = modifier.fillMaxSize().background(UltraVerseColors.background)) {
         ToolTopBar(title = "AppChains", subtitle = "Registered on L1", onBack = onBack, action = { ToolBalanceAction() })
         LazyColumn(modifier = Modifier.weight(1f)) {
             item {
+                Spacer(Modifier.height(8.dp))
+                NodeStrip(endpoint = nodeEndpoint, onChange = onEditNode)
                 TermsStrip(ledger)
                 Spacer(Modifier.height(4.dp))
                 ToolActionRow(
@@ -238,6 +352,14 @@ private fun Registry(
                     description = "Signed by your wallet. The signing address becomes the owner.",
                     icon = Icons.Outlined.Add,
                     onClick = onRegister,
+                    modifier = Modifier.testTag("appchain-register"),
+                )
+                ToolActionRow(
+                    title = "Anchoring request",
+                    description = "Paste a root your own backend prepared, review it, then sign it here.",
+                    icon = Icons.Outlined.ContentPaste,
+                    onClick = onIntake,
+                    modifier = Modifier.testTag("appchain-intake"),
                 )
                 notice?.let {
                     Spacer(Modifier.height(8.dp))
@@ -248,7 +370,7 @@ private fun Registry(
                 receipt?.let {
                     Spacer(Modifier.height(8.dp))
                     Column(Modifier.padding(horizontal = 16.dp)) {
-                        ReceiptCard(it)
+                        ReceiptCard(it, receiptTitle)
                     }
                 }
                 Spacer(Modifier.height(10.dp))
@@ -335,7 +457,7 @@ private fun Metric(value: String, label: String) {
 
 /** Acceptance is not confirmation: the transaction is in the mempool, the chain does not exist yet. */
 @Composable
-private fun ReceiptCard(receipt: AppChainOutcome.Accepted) {
+private fun ReceiptCard(receipt: AppChainOutcome.Accepted, title: String) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -343,7 +465,7 @@ private fun ReceiptCard(receipt: AppChainOutcome.Accepted) {
             .padding(14.dp),
     ) {
         Text(
-            text = if (receipt.chainId == null) "Registration submitted" else "Anchor submitted",
+            text = title,
             color = UltraVerseColors.ink,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
@@ -371,6 +493,7 @@ private fun ChainRow(chain: AppChainLedgerChain, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .testTag("appchain-chain-${chain.id}")
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
@@ -504,7 +627,10 @@ private fun ChainDetail(
                         label = "Anchor state root — ${formatUltra(anchorFeeBaseUnits)} \$ULTRA",
                         onClick = onAnchor,
                     )
-                    TextButton(onClick = onTransfer, modifier = Modifier.fillMaxWidth()) {
+                    TextButton(
+                        onClick = onTransfer,
+                        modifier = Modifier.fillMaxWidth().testTag("appchain-transfer"),
+                    ) {
                         Text("Transfer ownership", color = UltraVerseColors.muted, fontSize = 12.sp)
                     }
                 }
@@ -589,6 +715,7 @@ private fun RegisterSheet(
                 placeholder = "UltraNet Grid",
                 isError = error != null,
                 supporting = error ?: "1 to ${AppChainSigner.NAME_MAX_LENGTH} characters: letters, numbers, spaces, - and _.",
+                testTag = "appchain-name",
             )
             Spacer(Modifier.height(12.dp))
             ToolFact("Registration fee", "${formatUltra(feeBaseUnits)} \$ULTRA")
@@ -641,7 +768,8 @@ private fun AnchorSheet(
         containerColor = UltraVerseColors.surface,
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
-            Text("Anchor ${chain.name}", color = UltraVerseColors.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            // The id leads: two chains may share a display name, and the id is what the signature covers.
+            Text("Anchor #${chain.id}", color = UltraVerseColors.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(6.dp))
             Text(
                 text = "You publish a 32-byte state root. The L1 records it; it does not judge it. " +
@@ -706,7 +834,7 @@ private fun TransferSheet(
         containerColor = UltraVerseColors.surface,
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
-            Text("Transfer ${chain.name}", color = UltraVerseColors.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("Transfer #${chain.id}", color = UltraVerseColors.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(6.dp))
             Text(
                 text = "The new owner's address is part of what you sign. Once the block lands, only that " +
@@ -724,6 +852,7 @@ private fun TransferSheet(
                 placeholder = "64 hexadecimal characters",
                 isError = error != null,
                 supporting = error ?: "The wallet that will own this chain from the next block.",
+                testTag = "appchain-new-owner",
             )
             Spacer(Modifier.height(12.dp))
             ToolFact("Chain", "#${chain.id} — ${chain.name}")
@@ -746,6 +875,269 @@ private fun TransferSheet(
                     }
                 },
             )
+        }
+    }
+}
+
+/**
+ * Which node this app reads. Not decoration: a chain registered on one node does not exist on
+ * another, so the address is shown before the ledger rather than buried in a settings menu.
+ */
+@Composable
+private fun NodeStrip(endpoint: String, onChange: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .clickable(onClick = onChange)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "NODE",
+                color = UltraVerseColors.dim,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = NodeEndpoint.label(endpoint),
+                color = UltraVerseColors.muted,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+        Text("Change", color = UltraVerseColors.cyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NodeEndpointSheet(
+    current: String,
+    store: NodeEndpointStore,
+    onDismiss: () -> Unit,
+    onSaved: (String) -> Unit,
+) {
+    var value by remember { mutableStateOf(current) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = UltraVerseColors.surface,
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+            Text("Node address", color = UltraVerseColors.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "The L1 node this app reads and submits to. If you run your own node or gateway, " +
+                    "point the app here: the registry, the terms and every signed submission follow it.",
+                color = UltraVerseColors.muted,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+            )
+            Spacer(Modifier.height(14.dp))
+            ToolTextField(
+                label = "Base address",
+                value = value,
+                onValueChange = { value = it; error = null },
+                placeholder = NodeEndpoint.DEFAULT,
+                isError = error != null,
+                supporting = error ?: "https:// only, unless the node is this device or localhost.",
+            )
+            Spacer(Modifier.height(12.dp))
+            ToolFact("Default", NodeEndpoint.DEFAULT)
+            ToolFact("Currently reading", NodeEndpoint.label(current))
+            Spacer(Modifier.height(14.dp))
+            ToolPrimaryAction(
+                label = "Save address",
+                onClick = {
+                    when (val verdict = store.save(value)) {
+                        is NodeEndpoint.Verdict.Rejected -> error = verdict.reason
+                        is NodeEndpoint.Verdict.Accepted -> onSaved(verdict.baseUrl)
+                    }
+                },
+            )
+            TextButton(
+                onClick = { value = NodeEndpoint.DEFAULT; error = null },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Reset to the default node", color = UltraVerseColors.muted, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+/**
+ * A-2 intake: a root prepared elsewhere, checked against L1 before it is offered for signature.
+ * Nothing here decides authority — [PreparedAnchorIntake.evaluate] reads the owner from the ledger
+ * and refuses when this wallet is not it.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PreparedAnchorSheet(
+    ledger: AppChainLedger?,
+    walletAddress: String?,
+    onDismiss: () -> Unit,
+    onReady: (AnchorApproval) -> Unit,
+) {
+    var payload by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = UltraVerseColors.surface,
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+            Text(
+                text = "Anchoring request",
+                color = UltraVerseColors.ink,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Paste the request your AppChain's backend generated. It names a chain by id and " +
+                    "the state root to publish; this app re-reads that chain's owner from L1 before it " +
+                    "offers you a signature.",
+                color = UltraVerseColors.muted,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+            )
+            Spacer(Modifier.height(14.dp))
+            ToolTextField(
+                label = "Payload",
+                value = payload,
+                onValueChange = { payload = it; error = null },
+                placeholder = "{\"type\":\"ultranet/appchain-anchor\",\"chain_id\":3,\"state_root\":\"…\"}",
+                isError = error != null,
+                supporting = error ?: "JSON, exactly as your backend produced it.",
+                testTag = "appchain-payload",
+            )
+            Spacer(Modifier.height(14.dp))
+            ToolPrimaryAction(
+                label = "Check request",
+                enabled = payload.isNotBlank(),
+                modifier = Modifier.testTag("appchain-check"),
+                onClick = {
+                    when (val parsed = PreparedAnchorIntake.parse(payload)) {
+                        is PreparedAnchorIntake.Parse.Refused -> error = parsed.reason
+                        is PreparedAnchorIntake.Parse.Parsed -> {
+                            when (val verdict = PreparedAnchorIntake.evaluate(parsed.payload, ledger, walletAddress)) {
+                                is PreparedAnchorIntake.Verdict.Refused -> error = verdict.reason
+                                is PreparedAnchorIntake.Verdict.Ready -> onReady(
+                                    AnchorApproval(
+                                        chain = verdict.chain,
+                                        rootHex = verdict.payload.stateRootHex,
+                                        origin = verdict.payload.origin,
+                                        feeBaseUnits = verdict.feeBaseUnits,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                },
+            )
+        }
+    }
+}
+
+/**
+ * The last screen before the key is used. It exists because every AppChain operation used to be
+ * signed straight from its input sheet, so the owner never saw the whole transaction in one place.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SignatureReviewSheet(
+    request: SignatureRequest,
+    walletAddress: String?,
+    walletUnlocked: Boolean,
+    onDismiss: () -> Unit,
+    onSign: suspend () -> Unit,
+) {
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = UltraVerseColors.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("appchain-review")
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            Text("Review and sign", color = UltraVerseColors.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "These are the fields the signature will cover. The node rejects anything it does " +
+                    "not match, so a mistake is still visible here.",
+                color = UltraVerseColors.muted,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+            )
+            Spacer(Modifier.height(14.dp))
+            when (request) {
+                is SignatureRequest.Register -> {
+                    ToolFact("Operation", "Register a new AppChain")
+                    ToolFact("Name", request.name)
+                    ToolFact("Owner after registration", walletAddress?.let(::shortAddress) ?: "No wallet")
+                    ToolFact("Chain id", "Assigned by L1 when the block lands")
+                    ToolFact("Fee", "${formatUltra(request.feeBaseUnits)} \$ULTRA")
+                }
+
+                is SignatureRequest.Anchor -> {
+                    ToolFact("Operation", "Anchor a state root")
+                    ToolFact("Chain", "#${request.approval.chain.id}")
+                    ToolFact("Name", request.approval.chain.name)
+                    ToolFact("Chain owner", shortAddress(request.approval.chain.owner))
+                    ToolFact("State root", request.approval.rootHex)
+                    request.approval.origin?.let { ToolFact("Prepared by", it) }
+                    ToolFact("Fee", "${formatUltra(request.approval.feeBaseUnits)} \$ULTRA")
+                }
+
+                is SignatureRequest.Transfer -> {
+                    ToolFact("Operation", "Transfer ownership")
+                    ToolFact("Chain", "#${request.chain.id}")
+                    ToolFact("Name", request.chain.name)
+                    ToolFact("From", shortAddress(request.chain.owner))
+                    ToolFact("To", request.newOwner)
+                    ToolFact("After signing", "This wallet can no longer anchor #${request.chain.id}")
+                    ToolFact("Fee", request.feeBaseUnits?.let { "${formatUltra(it)} \$ULTRA" } ?: "—")
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            ToolFact("Signing address", walletAddress?.let(::shortAddress) ?: "No wallet on this device")
+            Spacer(Modifier.height(14.dp))
+            ToolPrimaryAction(
+                label = "Sign & submit",
+                busy = busy,
+                enabled = walletUnlocked && walletAddress != null,
+                modifier = Modifier.testTag("appchain-sign"),
+                onClick = {
+                    busy = true
+                    scope.launch {
+                        try {
+                            onSign()
+                        } finally {
+                            busy = false
+                        }
+                    }
+                },
+            )
+            if (!walletUnlocked) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Unlock the wallet to sign this transaction.",
+                    color = UltraVerseColors.muted,
+                    fontSize = 11.sp,
+                )
+            }
         }
     }
 }

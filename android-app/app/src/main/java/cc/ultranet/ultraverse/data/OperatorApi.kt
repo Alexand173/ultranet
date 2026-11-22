@@ -30,19 +30,19 @@ internal class UltraNetOperatorApi(
     private val baseUrl: String = API_BASE_URL,
     private val connectTimeoutMillis: Int = 12_000,
     private val readTimeoutMillis: Int = 60_000,
-) {
+) : AppChainGateway {
     /**
      * The AppChain ledger as consensus sees it, plus the node's live terms. Public: the registry is
      * a public fact on L1, and the terms carry the activation height, which is the only honest way
      * to know whether this node accepts AppChain transactions at all.
      */
-    suspend fun appChainLedger(): AppChainLedger = parseLedger(get("/api/appchain/ledger"))
+    override suspend fun appChainLedger(): AppChainLedger = parseLedger(get("/api/appchain/ledger"))
 
     /**
      * Owner-signed anchors for one chain, ordered by sequence. [from] is the first sequence wanted
      * (1-based): without it a long-lived chain would only ever show its oldest anchors.
      */
-    suspend fun appChainAnchors(chainId: Int, limit: Int = 50, from: Long = 1): List<AppChainAnchorRecord> {
+    override suspend fun appChainAnchors(chainId: Int, limit: Int, from: Long): List<AppChainAnchorRecord> {
         val payload = get("/api/appchain/ledger/$chainId/anchors?from=${from.coerceAtLeast(1)}&limit=$limit")
         return payload.optJSONArray("anchors").orEmpty().mapObjects { row ->
             AppChainAnchorRecord(
@@ -60,7 +60,7 @@ internal class UltraNetOperatorApi(
      * Submits an owner-signed AppChain transaction. No admin token: the Dilithium signature over the
      * version-5 envelope is the authorization, and the node gates the rest on its activation height.
      */
-    suspend fun submitAppChain(tx: SignedAppChainTransaction): AppChainSubmission {
+    override suspend fun submitAppChain(tx: SignedAppChainTransaction): AppChainSubmission {
         val operation = JSONObject()
         when (val signed = tx.operation) {
             is AppChainOperation.Register ->
@@ -333,7 +333,12 @@ internal class UltraNetOperatorApi(
         (0 until length()).mapNotNull { index -> optString(index).takeIf { it.isNotBlank() } }
 
     companion object {
-        private const val API_BASE_URL = "https://api.ultranetwork.cc"
+        /**
+         * The default is a convenience, not a constraint: a developer running their own node or
+         * gateway overrides it through the AppChains screen, and [ConfiguredAppChainGateway] reads
+         * that choice on every call.
+         */
+        private const val API_BASE_URL = NodeEndpoint.DEFAULT
         private const val PROPOSAL_ENVELOPE_VERSION = 2
         private val HASH_PATTERN = Regex("^[0-9a-f]{64}$")
     }

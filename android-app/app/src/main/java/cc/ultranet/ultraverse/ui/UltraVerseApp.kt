@@ -94,6 +94,9 @@ import kotlinx.coroutines.launch
 /** Top-level native destinations. Every supported catalog entry maps to one of these. */
 private enum class HomeSection { Apps, Wallet, Pay, Contacts, Profile, AppChains, Registry, Validator, Mining, Games, Chess, Grid }
 
+/** How often the unlocked-session timer is checked. Cheap next to the socket work around it. */
+private const val IDLE_LOCK_POLL_MILLIS = 30_000L
+
 @Composable
 internal fun UltraVerseApp(
     appearance: AppearanceMode,
@@ -149,6 +152,18 @@ internal fun UltraVerseApp(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+
+    // An unlocked session that is left alone locks itself. Backgrounding is already covered above;
+    // what this bounds is how long a seed stays in memory on a device that was put down mid-screen.
+    LaunchedEffect(controller.state.unlocked) {
+        if (!controller.state.unlocked) return@LaunchedEffect
+        while (controller.state.unlocked) {
+            kotlinx.coroutines.delay(IDLE_LOCK_POLL_MILLIS)
+            controller.lockIfIdle()
+        }
+    }
+    // Navigating is activity: the timer measures abandonment, not typing speed.
+    LaunchedEffect(section, route) { controller.recordInteraction() }
 
     fun openWallet() {
         section = HomeSection.Wallet

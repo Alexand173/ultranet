@@ -4,8 +4,9 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import cc.ultranet.ultraverse.data.AppChainGateway
 import cc.ultranet.ultraverse.data.AppChainOutcome
-import cc.ultranet.ultraverse.data.UltraNetOperatorApi
+import cc.ultranet.ultraverse.data.ConfiguredAppChainGateway
 import cc.ultranet.ultraverse.data.ValidatorProposalPayload
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -18,7 +19,10 @@ import java.util.Locale
 internal class WalletController(
     context: Context,
     private val api: WalletApi = UltraNetWalletApi(),
-    private val appChainApi: UltraNetOperatorApi = UltraNetOperatorApi(),
+    // An interface rather than the concrete client, so the AppChain write path can be driven by a
+    // fake. The default implementation re-reads the configured node on every call, so pointing the
+    // app at another node takes effect without rebuilding this controller.
+    private val appChainApi: AppChainGateway = ConfiguredAppChainGateway(context),
 ) {
     private val appContext = context.applicationContext
     private val store = EncryptedWalletStore(appContext)
@@ -29,6 +33,7 @@ internal class WalletController(
 
     private var activeSeed: ByteArray? = null
     private var operationGeneration: Long = 0
+    private val idleSession = IdleSession()
 
     suspend fun initialize() = runBusy {
         try {
@@ -385,6 +390,7 @@ internal class WalletController(
      */
     private suspend fun signAppChain(operation: AppChainOperation): AppChainOutcome {
         state = state.copy(isBusy = true, error = null)
+        idleSession.record(System.currentTimeMillis())
         try {
             check(activeSeed != null) { "Unlock the local wallet before signing an AppChain transaction." }
             val account = state.account
@@ -474,8 +480,37 @@ internal class WalletController(
         }
     }
 
+    /**
+     * Records that the owner used the wallet. Called on navigation and on every signing path, so an
+     * unlocked session that does nothing for [IdleSession.timeoutMillis] locks itself rather than
+     * holding the seed in memory indefinitely.
+     */
+    fun recordInteraction() {
+        if (state.unlocked) idleSession.record(System.currentTimeMillis())
+    }
+
+    /**
+     * Locks the wallet if it has been unlocked and unused for the idle timeout. Returns true when it
+     * locked, so a caller can tell "still unlocked" from "locked just now".
+     */
+    fun lockIfIdle(nowMillis: Long = System.currentTimeMillis()): Boolean {
+        if (!state.unlocked) {
+            idleSession.clear()
+            return false
+        }
+        if (idleSession.elapsedMillis(nowMillis) == null) {
+            // First poll after unlocking: start the clock rather than reporting an ancient session.
+            idleSession.record(nowMillis)
+            return false
+        }
+        if (!idleSession.shouldLock(nowMillis)) return false
+        lock()
+        return true
+    }
+
     fun lock() {
         operationGeneration++
+        idleSession.clear()
         activeSeed?.fill(0)
         activeSeed = null
         state = state.copy(
