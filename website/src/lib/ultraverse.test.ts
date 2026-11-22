@@ -19,6 +19,21 @@ describe("UltraVerse directory data", () => {
   it("keeps all concepts grouped without turning them into services", () => {
     expect(conceptGroups.flatMap(({ items }) => items)).toHaveLength(12);
   });
+
+  it("describes AppChains as owner-signed, and this site as read-only for anchoring", () => {
+    const appchains = supportedPaths.find(({ id }) => id === "appchains");
+    expect(appchains).toBeDefined();
+    const facts = (appchains?.facts ?? []).join(" ");
+
+    // Identity by id, one L1 owner, signing in the wallet: the model the node actually enforces.
+    expect(facts).toMatch(/chain id/i);
+    expect(facts).toMatch(/owner/i);
+    expect(facts).toMatch(/mobile wallet/i);
+    // The retired claims: a server-side anchor quest, free registration, and a treasury debit.
+    expect(facts).not.toMatch(/state-commitment/);
+    expect(facts).not.toMatch(/registration is free/i);
+    expect(facts).not.toMatch(/funded treasury/i);
+  });
 });
 
 describe("UltraVerse wallet setup links", () => {

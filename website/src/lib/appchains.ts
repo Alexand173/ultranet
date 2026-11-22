@@ -1,8 +1,6 @@
-import { authenticatedFetch } from "@/lib/auth";
 import { API_BASE_URL } from "@/lib/links";
 import { isUltraAddress } from "@/lib/transaction-format";
 import type {
-  AnchorAppChainResult,
   AppChainAnchorAvailability,
   AppChainOverview,
   AppChainOwnerKind,
@@ -40,21 +38,6 @@ interface RawOverviewPayload {
   proof_scheme?: unknown;
   updated_at?: unknown;
   message?: unknown;
-}
-
-interface RawAnchorPayload {
-  success?: unknown;
-  message?: unknown;
-  chain_id?: unknown;
-  anchor_number?: unknown;
-  state_root?: unknown;
-  timestamp?: unknown;
-  anchor_count?: unknown;
-  charged_base_units?: unknown;
-  balance?: unknown;
-  account_address?: unknown;
-  proof_scheme?: unknown;
-  is_test?: unknown;
 }
 
 export class AppChainRequestError extends Error {
@@ -190,41 +173,18 @@ export async function fetchAppChainOverview(signal?: AbortSignal): Promise<AppCh
   return normalizeOverview(await readResponse<RawOverviewPayload>(response, "Unable to read AppChain overview."));
 }
 
-async function submitAnchor(path: string, rejectionMessage: string): Promise<AnchorAppChainResult> {
-  let response: Response;
-  try {
-    response = await authenticatedFetch(path, { method: "POST" });
-  } catch {
-    throw new AppChainRequestError("Unable to reach the UltraNet node.", 0);
-  }
-
-  const payload = await readResponse<RawAnchorPayload>(response, "Unable to anchor the AppChain.");
-  if (payload.success === false || readInteger(payload.chain_id) === null) {
-    throw new AppChainRequestError(readString(payload.message, rejectionMessage), response.status);
-  }
-
-  return {
-    chainId: readInteger(payload.chain_id) as number,
-    anchorNumber: readInteger(payload.anchor_number),
-    stateRoot: typeof payload.state_root === "string" ? payload.state_root : null,
-    timestamp: readInteger(payload.timestamp),
-    anchorCount: readInteger(payload.anchor_count),
-    chargedBaseUnits: readBaseUnits(payload.charged_base_units),
-    balanceBaseUnits: readBaseUnits(payload.balance),
-    accountAddress: typeof payload.account_address === "string" ? payload.account_address : null,
-    proofScheme: readString(payload.proof_scheme, "Unknown server proof scheme"),
-    isTest: payload.is_test === true,
-    message: readString(payload.message, "AppChain anchor completed."),
-  };
-}
-
-export function anchorAppChain(chainId: number): Promise<AnchorAppChainResult> {
-  return submitAnchor(`/api/appchain/${encodeURIComponent(chainId)}/anchor`, "The node rejected the AppChain anchor.");
-}
-
-export function anchorAppChainForTest(chainId: number): Promise<AnchorAppChainResult> {
-  return submitAnchor(`/api/appchain/${encodeURIComponent(chainId)}/anchor/test`, "The node rejected the test anchor.");
-}
+/*
+ * There is deliberately no `anchorAppChain` here.
+ *
+ * Anchoring is an owner-signed version-5 transaction submitted to POST /api/appchain/tx. The
+ * dashboard holds no owner key, and the old server-side path
+ * (`POST /api/appchain/{id}/anchor`) is retired: the node answers it with 410 Gone and tells the
+ * caller to sign instead. Posting it from a button would either fail or, worse, be reported as an
+ * anchor that never happened.
+ *
+ * Reading the registry is all this module does. Anchoring belongs to the UltraNet mobile wallet,
+ * which holds the owner's key; `OwnerAnchorNotice` says so in the UI.
+ */
 
 export function normalizeAppChainOverview(payload: RawOverviewPayload): AppChainOverview {
   return normalizeOverview(payload);

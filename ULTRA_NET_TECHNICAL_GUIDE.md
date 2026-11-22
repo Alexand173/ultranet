@@ -437,7 +437,9 @@ Groth16 (used for ZK privacy and recursion) relies on elliptic-curve pairings, w
 
 ### 11.3 Where It's Used
 
-Every AppChain anchor (`POST /api/appchain/anchor`) is checked via `stark.verify_low_degree()` before being recorded — meaning even Layer-3 chains inherit post-quantum-secure finality from Layer-1.
+An AppChain anchor is an **owner-signed version-5 transaction** submitted to `POST /api/appchain/tx`. It is admitted by the chain owner's Dilithium-5 signature and the ledger's envelope rules, and the node records the root without judging it — the node holds no AppChain key and no longer generates anchors. The former server-side route `POST /api/appchain/{id}/anchor` now answers `410 Gone`.
+
+STARK low-degree verification (`stark.verify_low_degree()`) applies to the zk transfer pipeline described above, not to AppChain anchors.
 
 ---
 
@@ -648,7 +650,7 @@ graph LR
     B --> C[AppChainRuntime::new - isolated Sled DB]
     C --> D[AppChain processes its own txs via Move VM]
     D --> E[Periodic: produce_block generates FHE + recursive-ZK proof]
-    E --> F[POST /api/appchain/anchor]
+    E --> F[POST /api/appchain/tx - owner-signed]
     F --> G[L1 verifies STARK.verify_low_degree]
     G --> H[AnchoredState recorded in anchoring_history]
 ```
@@ -659,7 +661,7 @@ graph LR
 
 ### 18.4 Anchoring Requirements
 
-`anchor_appchain` rejects any request with an empty `proof` field, and only records the anchor after `stark.verify_low_degree()` succeeds — meaning a malicious or buggy AppChain **cannot** corrupt L1 state even if its own internal logic is flawed, since only cryptographically verified state roots are ever persisted.
+`anchor_appchain` admitted a node-generated root and required a STARK proof; it is retired and answers `410 Gone`. Anchoring today is the chain owner's own `anchor { chain_id, state_root }` transaction, signed with the owner key and submitted to `POST /api/appchain/tx`. The node rejects it unless `sender` equals the chain's recorded owner, so a malicious or buggy AppChain **cannot** write to a chain it does not own — but the root it publishes is a claim the L1 records, not a computation the L1 verifies.
 
 ### 18.5 Current Status
 
@@ -745,10 +747,16 @@ Base URL: `http://<host>:8081`
 |GET|`/api/fhe/stats`|Last FHE proving time / gas multiplier|
 |GET|`/api/state/size`|State trie size per shard|
 |POST|`/api/state/prune`|Trigger mark-and-sweep pruning|
+|POST|`/api/appchain/tx`|Owner-signed `register` / `anchor` / `transfer_owner` (version-5 envelope)|
+|GET|`/api/appchain/ledger`|Ledger chains plus the node's terms (fees, activation height)|
+|GET|`/api/appchain/ledger/{chain_id}`|One chain: owner, registration transaction, anchor count|
+|GET|`/api/appchain/ledger/{chain_id}/anchors`|Anchor history, paged by sequence (`from`, `limit`)|
+|GET|`/api/appchain/overview`|Registry and ledger overview used by the dashboard|
 |POST|`/api/appchain/create`|Retired (`410 Gone`); register via `POST /api/appchain/tx`|
-|POST|`/api/appchain/anchor`|Anchor AppChain state to L1|
+|POST|`/api/appchain/anchor`|Retired (`410 Gone`); anchors are owner-signed via `POST /api/appchain/tx`|
+|POST|`/api/appchain/{chain_id}/anchor`, `/{chain_id}/anchor/test`|Retired (`410 Gone`)|
 |GET|`/api/appchain/list`|List active AppChains|
-|GET|`/api/appchain/anchors`|Anchoring history|
+|GET|`/api/appchain/anchors`|Legacy registry anchoring history (read-only)|
 |POST|`/api/governance/propose`|Submit validator proposal|
 |GET|`/api/governance/proposals`|List pending proposals|
 |GET|`/api/manifest`|Protocol manifest (version, ticker, threshold, etc.)|

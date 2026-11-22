@@ -2,23 +2,19 @@
 
 import { Box, CircleDollarSign, Hash, Layers3 } from "lucide-react";
 import { formatAddress, formatTimestamp, formatUltraAmount } from "@/lib/transaction-format";
-import type { AppChainAction, AppChainSummary } from "@/lib/appchains.types";
-import AnchorNowControl from "@/components/appchains/AnchorNowControl";
+import type { AppChainSummary } from "@/lib/appchains.types";
+import OwnerAnchorNotice from "@/components/appchains/OwnerAnchorNotice";
 import TreasuryAddress from "@/components/appchains/TreasuryAddress";
 
 interface AppChainCardProps {
   chain: AppChainSummary;
-  action: AppChainAction;
-  onArm: () => void;
-  onCancel: () => void;
-  onConfirm: () => void;
 }
 
 function valueOrUnavailable(value: string | number | null): string {
   return value === null || value === "" ? "Unavailable" : String(value);
 }
 
-export default function AppChainCard({ chain, action, onArm, onCancel, onConfirm }: AppChainCardProps) {
+export default function AppChainCard({ chain }: AppChainCardProps) {
   const ownerDisplay = chain.ownerKind === "address" ? formatAddress(chain.owner) : chain.owner;
 
   return (
@@ -39,7 +35,7 @@ export default function AppChainCard({ chain, action, onArm, onCancel, onConfirm
           <dd className="mt-2 truncate font-mono text-xs text-platinum/75" title={chain.owner}>{ownerDisplay}</dd>
         </div>
         <div className="min-w-0">
-          <dt className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted"><Hash className="h-3.5 w-3.5 text-cyan-glow/60" aria-hidden="true" /> {chain.source === "ledger" ? "Anchor payer" : "L1 Treasury"}</dt>
+          <dt className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted"><Hash className="h-3.5 w-3.5 text-cyan-glow/60" aria-hidden="true" /> {chain.source === "ledger" ? "Anchor payer" : "Treasury (legacy)"}</dt>
           <dd className="mt-2">
             {chain.source === "ledger"
               ? <span className="font-mono text-[10px] leading-5 text-platinum/50">Owner wallet — this chain has no treasury account.</span>
@@ -74,17 +70,7 @@ export default function AppChainCard({ chain, action, onArm, onCancel, onConfirm
             OWNER_SIGNED // anchors are submitted by the owner signing a version-5 transaction. The node holds no key for this chain.
           </p>
         ) : (
-          <AnchorNowControl
-            chainId={chain.id}
-            availability={chain.anchorAvailability}
-            anchorFeeBaseUnits={chain.anchorFeeBaseUnits}
-            balanceBaseUnits={chain.balanceBaseUnits}
-            controlId={`mobile-${chain.id}`}
-            action={action}
-            onArm={onArm}
-            onCancel={onCancel}
-            onConfirm={onConfirm}
-          />
+          <OwnerAnchorNotice chainId={chain.id} hasTreasury />
         )}
       </div>
     </article>

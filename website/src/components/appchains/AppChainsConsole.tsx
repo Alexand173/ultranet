@@ -4,8 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, LoaderCircle, RotateCcw } from "lucide-react";
 import { fetchAuthSession, logout, type AuthSession } from "@/lib/auth";
-import { anchorAppChain, AppChainRequestError, fetchAppChainOverview } from "@/lib/appchains";
-import type { AppChainAction, AppChainOverview } from "@/lib/appchains.types";
+import { AppChainRequestError, fetchAppChainOverview } from "@/lib/appchains";
+import type { AppChainOverview } from "@/lib/appchains.types";
 import AppChainOverviewView from "@/components/appchains/AppChainOverview";
 import OperatorHeader from "@/components/operator/OperatorHeader";
 
@@ -26,16 +26,12 @@ function CheckingState() {
   return <main id="main-content" tabIndex={-1} className="relative flex min-h-screen items-center justify-center overflow-hidden bg-ink-black px-4 py-10 dot-grid" aria-busy="true" aria-live="polite"><div className="relative flex items-center gap-3 border border-cyan-glow/30 bg-ink-black/90 px-6 py-5 font-mono text-xs uppercase tracking-[0.18em] text-cyan-glow"><LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />SECURITY_CHECK</div></main>;
 }
 
-const idleAction = (): AppChainAction => ({ state: "idle", error: "", result: null });
-
 export default function AppChainsConsole() {
   const [sessionState, setSessionState] = useState<AppChainsSessionState>("checking");
   const [session, setSession] = useState<AuthSession | null>(null);
   const [overview, setOverview] = useState<AppChainOverview | null>(null);
   const [overviewError, setOverviewError] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [notice, setNotice] = useState("");
-  const [anchorActions, setAnchorActions] = useState<Record<number, AppChainAction>>({});
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const overviewController = useRef<AbortController | null>(null);
 
@@ -67,11 +63,6 @@ export default function AppChainsConsole() {
       const nextOverview = await fetchAppChainOverview(controller.signal);
       if (controller.signal.aborted) return;
       setOverview(nextOverview);
-      setAnchorActions((current) => {
-        const next = { ...current };
-        for (const chain of nextOverview.chains) next[chain.id] ??= idleAction();
-        return next;
-      });
     } catch (error) {
       if (controller.signal.aborted) return;
       if (error instanceof AppChainRequestError && error.status === 401) {
@@ -108,25 +99,9 @@ export default function AppChainsConsole() {
     }
   };
 
-  const updateAnchorAction = (chainId: number, update: (current: AppChainAction) => AppChainAction) => {
-    setAnchorActions((current) => ({ ...current, [chainId]: update(current[chainId] ?? idleAction()) }));
-  };
-
-  const handleAnchorArm = (chainId: number) => updateAnchorAction(chainId, (current) => ({ ...current, state: "confirming", error: "", result: null }));
-  const handleAnchorCancel = (chainId: number) => updateAnchorAction(chainId, () => idleAction());
-  const handleAnchorConfirm = async (chainId: number) => {
-    updateAnchorAction(chainId, (current) => ({ ...current, state: "submitting", error: "" }));
-    try {
-      const result = await anchorAppChain(chainId);
-      updateAnchorAction(chainId, () => ({ state: "success", error: "", result }));
-      setNotice(`${result.message} Treasury: ${result.accountAddress ? `${result.accountAddress.slice(0, 10)}…${result.accountAddress.slice(-8)}` : "unavailable"}.`);
-      await refreshOverview();
-    } catch (error) {
-      const status = error instanceof AppChainRequestError ? error.status : 0;
-      if (status === 401) setSessionState("expired");
-      updateAnchorAction(chainId, (current) => ({ ...current, state: status === 400 ? "rejected" : "unavailable", error: error instanceof Error ? error.message : "Unable to anchor the AppChain." }));
-    }
-  };
+  // There is no anchor action here, and that is the design: anchoring is the owner's own signed
+  // transaction from the mobile wallet. The retired server route answered 410, so a button that
+  // called it could only fail — or lie.
 
   if (sessionState === "checking") return <CheckingState />;
   if (sessionState !== "authenticated" || !session) return <AccessState state={sessionState === "authenticated" ? "unavailable" : sessionState} onRetry={() => void checkSession()} />;
@@ -136,9 +111,8 @@ export default function AppChainsConsole() {
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_70%_20%,rgba(15,255,255,0.06),transparent_38%)]" />
       <div className="relative mx-auto max-w-7xl space-y-7 pt-2">
         <OperatorHeader session={session} isLoggingOut={isLoggingOut} onLogout={() => void handleLogout()} />
-        {notice && <div className="border border-emerald-300/25 bg-emerald-300/[0.06] px-4 py-3 font-mono text-xs text-emerald-100/80" role="status" aria-live="polite">{notice}</div>}
-        <AppChainOverviewView overview={overview} isLoading={!overview && isRefreshing} isRefreshing={isRefreshing} error={overviewError} onRefresh={() => void refreshOverview()} actions={anchorActions} onArm={handleAnchorArm} onCancel={handleAnchorCancel} onConfirm={(chainId) => void handleAnchorConfirm(chainId)} />
-        <footer className="flex flex-col gap-2 border-t border-platinum/10 pt-5 font-mono text-[10px] uppercase tracking-[0.16em] text-platinum-muted sm:flex-row sm:items-center sm:justify-between"><span>AppChain_Surface // Read_Live_State // Write_With_Confirmation</span><span>Server proof + real L1 treasury debit</span></footer>
+        <AppChainOverviewView overview={overview} isLoading={!overview && isRefreshing} isRefreshing={isRefreshing} error={overviewError} onRefresh={() => void refreshOverview()} />
+        <footer className="flex flex-col gap-2 border-t border-platinum/10 pt-5 font-mono text-[10px] uppercase tracking-[0.16em] text-platinum-muted sm:flex-row sm:items-center sm:justify-between"><span>AppChain_Surface // Read_Live_State // Anchor_In_Owner_Wallet</span><span>Owner-signed version-5 transactions // no server key</span></footer>
       </div>
     </main>
   );

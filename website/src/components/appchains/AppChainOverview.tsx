@@ -2,7 +2,7 @@
 
 import { CircleDollarSign, Layers3, RefreshCw, ShieldCheck } from "lucide-react";
 import { formatUltraAmount } from "@/lib/transaction-format";
-import type { AppChainOverview as AppChainOverviewData, AppChainAction } from "@/lib/appchains.types";
+import type { AppChainOverview as AppChainOverviewData } from "@/lib/appchains.types";
 import AppChainTable from "@/components/appchains/AppChainTable";
 
 interface AppChainOverviewProps {
@@ -11,10 +11,6 @@ interface AppChainOverviewProps {
   isRefreshing: boolean;
   error: string;
   onRefresh: () => void;
-  actions: Record<number, AppChainAction>;
-  onArm: (chainId: number) => void;
-  onCancel: (chainId: number) => void;
-  onConfirm: (chainId: number) => void;
 }
 
 function formatCount(value: number | null): string {
@@ -27,16 +23,12 @@ export default function AppChainOverview({
   isRefreshing,
   error,
   onRefresh,
-  actions,
-  onArm,
-  onCancel,
-  onConfirm,
 }: AppChainOverviewProps) {
   const hasChains = Boolean(overview && overview.chains.length > 0);
   const cards = [
     { label: "Registered AppChains", value: overview ? formatCount(overview.chains.length) : "—", detail: "Durable registry records", icon: Layers3 },
-    { label: "Total anchors", value: overview ? formatCount(overview.totalAnchorCount) : "—", detail: "Server-verified state anchors", icon: ShieldCheck },
-    { label: "Total anchor spend", value: overview ? `${formatUltraAmount(overview.totalAnchorSpendBaseUnits)} $ULTRA` : "—", detail: "Debited from L1 treasuries", icon: CircleDollarSign },
+    { label: "Total anchors", value: overview ? formatCount(overview.totalAnchorCount) : "—", detail: "Owner-signed state anchors", icon: ShieldCheck },
+    { label: "Total anchor spend", value: overview ? `${formatUltraAmount(overview.totalAnchorSpendBaseUnits)} $ULTRA` : "—", detail: "Paid by owners as L1 fees", icon: CircleDollarSign },
   ];
   const emptyDescription =
     "A chain appears here once its owner signs an AppChainRegister transaction with the owner key. The node does not create chains, and this surface never infers one from partial history.";
@@ -47,11 +39,13 @@ export default function AppChainOverview({
         <div className="max-w-2xl">
           <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-cyan-glow/70">L3_AppChain_Registry</p>
           <h2 id="appchain-overview-heading" className="mt-2 font-space-grotesk text-3xl font-bold uppercase tracking-tight text-platinum sm:text-4xl">AppChains</h2>
-          <p className="mt-4 text-sm leading-7 text-platinum/50">Read and operate the AppChain registry. A chain registered by its owner is anchored by that owner signing a version-5 transaction; only legacy registry chains are anchored by the node against a dedicated L1 treasury.</p>
+          <p className="mt-4 text-sm leading-7 text-platinum/50">Read the AppChain registry. Every anchor is the chain owner&apos;s own version-5 transaction, signed in the UltraNet mobile wallet; the node holds no AppChain key, so this dashboard cannot anchor on your behalf.</p>
           <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted">PROOF_SCHEME // {overview?.proofScheme ?? "Awaiting node contract"}</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <span className={`inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.16em] ${overview?.anchorAvailability === "production" ? "text-emerald-300/80" : overview?.anchorAvailability === "test-only" ? "text-amber-200/75" : "text-platinum-muted"}`}><span className={`h-1.5 w-1.5 rounded-full ${overview?.anchorAvailability === "production" ? "bg-emerald-300" : overview?.anchorAvailability === "test-only" ? "bg-amber-200" : "bg-platinum/30"}`} aria-hidden="true" />{overview?.anchorAvailability === "production" ? "SERVER_VERIFIED_ANCHORING" : overview?.anchorAvailability === "test-only" ? "TEST_ONLY_ANCHORING" : "ANCHORING_DISABLED"}</span>
+          {/* The badge states the model rather than echoing the node's availability field, which is now
+              constant: there is no server-side anchor path to advertise or hide. */}
+          <span className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.16em] text-cyan-glow/75" title="Anchors are owner-signed version-5 transactions. The node holds no AppChain key."><span className="h-1.5 w-1.5 rounded-full bg-cyan-glow" aria-hidden="true" />OWNER_SIGNED_ANCHORING</span>
           <button type="button" onClick={onRefresh} disabled={isRefreshing} aria-label="Refresh AppChain registry" title="Refresh AppChain registry" className="inline-flex min-h-10 items-center gap-2 border border-platinum/15 px-3 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-platinum/60 transition-colors hover:border-cyan-glow/60 hover:text-cyan-glow focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-cyan-glow disabled:cursor-wait disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} aria-hidden="true" />REFRESH</button>
           <span title="An AppChain is registered by its owner signing an AppChainRegister transaction. The node does not create chains." className="inline-flex min-h-10 items-center justify-center gap-2 border border-cyan-glow/25 bg-cyan-glow/[0.04] px-4 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-glow/75">OWNER_SIGNED_REGISTRATION</span>
         </div>
@@ -77,7 +71,7 @@ export default function AppChainOverview({
         <div className="border border-dashed border-cyan-glow/20 bg-cyan-glow/[0.025] px-6 py-14 text-center" role="status"><Layers3 className="mx-auto h-7 w-7 text-cyan-glow/60" aria-hidden="true" /><p className="mt-4 font-space-grotesk text-xl font-bold uppercase tracking-tight text-platinum">No AppChains are registered yet.</p><p className="mx-auto mt-3 max-w-md text-sm leading-6 text-platinum-muted">{emptyDescription}</p><code className="mx-auto mt-6 block max-w-xl overflow-x-auto border border-platinum/15 bg-ink-black/70 px-4 py-3 text-left font-mono text-[11px] leading-6 text-cyan-glow/80">appchain-cli register --key-file &lt;owner-key&gt; --name &lt;name&gt; --node &lt;api-url&gt;</code><p className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted">Fee is published by the node at /api/appchain/ledger</p></div>
       )}
 
-      {overview && overview.chains.length > 0 && <AppChainTable chains={overview.chains} actions={actions} onArm={onArm} onCancel={onCancel} onConfirm={onConfirm} />}
+      {overview && overview.chains.length > 0 && <AppChainTable chains={overview.chains} />}
 
       <p className="font-mono text-[10px] leading-relaxed text-platinum-muted" aria-live="polite">Unavailable means the connected node did not expose a metric. The dashboard does not infer balances or anchor totals from incomplete history.</p>
     </section>

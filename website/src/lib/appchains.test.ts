@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import * as appchains from "@/lib/appchains";
 import { getAppChainOwnerKind, normalizeAppChainOverview } from "@/lib/appchains";
 
 const ownerAddress = "a".repeat(64);
@@ -70,5 +73,35 @@ const ownerAddress = "a".repeat(64);
 
   it("rejects an explicit API failure", () => {
     expect(() => normalizeAppChainOverview({ success: false, message: "node unavailable" })).toThrow("node unavailable");
+  });
+
+  it("reads a retired anchor availability as disabled, not as available", () => {
+    // The node answers "retired" for registry chains after the server-anchor path was closed.
+    const overview = normalizeAppChainOverview({
+      success: true,
+      chains: [{ id: 3, name: "Ultra Chess", owner: ownerAddress, anchor_availability: "retired" }],
+      anchor_availability: "retired",
+    });
+
+    expect(overview.chains[0].anchorAvailability).toBe("not-implemented");
+    expect(overview.anchorAvailability).toBe("not-implemented");
+  });
+
+  it("offers no client-side anchor call, because the node retired that route", () => {
+    // Regression guard for the removal: an exported helper that posts to the retired endpoint would
+    // either fail with 410 or, worse, be rendered as a successful anchor.
+    expect(appchains).not.toHaveProperty("anchorAppChain");
+    expect(appchains).not.toHaveProperty("anchorAppChainForTest");
+    expect(appchains).not.toHaveProperty("submitAnchor");
+  });
+
+  it("has no code path to the retired anchor route and never borrows an operator credential", () => {
+    const source = readFileSync(fileURLToPath(new URL("./appchains.ts", import.meta.url)), "utf8");
+
+    // No template-built `/api/appchain/${id}/anchor` route, no POST, and no authenticated fetch:
+    // reading the registry is public and must stay public.
+    expect(source).not.toMatch(/\/api\/appchain\/\$\{/);
+    expect(source).not.toContain('method: "POST"');
+    expect(source).not.toContain("authenticatedFetch");
   });
 });

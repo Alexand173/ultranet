@@ -2,17 +2,13 @@
 
 import { Box, CircleDollarSign, Hash, Layers3 } from "lucide-react";
 import { formatAddress, formatTimestamp, formatUltraAmount } from "@/lib/transaction-format";
-import type { AppChainAction, AppChainSummary } from "@/lib/appchains.types";
-import AnchorNowControl from "@/components/appchains/AnchorNowControl";
+import type { AppChainSummary } from "@/lib/appchains.types";
+import OwnerAnchorNotice from "@/components/appchains/OwnerAnchorNotice";
 import AppChainCard from "@/components/appchains/AppChainCard";
 import TreasuryAddress from "@/components/appchains/TreasuryAddress";
 
 interface AppChainTableProps {
   chains: AppChainSummary[];
-  actions: Record<number, AppChainAction>;
-  onArm: (chainId: number) => void;
-  onCancel: (chainId: number) => void;
-  onConfirm: (chainId: number) => void;
 }
 
 function ownerDisplay(chain: AppChainSummary): string {
@@ -23,7 +19,7 @@ function valueOrUnavailable(value: number | null): string {
   return value === null ? "Unavailable" : new Intl.NumberFormat("en-US").format(value);
 }
 
-export default function AppChainTable({ chains, actions, onArm, onCancel, onConfirm }: AppChainTableProps) {
+export default function AppChainTable({ chains }: AppChainTableProps) {
   return (
     <section aria-labelledby="appchain-registry-list-heading" className="border border-platinum/10 bg-ink-black/70">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-platinum/10 px-5 py-4 sm:px-6">
@@ -41,7 +37,7 @@ export default function AppChainTable({ chains, actions, onArm, onCancel, onConf
             <tr className="font-mono text-[10px] uppercase tracking-[0.14em] text-platinum-muted">
               <th scope="col" className="px-5 py-4 font-normal">AppChain</th>
               <th scope="col" className="px-4 py-4 font-normal">Owner</th>
-              <th scope="col" className="px-4 py-4 font-normal">L1 Treasury</th>
+              <th scope="col" className="px-4 py-4 font-normal">Treasury (legacy)</th>
               <th scope="col" className="px-4 py-4 font-normal">ID</th>
               <th scope="col" className="px-4 py-4 font-normal">Anchors</th>
               <th scope="col" className="px-4 py-4 font-normal">Balance</th>
@@ -50,9 +46,7 @@ export default function AppChainTable({ chains, actions, onArm, onCancel, onConf
             </tr>
           </thead>
           <tbody className="divide-y divide-platinum/5">
-            {chains.map((chain) => {
-              const action = actions[chain.id] ?? { state: "idle", error: "", result: null };
-              return (
+            {chains.map((chain) => (
                 <tr key={chain.id} className="align-top transition-colors hover:bg-cyan-glow/[0.025]">
                   <th scope="row" className="max-w-52 px-5 py-5 font-normal">
                     <div className="flex items-start gap-3">
@@ -73,24 +67,16 @@ export default function AppChainTable({ chains, actions, onArm, onCancel, onConf
                   <td className="px-4 py-5"><span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums text-platinum/75"><Layers3 className="h-3.5 w-3.5 text-cyan-glow/50" aria-hidden="true" />{valueOrUnavailable(chain.anchorCount)}</span></td>
                   <td className="whitespace-nowrap px-4 py-5">{chain.source === "ledger" ? <span className="font-mono text-[10px] leading-5 text-platinum-muted">No treasury</span> : <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums text-platinum/75"><CircleDollarSign className="h-3.5 w-3.5 text-cyan-glow/50" aria-hidden="true" />{formatUltraAmount(chain.balanceBaseUnits)} <span className="text-[10px] text-cyan-glow">$ULTRA</span></span>}</td>
                   <td className="whitespace-nowrap px-4 py-5 font-mono text-xs tabular-nums text-platinum/55">{formatUltraAmount(chain.anchorSpendBaseUnits)} $ULTRA</td>
-                  <td className="px-5 py-4 text-right"><div className="flex justify-end">{chain.source === "ledger" ? <span title="Anchors are submitted by the owner signing a version-5 transaction. The node holds no key for this chain." className="inline-flex min-h-10 items-center border border-cyan-glow/20 bg-cyan-glow/[0.04] px-3 font-mono text-[10px] uppercase tracking-[0.12em] text-cyan-glow/70">OWNER_SIGNED</span> : <AnchorNowControl chainId={chain.id} availability={chain.anchorAvailability} anchorFeeBaseUnits={chain.anchorFeeBaseUnits} balanceBaseUnits={chain.balanceBaseUnits} controlId={`desktop-${chain.id}`} action={action} onArm={() => onArm(chain.id)} onCancel={() => onCancel(chain.id)} onConfirm={() => onConfirm(chain.id)} />}</div></td>
+                  <td className="px-5 py-4 text-right"><div className="flex justify-end">{chain.source === "ledger" ? <span title="Anchors are submitted by the owner signing a version-5 transaction. The node holds no key for this chain." className="inline-flex min-h-10 items-center border border-cyan-glow/20 bg-cyan-glow/[0.04] px-3 font-mono text-[10px] uppercase tracking-[0.12em] text-cyan-glow/70">OWNER_SIGNED</span> : <OwnerAnchorNotice chainId={chain.id} hasTreasury />}</div></td>
                 </tr>
-              );
-            })}
+            ))}
           </tbody>
         </table>
       </div>
 
       <div className="grid gap-4 p-4 lg:hidden">
         {chains.map((chain) => (
-          <AppChainCard
-            key={chain.id}
-            chain={chain}
-            action={actions[chain.id] ?? { state: "idle", error: "", result: null }}
-            onArm={() => onArm(chain.id)}
-            onCancel={() => onCancel(chain.id)}
-            onConfirm={() => onConfirm(chain.id)}
-          />
+          <AppChainCard key={chain.id} chain={chain} />
         ))}
       </div>
     </section>

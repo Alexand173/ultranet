@@ -1,5 +1,9 @@
 export type AppChainsLoadState = "loading" | "ready" | "empty" | "unavailable";
-export type AppChainActionState = "idle" | "confirming" | "submitting" | "success" | "rejected" | "unavailable";
+/**
+ * What the node says about *server-side* anchoring. Server anchoring is retired, so the value is now
+ * `not-implemented` everywhere; `test-only` and `production` remain so an older node's answer is read
+ * rather than misreported, and so a value the dashboard does not understand fails closed.
+ */
 export type AppChainAnchorAvailability = "not-implemented" | "test-only" | "production";
 export type AppChainOwnerKind = "address" | "alias" | "unknown";
 /**
@@ -35,22 +39,4 @@ export interface AppChainOverview {
   updatedAt: number | null;
 }
 
-export interface AnchorAppChainResult {
-  chainId: number;
-  anchorNumber: number | null;
-  stateRoot: string | null;
-  timestamp: number | null;
-  anchorCount: number | null;
-  chargedBaseUnits: bigint | null;
-  balanceBaseUnits: bigint | null;
-  accountAddress: string | null;
-  proofScheme: string;
-  isTest: boolean;
-  message: string;
-}
-
-export interface AppChainAction {
-  state: AppChainActionState;
-  error: string;
-  result: AnchorAppChainResult | null;
-}
+/* No anchor-result or anchor-action types: this dashboard cannot anchor, so it has no such state. */
