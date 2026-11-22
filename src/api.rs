@@ -1329,21 +1329,8 @@ pub struct AppChainListResponse {
     pub chains: Vec<AppChainView>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct AppChainAnchorResponse {
-    pub success: bool,
-    pub message: String,
-    pub chain_id: u32,
-    pub anchor_number: u64,
-    pub state_root: String,
-    pub timestamp: u64,
-    pub anchor_count: u64,
-    pub charged_base_units: String,
-    pub balance: String,
-    pub account_address: String,
-    pub proof_scheme: &'static str,
-    pub is_test: bool,
-}
+// `AppChainAnchorResponse` was removed with the server-side anchor route: no route returns it any
+// more, so keeping the type would describe a response that cannot exist.
 
 /// JSON body retained only for the legacy client-supplied anchor route.
 /// The route rejects this body; production anchoring is server-generated.
@@ -1456,18 +1443,16 @@ async fn create_appchain() -> impl Responder {
     }))
 }
 
-fn test_anchoring_enabled() -> bool {
-    cfg!(debug_assertions)
-        && matches!(
-            env::var("ULTRANET_ENABLE_TEST_ANCHORING").as_deref(),
-            Ok("1") | Ok("true") | Ok("TRUE") | Ok("yes") | Ok("YES")
-        )
-}
+// Retired with the server-side anchor path it gated. A second way to anchor without the owner's
+// signature is the bypass this retirement exists to remove, so the switch went with it rather than
+// staying available behind an environment variable.
 
 const APPCHAIN_PROOF_SCHEME: &str = "SHA3-256 server state commitment v1";
 
+// Node-side anchoring is retired, so nothing this node reports may claim it is available. The website
+// maps an unknown value to "anchoring disabled", which is now the truth for every chain.
 fn appchain_anchor_availability() -> &'static str {
-    "production"
+    "retired"
 }
 
 fn appchain_view(
@@ -1576,8 +1561,20 @@ fn now_seconds() -> u64 {
     chrono::Utc::now().timestamp().max(0) as u64
 }
 
-async fn anchor_appchain(state: web::Data<AppState>, path: web::Path<u32>) -> impl Responder {
-    run_appchain_anchor(state, path.into_inner(), false).await
+// Retired: node-side anchoring, for any chain.
+//
+// The node holds no owner key, so it cannot act on a chain's behalf. A chain is anchored by its owner
+// signing a version-5 AppChainAnchor transaction and posting it to /api/appchain/tx, which the Android
+// wallet and appchain-cli do. The chain-id parameter is kept so an old client receives this message
+// instead of a 404 that reads like the chain is missing, exactly as /api/appchain/create does.
+async fn anchor_appchain(path: web::Path<u32>) -> impl Responder {
+    HttpResponse::Gone().json(serde_json::json!({
+        "success": false,
+        "message": format!(
+            "Anchoring AppChain #{} from the node is retired. Only the chain owner can anchor it: sign an AppChainAnchor transaction with the owner wallet and post it to /api/appchain/tx",
+            path.into_inner()
+        ),
+    }))
 }
 
 async fn legacy_anchor_appchain(
@@ -1590,159 +1587,25 @@ async fn legacy_anchor_appchain(
     }))
 }
 
-// Development-only compatibility path. It uses the same server-side state and
-// proof pipeline, but is labelled as a test result for local UI QA.
-async fn anchor_appchain_test(state: web::Data<AppState>, path: web::Path<u32>) -> impl Responder {
-    if !test_anchoring_enabled() {
-        return HttpResponse::NotImplemented().json(serde_json::json!({
-            "success": false,
-            "message": "Test-only AppChain anchoring is disabled. Set ULTRANET_ENABLE_TEST_ANCHORING=true for development only."
-        }));
-    }
-    run_appchain_anchor(state, path.into_inner(), true).await
+// Retired: the development-only server-side anchor path.
+//
+// It existed so a local UI could be exercised before the wallet could sign. The wallet signs now, so a
+// second anchor path that needs no owner signature is a bypass rather than a convenience.
+async fn anchor_appchain_test(path: web::Path<u32>) -> impl Responder {
+    HttpResponse::Gone().json(serde_json::json!({
+        "success": false,
+        "message": format!(
+            "Test-only anchoring of AppChain #{} is retired. Sign an AppChainAnchor transaction with the owner wallet and post it to /api/appchain/tx",
+            path.into_inner()
+        ),
+    }))
 }
 
-async fn run_appchain_anchor(
-    state: web::Data<AppState>,
-    chain_id: u32,
-    is_test: bool,
-) -> HttpResponse {
-    let blockchain = state.blockchain.read();
-    let mut registry = blockchain.appchain_registry.write();
-    let Some(previous_config) = registry.get_chain(chain_id).cloned() else {
-        // A ledger chain is anchored by its owner signing a version-5 transaction; this endpoint
-        // only knows the factory registry and has no key to sign with. Say which path to take
-        // rather than reporting the chain as missing.
-        if blockchain
-            .storage
-            .ledger_chain(chain_id)
-            .ok()
-            .flatten()
-            .is_some()
-        {
-            return HttpResponse::Conflict().json(serde_json::json!({
-                "success": false,
-                "message": format!(
-                    "AppChain #{chain_id} is anchored by its owner: sign an AppChainAnchor transaction with the owner key instead of anchoring from the node"
-                ),
-            }));
-        }
-        return HttpResponse::NotFound().json(serde_json::json!({
-            "success": false,
-            "message": format!("AppChain #{chain_id} was not found"),
-        }));
-    };
-    let db_path = env::var("ULTRANET_DB_PATH").unwrap_or_else(|_| "ultranet_db".to_string());
-    let runtime = match crate::appchain::AppChainRuntime::try_new(chain_id, &db_path) {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "success": false,
-                "message": format!("Unable to open AppChain runtime: {error}"),
-            }))
-        }
-    };
-    let snapshot = match runtime.snapshot_state() {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "success": false,
-                "message": format!("Unable to snapshot AppChain state: {error}"),
-            }))
-        }
-    };
-    let timestamp = now_seconds();
-    let anchor_number = match previous_config.anchor_count.checked_add(1) {
-        Some(anchor_number) => anchor_number,
-        None => {
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "success": false,
-                "message": format!("AppChain #{chain_id} anchor count overflowed"),
-            }))
-        }
-    };
-    let proof = runtime.create_anchor_proof(
-        &snapshot,
-        anchor_number,
-        &previous_config.account_address,
-        previous_config.anchor_fee,
-        timestamp,
-    );
-    if let Err(error) = runtime.verify_anchor_proof(&snapshot, &proof) {
-        return HttpResponse::InternalServerError().json(serde_json::json!({
-            "success": false,
-            "message": format!("Server-generated AppChain proof failed verification: {error}"),
-        }));
-    }
-    let proof_json = match serde_json::to_string(&proof) {
-        Ok(proof) => proof,
-        Err(error) => {
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "success": false,
-                "message": format!("Unable to encode AppChain proof: {error}"),
-            }))
-        }
-    };
-    let treasury_balance = blockchain.get_appchain_treasury_balance(&previous_config);
-    let (updated_config, anchor) = match registry.preview_anchor(
-        chain_id,
-        treasury_balance,
-        hex::encode(snapshot.state_root),
-        proof_json,
-        timestamp,
-        is_test,
-    ) {
-        Ok(result) => result,
-        Err(message) => {
-            return HttpResponse::PaymentRequired().json(serde_json::json!({
-                "success": false,
-                "message": message,
-            }))
-        }
-    };
-
-    if let Err(error) = blockchain.storage.save_appchain_config(&updated_config) {
-        return HttpResponse::InternalServerError().json(serde_json::json!({
-            "success": false,
-            "message": format!("Unable to persist AppChain treasury debit: {error}"),
-        }));
-    }
-    if let Err(error) = blockchain.storage.save_appchain_anchor(&anchor) {
-        let _ = blockchain.storage.save_appchain_config(&previous_config);
-        return HttpResponse::InternalServerError().json(serde_json::json!({
-            "success": false,
-            "message": format!("Unable to persist AppChain anchor: {error}"),
-        }));
-    }
-    if let Err(message) = registry.apply_anchor(updated_config.clone(), anchor.clone()) {
-        let _ = blockchain.storage.save_appchain_config(&previous_config);
-        let _ = blockchain.storage.delete_appchain_anchor(&anchor);
-        return HttpResponse::InternalServerError().json(serde_json::json!({
-            "success": false,
-            "message": format!("Unable to apply AppChain anchor: {message}"),
-        }));
-    }
-
-    let balance = blockchain.get_appchain_treasury_balance(&updated_config);
-    HttpResponse::Ok().json(AppChainAnchorResponse {
-        success: true,
-        message: if is_test {
-            format!("AppChain #{chain_id} test anchor completed.")
-        } else {
-            format!("AppChain #{chain_id} anchored with server-verified state proof.")
-        },
-        chain_id,
-        anchor_number: anchor.anchor_number,
-        state_root: anchor.state_root,
-        timestamp: anchor.timestamp,
-        anchor_count: updated_config.anchor_count,
-        charged_base_units: anchor.fee_charged.to_string(),
-        balance: balance.to_string(),
-        account_address: updated_config.account_address,
-        proof_scheme: APPCHAIN_PROOF_SCHEME,
-        is_test,
-    })
-}
+// The node-side anchor implementation that stood here is gone with its two routes. It generated a
+// state root from a local runtime snapshot, debited a factory treasury and persisted the anchor,
+// without ever comparing the caller to a chain owner. Leaving that code behind a disabled route
+// would keep the bypass one mount away, so it was deleted rather than fenced: anchoring is
+// owner-signed only, and the node holds no key that could sign for anyone.
 
 // Get anchoring history
 async fn list_anchors(state: web::Data<AppState>) -> impl Responder {
@@ -4210,6 +4073,66 @@ mod configuration_tests {
         )
         .await;
         assert_eq!(authorized.status(), StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn retired_appchain_anchor_routes_answer_gone() {
+        let token = "b".repeat(32);
+        let db = TemporaryApiDb::new("appchain-anchor-retired");
+        let blockchain = Arc::new(RwLock::new(UltraBlockchain::new(
+            db.path().to_str().expect("temporary path must be UTF-8"),
+        )));
+
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(AdminAuthConfig {
+                    token: token.as_bytes().to_vec(),
+                }))
+                .app_data(web::Data::new(AppState { blockchain }))
+                .configure(configure_admin_routes),
+        )
+        .await;
+
+        for route in ["/api/appchain/1/anchor", "/api/appchain/1/anchor/test"] {
+            // Retirement is not a bypass: the middleware still answers first.
+            let unauthenticated = actix_test::call_service(
+                &app,
+                actix_test::TestRequest::post().uri(route).to_request(),
+            )
+            .await;
+            assert_eq!(
+                unauthenticated.status(),
+                StatusCode::UNAUTHORIZED,
+                "{route} must still require a credential",
+            );
+
+            // With a credential it is Gone, and it names the owner-signed replacement, so an old
+            // client is told what to do instead of being left with a 404 or a working anchor.
+            let retired = actix_test::call_service(
+                &app,
+                actix_test::TestRequest::post()
+                    .uri(route)
+                    .insert_header((AUTHORIZATION, format!("Bearer {token}")))
+                    .to_request(),
+            )
+            .await;
+            assert_eq!(
+                retired.status(),
+                StatusCode::GONE,
+                "{route} must answer 410 once node-side anchoring is retired",
+            );
+            let body: serde_json::Value = actix_test::read_body_json(retired).await;
+            assert_eq!(body["success"].as_bool(), Some(false));
+            let message = body["message"].as_str().unwrap_or_default();
+            assert!(
+                message.contains("/api/appchain/tx"),
+                "{route} must name the owner-signed replacement: {message}",
+            );
+            assert!(
+                message.contains("owner"),
+                "{route} must say the owner signs it: {message}",
+            );
+        }
     }
 
     #[actix_web::test]
