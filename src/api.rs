@@ -3597,6 +3597,20 @@ fn configure_admin_routes(cfg: &mut web::ServiceConfig) {
     );
 }
 
+/// The AppChain route lines the startup banner prints.
+///
+/// Kept in one place, and asserted by
+/// `configuration_tests::startup_banner_does_not_advertise_retired_anchor_routes`, because the
+/// banner kept advertising the retired node-side anchor routes as "Server-verified" long after
+/// they began answering `410 Gone`. A caller reading the log should learn what to do instead.
+fn appchain_route_banner() -> [&'static str; 3] {
+    [
+        "   POST /api/appchain/create - RETIRED (410): register by signing an AppChainRegister transaction",
+        "   POST /api/appchain/{chain_id}/anchor - RETIRED (410): anchor by signing an AppChainAnchor transaction with the owner wallet and posting it to /api/appchain/tx",
+        "   POST /api/appchain/{chain_id}/anchor/test - RETIRED (410): submit a signed AppChainAnchor through /api/appchain/tx",
+    ]
+}
+
 pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Result<()> {
     let api_bind = configured_api_bind()?;
     let local_snapshot_enabled = local_validator_snapshot::configured_enabled()?;
@@ -3648,9 +3662,9 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
     println!("   GET  /api/recursive/verify - Verify chain");
     println!("   GET  /api/stm/stats - Block-STM statistics");
     println!("   GET  /api/fhe/pk - FHE Public Key");
-    println!("   POST /api/appchain/create - RETIRED (410): register by signing an AppChainRegister transaction");
-    println!("   POST /api/appchain/{{chain_id}}/anchor - Server-verified AppChain anchor");
-    println!("   POST /api/appchain/{{chain_id}}/anchor/test - Development-only fixture anchor");
+    for line in appchain_route_banner() {
+        println!("{line}");
+    }
     println!("   POST /api/governance/propose - Submit validator proposal");
     println!("   POST /api/governance/approve - Submit version-3 sovereign approval");
     println!(
@@ -4133,6 +4147,29 @@ mod configuration_tests {
                 "{route} must say the owner signs it: {message}",
             );
         }
+    }
+
+    #[test]
+    fn startup_banner_does_not_advertise_retired_anchor_routes() {
+        let banner = super::appchain_route_banner();
+        for line in banner {
+            assert!(
+                !line.contains("Server-verified"),
+                "the banner must not claim node-side verification: {line}",
+            );
+            assert!(
+                !line.contains("Development-only"),
+                "the banner must not offer the retired fixture route: {line}",
+            );
+        }
+
+        let anchor = banner
+            .iter()
+            .find(|line| line.contains("/anchor") && !line.contains("/anchor/test"))
+            .expect("the retired anchor route must still be listed");
+        assert!(anchor.contains("RETIRED (410)"), "{anchor}");
+        assert!(anchor.contains("/api/appchain/tx"), "{anchor}");
+        assert!(anchor.contains("owner"), "{anchor}");
     }
 
     #[actix_web::test]
