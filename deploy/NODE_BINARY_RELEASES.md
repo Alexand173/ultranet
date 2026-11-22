@@ -8,6 +8,108 @@ person can tell what is running and how to roll back.
 
 Backups are kept beside the binary as `UltraNet.bak-<UTC timestamp>`.
 
+## 2026-11-22T20:00Z — AppChain: provenance committed, retired routes settled, banner corrected
+
+| | |
+|---|---|
+| Running before | sha256 `5344ed0c4ac6fb1d646092c8e6f1070125b0757daf123302a1b0d73f42d9fb73`, 25,752,032 B (the 18:55Z O-2 promotion, which was recorded only in the AppChain checklist) |
+| Backup | `/opt/ultranet/target/release/UltraNet.bak-20261122T1959Z` (same sha256, same size) |
+| Running after | sha256 `69aeddd94bccc863951b7126befec83c45f21a57db126bd2305d5d9cf6b7e441`, 25,750,552 B |
+| Source | `cda51321f647f5e34dec1486b09d25b9b698c060`, clean tree |
+| Built with | `rustc 1.97.0 (2d8144b78 2026-07-07)`, pinned by `rust-toolchain.toml` |
+| Build | `cargo build --release --locked --bin UltraNet -j 4` → exit 0, 30.05 s |
+| Restart | one planned `systemctl restart ultranet` at **20:00:28Z** |
+
+### Why
+
+Three things were still wrong after O-2, and only one of them was cosmetic:
+
+1. The binary that O-2 installed was built from a **working tree**, not a commit, so nobody could
+   tell from the repository what was running. That is now closed: the retirement, the authorization
+   tests and the banner correction are commits `c28f174`, `186e213` and `cda5132`.
+2. The 410 body had **never been observed over the wire**. It is now proven, and not by unit test
+   alone — see below.
+3. The startup banner still advertised both retired anchor routes as "Server-verified AppChain
+   anchor" and "Development-only fixture anchor".
+
+### What changed since the 18:55Z binary
+
+Only the banner text, and the function that holds it:
+
+```rust
+fn appchain_route_banner() -> [&'static str; 3] {
+    [
+        "   POST /api/appchain/create - RETIRED (410): register by signing an AppChainRegister transaction",
+        "   POST /api/appchain/{chain_id}/anchor - RETIRED (410): anchor by signing an AppChainAnchor transaction with the owner wallet and posting it to /api/appchain/tx",
+        "   POST /api/appchain/{chain_id}/anchor/test - RETIRED (410): submit a signed AppChainAnchor through /api/appchain/tx",
+    ]
+}
+```
+
+No route, handler, middleware, fee, key, peer or genesis change. The 1,480-byte size difference is
+the replaced string table and the banner loop. `configuration_tests::startup_banner_does_not_
+advertise_retired_anchor_routes` fails if any line claims node-side verification or offers the
+fixture route.
+
+### How the provenance was confirmed
+
+The 18:55Z binary was checked before it was replaced: the local `target/release/UltraNet` was
+byte-identical to the deployed file (`5344ed0c…`), and `src/api.rs` had not been modified after the
+build (mtime 17:16Z, build 18:51Z). The new commit `c28f174` captures exactly that file content, so
+the previously unattributable binary now maps to a commit even though the new binary supersedes it.
+
+### Verification
+
+Before promotion, the **new artifact** was run locally on a throwaway database, its own P2P port and
+a throwaway bearer token (nothing from production was read):
+
+| Check | Result |
+|---|---|
+| `POST /api/appchain/1/anchor` — no credential | **401** |
+| `POST /api/appchain/1/anchor` + credential | **410**, body: `Anchoring AppChain #1 from the node is retired. Only the chain owner can anchor it: sign an AppChainAnchor transaction with the owner wallet and post it to /api/appchain/tx` |
+| `POST /api/appchain/1/anchor/test` + credential | **410**, body names `/api/appchain/tx` |
+| `POST /api/appchain/tx`, empty body | 400 — route live |
+| `GET /api/appchain/overview`, `/ledger` | 200 |
+| banner, as printed | all three AppChain lines read `RETIRED (410)` |
+
+After the restart, on production:
+
+| Check | Result |
+|---|---|
+| service | `active`, MainPID **540014**, `NRestarts 0`, `ExecMainStartTimestamp` 20:00:28Z |
+| running binary | `/proc/540014/exe` → installed path, sha256 `69aeddd9…` |
+| listener | 127.0.0.1:8081 |
+| `chain_length` / `epoch` / `auto_mined_blocks` | 16 / 15 / 0 — unchanged by the restart |
+| `GET /api/appchain/ledger`, `/ledger/1`, `/overview` | 200, 200, 200 |
+| `POST /api/appchain/tx`, empty body | 400 — live |
+| retired routes, no credential | 401 (`/1/anchor`, `/1/anchor/test`, `/anchor`) |
+| journal banner | `POST /api/appchain/{chain_id}/anchor - RETIRED (410): anchor by signing an AppChainAnchor transaction with the owner wallet and posting it to /api/appchain/tx` |
+| panics / startup failures since restart | 0 |
+| other services | `ultranet-records` active, `ultranet-dashboard` active — not restarted |
+
+### Rollback
+
+```sh
+sudo systemctl stop ultranet
+sudo cp -p /opt/ultranet/target/release/UltraNet.bak-20261122T1959Z /opt/ultranet/target/release/UltraNet
+sudo chown ultranet:ultranet /opt/ultranet/target/release/UltraNet
+sudo systemctl start ultranet
+```
+
+Two older rollbacks are still retained: `UltraNet.bak-20261122T1853Z` (26,113,336 B, `ad442a46…`,
+the pre-O-2 binary) and `UltraNet.bak-20261025T0957Z` (25,167,088 B, `d8edb01e…`).
+
+### Limitations
+
+- The 410 was proven on a **local instance of the same artifact**, not on the production listener:
+  production still answers 401 without a credential, and reaching the 410 there needs the operator
+  bearer token, which was deliberately not read.
+- The node prints two banners (a short one from the startup path and the long `📋 Endpoints:` list
+  from the API server). Only the long one lists AppChain routes.
+- `❌ libp2p connection closed … reason_kind=io` repeats about once a minute for the persistent peer
+  `12D3KooWS3AHS46…`; it predates this release and is not accompanied by a reconnect storm or a
+  restart.
+
 ## 2026-10-25T10:04Z — Merkle fix for payload-bound transactions
 
 | | |
