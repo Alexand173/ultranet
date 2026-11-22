@@ -53,10 +53,10 @@ class GroupedHomeScreenTest {
     @Test
     fun catalogContainsSevenSupportedAndNineUnavailableServices() {
         assertEquals(4, ServiceCatalog.groups.size)
-        assertEquals(listOf(3, 5, 6, 2), ServiceCatalog.groups.map { it.services.size })
-        assertEquals(16, ServiceCatalog.groups.sumOf { it.services.size })
+        assertEquals(listOf(3, 5, 7, 2), ServiceCatalog.groups.map { it.services.size })
+        assertEquals(17, ServiceCatalog.groups.sumOf { it.services.size })
         // Contacts replaced the Name Service concept; the Games tile is a directory holding the games.
-        assertEquals(7, ServiceCatalog.supportedCount)
+        assertEquals(8, ServiceCatalog.supportedCount)
         assertEquals(9, ServiceCatalog.unavailableCount)
         val payments = ServiceCatalog.groups.first { it.id == "payments-addresses" }
         assertEquals(

@@ -80,6 +80,7 @@ import cc.ultranet.ultraverse.ui.wallet.WalletFlowScreen
 import cc.ultranet.ultraverse.ui.wallet.WalletRoute
 import cc.ultranet.ultraverse.ui.pay.PayScreen
 import cc.ultranet.ultraverse.ui.profile.ProfileScreen
+import cc.ultranet.ultraverse.ui.registry.RegistryScreen
 import cc.ultranet.ultraverse.wallet.ContactBook
 import cc.ultranet.ultraverse.wallet.ContactStore
 import cc.ultranet.ultraverse.wallet.FaucetApi
@@ -91,7 +92,7 @@ import cc.ultranet.ultraverse.wallet.faucetAmountLabel
 import kotlinx.coroutines.launch
 
 /** Top-level native destinations. Every supported catalog entry maps to one of these. */
-private enum class HomeSection { Apps, Wallet, Pay, Contacts, Profile, AppChains, Validator, Mining, Games, Chess, Grid }
+private enum class HomeSection { Apps, Wallet, Pay, Contacts, Profile, AppChains, Registry, Validator, Mining, Games, Chess, Grid }
 
 @Composable
 internal fun UltraVerseApp(
@@ -160,6 +161,7 @@ internal fun UltraVerseApp(
             ServiceCatalog.PAY_ID -> { payReturn = HomeSection.Apps; section = HomeSection.Pay }
             ServiceCatalog.CONTACTS_ID -> { contactsReturn = HomeSection.Apps; section = HomeSection.Contacts }
             ServiceCatalog.APPCHAINS_ID -> section = HomeSection.AppChains
+            ServiceCatalog.REGISTRY_ID -> section = HomeSection.Registry
             ServiceCatalog.VALIDATOR_ID -> { validatorReturn = HomeSection.Apps; section = HomeSection.Validator }
             ServiceCatalog.MINING_ID -> section = HomeSection.Mining
             ServiceCatalog.GAMES_ID -> section = HomeSection.Games
@@ -335,6 +337,13 @@ internal fun UltraVerseApp(
                 onRegister = { name -> controller.registerAppChain(name) },
                 onAnchor = { chainId, root -> controller.anchorAppChain(chainId, root) },
                 onTransfer = { chainId, newOwner -> controller.transferAppChainOwnership(chainId, newOwner) },
+            )
+
+            // Read-only and wallet-free on purpose: the ledger and the anchor history are public, and
+            // this screen never unlocks, signs or writes. It has no wallet parameters at all.
+            HomeSection.Registry -> RegistryScreen(
+                onBack = { section = HomeSection.Apps },
+                modifier = Modifier.padding(scaffoldPadding),
             )
 
             HomeSection.Validator -> ValidatorScreen(

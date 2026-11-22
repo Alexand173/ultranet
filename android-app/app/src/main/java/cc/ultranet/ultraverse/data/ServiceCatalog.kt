@@ -6,6 +6,7 @@ import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.CurrencyExchange
+import androidx.compose.material.icons.outlined.FactCheck
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Layers
@@ -47,6 +48,7 @@ internal object ServiceCatalog {
     const val APPCHAINS_ID = "appchains"
     const val VALIDATOR_ID = "validator"
     const val MINING_ID = "validate-transactions"
+    const val REGISTRY_ID = "registry"
     const val GAMES_ID = "games"
 
     val groups = listOf(
@@ -118,6 +120,14 @@ internal object ServiceCatalog {
                     icon = Icons.Outlined.Terminal,
                     detail = "Operator-only block production",
                     actionLabel = "Validate",
+                ),
+                ServiceEntry(
+                    id = REGISTRY_ID,
+                    name = "Registry",
+                    availability = Availability.Supported,
+                    icon = Icons.Outlined.FactCheck,
+                    detail = "AppChain #2 · registration and anchors",
+                    actionLabel = "Open registry",
                 ),
                 concept("staking", "Staking", Icons.Outlined.AccountBalanceWallet),
                 concept("holder-dao", "Holder-led DAO", Icons.Outlined.Groups),
