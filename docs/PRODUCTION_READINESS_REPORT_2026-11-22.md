@@ -22,7 +22,7 @@ Working copies. Two checkouts of the same origin repository exist and they are n
 
 | Copy | Location | State |
 |---|---|---|
-| Development copy, holds the six-file commit | `/home/valerian/UltraNet_Linux` | branch `main`, 1 commit ahead of `origin/main` |
+| Development copy, holds the six-file commit | `~/UltraNet_Linux` | branch `main` |
 | Production build copy | `/root/build-ultranet` | detached HEAD at `147ec2e` (the parent of `e502181`), 0 modified files, does not contain `e502181` |
 
 The production build copy is a build tree; the node binary and the `ultranet-records` binary it produced
