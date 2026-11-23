@@ -35,6 +35,16 @@ internal class WalletController(
     private var operationGeneration: Long = 0
     private val idleSession = IdleSession()
 
+    /**
+     * A submission that has left the controller and has not come back yet.
+     *
+     * Deliberately **not** part of [WalletUiState]: `lock()` resets the UI flags, and this guard has
+     * to survive that. With the guard in the state, a lock plus a prompt unlock would clear it while
+     * the request was still on the wire, and a second tap would put a second copy of the same signed
+     * transfer on the network (D-5D §3.3: "`lock()` must not reset the in-flight guard").
+     */
+    private var submissionInFlight = false
+
     suspend fun initialize() = runBusy {
         try {
             val stored = withContext(Dispatchers.IO) { store.load() }
@@ -236,12 +246,29 @@ internal class WalletController(
     }
 
     suspend fun submitTransfer(): TransactionRecord? {
-        if (state.isSubmitting) return null
+        val decision = SubmissionGate.decide(
+            unlocked = state.unlocked,
+            hasSignedTransfer = state.unresolvedTransfer != null,
+            isSubmitting = state.isSubmitting || submissionInFlight,
+        )
+        if (decision !is SubmissionGate.Decision.Proceed) {
+            if (decision is SubmissionGate.Decision.Refused) state = state.copy(error = decision.reason)
+            return null
+        }
         val transfer = state.unresolvedTransfer ?: return null
+        val generation = operationGeneration
+        submissionInFlight = true
         state = state.copy(isSubmitting = true, error = null)
         return try {
             val record = withContext(Dispatchers.IO) { api.submit(transfer) }
             transfer.wipeTransient()
+            if (generation != operationGeneration) {
+                // The wallet locked while this request was in flight. The node's answer stands and
+                // the value is no longer stranded, but a locked session must not present it as a
+                // live result, and nothing here may re-submit it.
+                state = state.copy(isSubmitting = false, unresolvedTransfer = null, lastTransaction = record)
+                return record
+            }
             state = state.copy(
                 isSubmitting = false,
                 unresolvedTransfer = null,
@@ -269,6 +296,10 @@ internal class WalletController(
                 error = error.message ?: "The response could not be verified. Check transaction history before retrying this same request.",
             )
             null
+        } finally {
+            // Released here rather than in each branch: every path out of the request is a path where
+            // the wire is free again, including the one where a lock landed mid-flight.
+            submissionInFlight = false
         }
     }
 

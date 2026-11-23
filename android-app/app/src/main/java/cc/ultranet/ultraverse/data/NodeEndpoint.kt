@@ -49,18 +49,44 @@ internal object NodeEndpoint {
         if (path.isNotEmpty() && path != "/") {
             return Verdict.Rejected("Enter the base address only, without a path.")
         }
-        val loopback = host.equals(LOOPBACK_NAME, ignoreCase = true) ||
-            host == LOOPBACK_IPV4 ||
-            host == LOOPBACK_IPV6
         // Cleartext to anywhere but this device would expose every request; the release manifest
         // forbids it too, so accepting it here would only produce an opaque socket failure later.
-        if (scheme == "http" && !loopback) {
+        if (scheme == "http" && !isLoopback(host)) {
             return Verdict.Rejected("Use https://: an http node would send your requests in the clear.")
         }
         val port = if (uri.port == -1) "" else ":${uri.port}"
         val authority = if (host.contains(':')) "[$host]$port" else "$host$port"
         return Verdict.Accepted("$scheme://$authority")
     }
+
+    /**
+     * Whether this base URL may carry an administrator bearer token.
+     *
+     * [check] refuses cleartext when an address is *saved*, but a token has to be refused at the
+     * moment it would leave the device: that is the only place a call site cannot forget, and it
+     * also covers a base URL that arrived from a stored preference, a test seam or a constructor
+     * argument instead of through the settings sheet. Loopback stays allowed, because a node on the
+     * same device has no network to cross.
+     */
+    fun admitsAdminToken(baseUrl: String): Verdict {
+        val verdict = check(baseUrl)
+        val accepted = verdict as? Verdict.Accepted ?: return verdict
+        val uri = runCatching { URI(accepted.baseUrl) }.getOrNull()
+            ?: return Verdict.Rejected("That is not a valid address.")
+        val scheme = uri.scheme?.lowercase()
+        val host = uri.host
+        if (scheme != "https" && (host == null || !isLoopback(host))) {
+            return Verdict.Rejected(
+                "Refusing to send the node's admin token over ${scheme ?: "an unknown scheme"}://: use https://.",
+            )
+        }
+        return accepted
+    }
+
+    private fun isLoopback(host: String): Boolean =
+        host.equals(LOOPBACK_NAME, ignoreCase = true) ||
+            host == LOOPBACK_IPV4 ||
+            host == LOOPBACK_IPV6
 
     /** A short label for the UI: the host, with a port when it is not the scheme's default. */
     fun label(baseUrl: String): String = runCatching { URI(baseUrl) }.getOrNull()

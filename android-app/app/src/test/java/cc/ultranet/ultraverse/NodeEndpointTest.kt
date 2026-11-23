@@ -84,4 +84,26 @@ class NodeEndpointTest {
         assertEquals("node.example.org", NodeEndpoint.label("https://node.example.org"))
         assertEquals("127.0.0.1:8081", NodeEndpoint.label("http://127.0.0.1:8081"))
     }
+
+    @Test
+    fun `an admin token may go to an https node`() {
+        assertTrue(
+            NodeEndpoint.admitsAdminToken("https://node.example.org") is NodeEndpoint.Verdict.Accepted,
+        )
+    }
+
+    @Test
+    fun `an admin token may go to loopback over cleartext, where no network is crossed`() {
+        assertTrue(
+            NodeEndpoint.admitsAdminToken("http://127.0.0.1:8081") is NodeEndpoint.Verdict.Accepted,
+        )
+    }
+
+    @Test
+    fun `an admin token is refused for a cleartext remote node`() {
+        val verdict = NodeEndpoint.admitsAdminToken("http://node.example.org")
+
+        assertTrue(verdict is NodeEndpoint.Verdict.Rejected)
+        assertTrue((verdict as NodeEndpoint.Verdict.Rejected).reason.contains("https"))
+    }
 }

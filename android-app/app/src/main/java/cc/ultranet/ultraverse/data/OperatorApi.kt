@@ -1,6 +1,5 @@
 package cc.ultranet.ultraverse.data
 
-import android.util.Base64
 import cc.ultranet.ultraverse.wallet.AppChainOperation
 import cc.ultranet.ultraverse.wallet.AppChainSigner
 import cc.ultranet.ultraverse.wallet.SignedAppChainTransaction
@@ -14,6 +13,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 internal class OperatorHttpException(val statusCode: Int, message: String) : IOException(message)
+
+/**
+ * Refused before the socket opens: the node's admin token would have crossed the network in the
+ * clear. A distinct type so a caller can tell "this address is unsafe" from "the node answered".
+ */
+internal class InsecureAdminEndpointException(message: String) : IOException(message)
 
 /**
  * The node endpoints that sit outside the wallet's own surface: block production and the AppChain
@@ -271,6 +276,15 @@ internal class UltraNetOperatorApi(
         body: String?,
         adminToken: CharArray?,
     ): Pair<Int, String> = withContext(Dispatchers.IO) {
+        // A bearer token is the node's administrator credential. Refuse to put it on a cleartext
+        // connection to anywhere but this device, before the socket is opened — the address may have
+        // come from stored preferences or a constructor argument, not only from the settings sheet.
+        if (adminToken != null) {
+            val verdict = NodeEndpoint.admitsAdminToken(baseUrl)
+            if (verdict is NodeEndpoint.Verdict.Rejected) {
+                throw InsecureAdminEndpointException(verdict.reason)
+            }
+        }
         val connection = URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection
         try {
             connection.requestMethod = method
