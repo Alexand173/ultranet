@@ -34,6 +34,11 @@ internal class SignedAppChainTransaction(
     val nullifier: ByteArray,
     val signature: ByteArray,
     val operation: AppChainOperation,
+    /**
+     * The envelope version that was signed. Carried so the body and the digest can never disagree: the
+     * submission sends this value rather than re-deriving one.
+     */
+    val version: Int,
 ) {
     fun wipe() {
         senderPublicKey.fill(0)
@@ -60,8 +65,28 @@ internal class SignedAppChainTransaction(
  * shipping signatures the node rejects.
  */
 internal object AppChainSigner {
-    /** Signing-envelope version reserved for AppChain ledger transactions. */
+    /** The signing-envelope version this build produces. */
     const val TX_VERSION = 5
+
+    /**
+     * Every envelope version this build can sign.
+     *
+     * The domain string and the payload encoding are part of the version, so "supporting" another version
+     * means shipping a new preimage, not parameterising this one. Until that exists, an advertised version
+     * outside this set must refuse to sign: a transaction signed for a version the node does not accept
+     * can never be included, and quietly signing the version we prefer while the node advertises another
+     * is how a client and a chain drift apart.
+     */
+    val SUPPORTED_VERSIONS = setOf(TX_VERSION)
+
+    /** Resolves the version the node advertises, or refuses loudly enough to be actionable. */
+    fun requireSupportedVersion(advertised: Int): Int {
+        require(advertised in SUPPORTED_VERSIONS) {
+            "This wallet signs envelope version $TX_VERSION and the node advertises version " +
+                "$advertised. Update the app before signing."
+        }
+        return advertised
+    }
     /** Fixed recipient: AppChain transactions move no amount. */
     const val RECIPIENT = "appchain"
     const val REGISTER_FEE_BASE_UNITS = 10_000L
@@ -120,6 +145,7 @@ internal object AppChainSigner {
         timestamp: Long,
         nullifier: ByteArray,
         operation: AppChainOperation,
+        version: Int = TX_VERSION,
     ): ByteArray {
         require(ADDRESS_PATTERN.matches(sender)) { "The sender must be a 64-character lowercase hexadecimal address." }
         require(nullifier.size == 32) { "An AppChain transaction nullifier must contain 32 bytes." }
@@ -137,7 +163,7 @@ internal object AppChainSigner {
         preimage.write(leLong(GAS_LIMIT))
         preimage.write(leLong(GAS_PRICE))
         preimage.write(ENVELOPE_DOMAIN)
-        preimage.write(leInt(TX_VERSION))
+        preimage.write(leInt(version))
         preimage.write(leInt(L1_CHAIN_ID))
         when (operation) {
             is AppChainOperation.Register -> {
@@ -180,6 +206,7 @@ internal object AppChainSigner {
         nonce: Long,
         timestamp: Long,
         operation: AppChainOperation,
+        version: Int = TX_VERSION,
     ): SignedAppChainTransaction {
         require(seed.size == WALLET_SEED_BYTES) { "The local wallet seed has an unexpected size." }
         require(ADDRESS_PATTERN.matches(sender)) { "The sender must be a 64-character lowercase hexadecimal address." }
@@ -211,7 +238,7 @@ internal object AppChainSigner {
         val nullifier = ByteArray(32).also(secureRandom::nextBytes)
         var digest: ByteArray? = null
         try {
-            digest = buildDigest(sender, requiredFee(operation), nonce, timestamp, nullifier, operation)
+            digest = buildDigest(sender, requiredFee(operation), nonce, timestamp, nullifier, operation, version)
             val signature = NativeDilithium.sign(seed, digest).also {
                 require(it.size == DILITHIUM_SIGNATURE_BYTES) { "Dilithium-5 returned an incompatible signature size." }
             }
@@ -224,6 +251,7 @@ internal object AppChainSigner {
                 nullifier = nullifier,
                 signature = signature,
                 operation = operation,
+                version = version,
             )
         } catch (error: Exception) {
             publicKey.fill(0)

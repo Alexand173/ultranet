@@ -95,7 +95,7 @@ internal class UltraNetOperatorApi(
             .put("nullifier", tx.nullifier.toJsonArray())
             .put("fee", tx.fee)
             .put("signature", tx.signature.toJsonArray())
-            .put("version", AppChainSigner.TX_VERSION)
+            .put("version", tx.version)
             .put("operation", operation)
             .toString()
         val payload = post("/api/appchain/tx", body, adminToken = null)

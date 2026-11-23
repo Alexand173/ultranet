@@ -453,6 +453,11 @@ internal class WalletController(
                         "${ultraLabel(account.balanceBaseUnits)} \$ULTRA.",
                 )
             }
+            // The node advertises the envelope version it accepts. Send that one rather than a literal,
+            // and refuse loudly when this build cannot produce it: a signature over a version the node
+            // does not accept can never be included, and the wallet has no way to explain why.
+            val terms = withContext(Dispatchers.IO) { appChainApi.appChainLedger().terms }
+            val version = AppChainSigner.requireSupportedVersion(terms.version)
             val generation = operationGeneration
             val seed = activeSeed?.copyOf() ?: throw IllegalStateException("The wallet is locked.")
             val signed = try {
@@ -463,6 +468,7 @@ internal class WalletController(
                         nonce = account.nonce,
                         timestamp = System.currentTimeMillis() / 1000L,
                         operation = operation,
+                        version = version,
                     )
                 }
             } finally {

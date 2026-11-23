@@ -7,6 +7,7 @@ import cc.ultranet.ultraverse.data.AppChainAnchorRecord
 import cc.ultranet.ultraverse.data.AppChainGateway
 import cc.ultranet.ultraverse.data.AppChainLedger
 import cc.ultranet.ultraverse.data.AppChainSubmission
+import cc.ultranet.ultraverse.data.AppChainTerms
 import cc.ultranet.ultraverse.wallet.AccountSnapshot
 import cc.ultranet.ultraverse.wallet.DILITHIUM_SIGNATURE_BYTES
 import cc.ultranet.ultraverse.wallet.EncryptedWalletStore
@@ -226,8 +227,19 @@ class LockedWalletSubmissionTest {
     }
 
     private object UnusedAppChainGateway : AppChainGateway {
-        override suspend fun appChainLedger(): AppChainLedger =
-            throw UnsupportedOperationException("not used by this test")
+        // The signing path now reads terms.version before it signs, so this is used even though the test
+        // is about submission. The values are what every live node advertises.
+        override suspend fun appChainLedger(): AppChainLedger = AppChainLedger(
+            terms = AppChainTerms(
+                version = 5,
+                recipient = "appchain",
+                registerFeeBaseUnits = 10_000L,
+                anchorFeeBaseUnits = 1_000L,
+                transferFeeBaseUnits = 1_000L,
+                activationHeight = 0L,
+            ),
+            chains = emptyList(),
+        )
 
         override suspend fun appChainAnchors(chainId: Int, limit: Int, from: Long): List<AppChainAnchorRecord> =
             throw UnsupportedOperationException("not used by this test")
