@@ -696,7 +696,7 @@ The faucet must never send:
 Authorization: Bearer <ULTRANET_ADMIN_TOKEN>
 ```
 
-It must not call administrative routes such as `/api/mine`, `/api/state/prune`, `/api/appchain/create`, `/api/appchain/{id}/anchor`, or governance endpoints. A compromised faucet must be limited to its separate wallet balance and normal standard transfers.
+It must not call administrative routes such as `/api/mine`, `/api/state/prune`, `/api/appchain/create`, `/api/appchain/{id}/anchor` (both AppChain routes are retired and answer `410 Gone`; an anchor is the owner's signed `AppChainAnchor` submitted to `POST /api/appchain/tx`), or governance endpoints. A compromised faucet must be limited to its separate wallet balance and normal standard transfers.
 
 ### 9.7 Input and output safety
 

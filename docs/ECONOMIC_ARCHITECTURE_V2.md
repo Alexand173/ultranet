@@ -368,7 +368,7 @@ to switch on:
 
 | Path | Per-chain price? | Evidence |
 |---|---|---|
-| Legacy prototype registry (`/api/appchain/create`, `/api/appchain/anchor`) | A field **exists and is never varied** | `factory.rs:30` `default_anchor_fee()` returns the global constant; `api.rs:1499` writes that constant at creation; no route accepts a price |
+| Legacy prototype registry (`/api/appchain/create`, `/api/appchain/anchor` — both **retired, `410 Gone`**) | A field **exists and is never varied** | `factory.rs:30` `default_anchor_fee()` returns the global constant; `api.rs:1499` writes that constant at creation; no route accepts a price |
 | Legacy charging basis | The chain's **derived treasury address** | `factory.rs:152`, `api.rs:1672` read `previous_config.anchor_fee` |
 | **Consensus ledger** (`AppChainAnchor`) | **No such field** | `grep -c anchor_fee src/appchain/ledger.rs` → `0`; `required_fee()` returns the global `APPCHAIN_ANCHOR_FEE` |
 

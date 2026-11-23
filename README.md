@@ -110,13 +110,13 @@ verification.
 
 Do not extract or run an archive if its checksum does not match. For non-x86_64 systems, or when you need a source build, follow the compilation instructions in [`VALIDATOR_GUIDE.md`](./VALIDATOR_GUIDE.md).
 
-### AppChain management and test anchoring
+### AppChain management and ownership
 
 AppChains are registered by their owner signing a version-5 `AppChainRegister` transaction against the node (`POST /api/appchain/tx`, or `appchain-cli register`); the node assigns the id and the signer becomes the owner. `/api/appchain/overview` and `/api/appchain/list` read both stores: ledger chains, which are owned and anchored by an L1 address and have no treasury, and legacy factory registry chains, which carry a dedicated treasury address, live balance and cumulative protocol debits. `POST /api/appchain/create` is retired and answers `410 Gone`.
 
-`POST /api/appchain/{chain_id}/anchor` snapshots the server-side L3 state, derives a deterministic SHA3-256 state root, creates and verifies a versioned proof envelope, then records the anchor fee debit against that AppChain treasury. The current proof scheme is a server-verified state commitment; a recursive ZK proof circuit can replace the envelope in a later protocol version without changing the treasury contract.
+Anchoring is the **owner's** act. The chain owner signs a version-5 `AppChainAnchor` transaction (the state root plus the chain id) and submits it to `POST /api/appchain/tx`; the node records it on L1 and rejects it unless `sender` equals the chain's recorded owner. `GET /api/appchain/ledger/{chain_id}/anchors` reads the anchors back, by sequence. Nothing on the node holds an owner key, and there is no server-side snapshot, proof envelope or treasury debit on this path: the root is the owner's published claim, which L1 records and does not recompute. `appchain-cli anchor` is the same transaction signed from a key file instead of a phone.
 
-For local fixture testing only, set `ULTRANET_ENABLE_TEST_ANCHORING=true` on a debug build. This enables `POST /api/appchain/{chain_id}/anchor/test`, which runs the same server-side snapshot/proof/debit path but labels the result as a test anchor. Leave this setting unset or false in production.
+The node-side routes are **retired** and answer `410 Gone`, naming the replacement in the body: `POST /api/appchain/{chain_id}/anchor`, `POST /api/appchain/{chain_id}/anchor/test`, and `POST /api/appchain/create`. `ULTRANET_ENABLE_TEST_ANCHORING` no longer exists and is not read by any build; a deployment still setting it should remove the line.
 
 ### What is `ULTRANET_ADMIN_TOKEN`?
 

@@ -665,7 +665,11 @@ graph LR
 
 ### 18.5 Current Status
 
-Your dashboard reports **"Active AppChains: 0"** — this is the expected starting state. Registering your first AppChain is a natural next step once base-layer mining and peer onboarding are stable.
+The dashboard's **Active AppChains** figure is read from the ledger, never hardcoded. As of 2026-11-23 the
+node carries three chains: **#1 UltraGrid** (owner `7d2cd1cc…f9d9388e`, 1 anchor), **#2 Registry** (owner
+`d4fca721…`, 0 anchors) and **#3 Ultra Chess** (owner `7d2cd1cc…f9d9388e`, 0 anchors). A node with no chains
+reports `0`, which is a real starting state rather than an error; `GET /api/appchain/ledger` is the authority
+for the number, so quote it from there rather than from this page.
 
 ---
 

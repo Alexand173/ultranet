@@ -52,7 +52,7 @@ identity the published vectors describe.
 `/api/appchain/ledger/1` reports `anchor_count: 1`, `latest_anchor_block: 12` and
 `latest_state_root` equal to the hash above, character for character. The anchor was signed from
 the owner's mobile wallet, which is what proves the client-side envelope path — the node has no
-owner key and the node-side anchor endpoint refuses ledger chains with `409`.
+owner key, and the node-side anchor endpoint — since retired, `410 Gone` — refused ledger chains with `409`.
 
 ### Balance accounting
 

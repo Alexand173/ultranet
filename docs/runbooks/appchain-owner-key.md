@@ -174,6 +174,12 @@ The CLI is **not** part of a normal user's flow. For someone who just wants an A
 That is the whole thing. They become the owner with the phone key, and they can anchor by hand from the
 chain's screen whenever they want. No CLI, no server, no terminal.
 
+**What no other party can do, by construction:** anchor that chain. The node refuses an `AppChainAnchor`
+whose `sender` is not the chain's recorded owner, and there is no server-side anchor route to bypass that
+with — the node-side path is retired and answers `410 Gone`. The only way a different key ever anchors the
+chain is an ownership transfer signed by the current owner. See D-1 for the decision that made this the
+only model.
+
 The CLI appears at exactly one moment: when the owner wants something *automated* to sign for them —
 a game anchoring its results every day. That is an operator decision, not a user step, and it is
 reversible only by another transfer.

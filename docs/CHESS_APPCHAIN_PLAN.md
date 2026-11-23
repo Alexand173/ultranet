@@ -113,8 +113,11 @@ Receipt value (written by the service, not the app):
   "result":"player_win", "plies":37, "finished_at":1763128800, "app":"0.1.0" }
 ```
 
-Anchoring stays exactly as it is (`POST /api/appchain/{id}/anchor`, 0.001 from the chain treasury),
-but **batched: one anchor per 500 receipts, or per 6 hours, whichever comes first.** That bound is not
+Anchoring keeps its cost and cadence — 0.001 `$ULTRA`, debited from the **owner address**, as an
+owner-signed `AppChainAnchor` submitted to `POST /api/appchain/tx` — but is **batched: one anchor per 500
+receipts, or per 6 hours, whichever comes first.** (This plan originally named the node-side
+`POST /api/appchain/{id}/anchor` with a treasury debit; that route is retired and answers `410 Gone`, and a
+ledger chain has no treasury.) That bound is not
 cosmetic. The anchor fee is 0.001 and the prize is 0.0001, so ten prizes are worth one anchor: any
 schedule finer than a few hundred receipts spends more on committing the results than on paying them.
 

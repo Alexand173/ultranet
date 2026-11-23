@@ -235,6 +235,13 @@ Rules: unknown fields stay refused; the same `record_id` with identical contents
 different contents stays a `409`; responses stay `no-store`. The response bodies of the old routes are not
 changed. New routes may add fields, never remove them.
 
+**Status (2026-11-23).** Implemented: the `/api/games/*` routes. Planned, not published: the generic
+aliases in the table above. The Records service running in production serves its own `/api/records/v1/*`
+surface on loopback only — it answers `404` at the public edge — so `/api/records` and `/api/apps/*` are
+not a contract anyone can build against yet. `POST /api/apps/{id}/anchor` does not exist at all: a ledger
+chain is anchored by the owner's signed `AppChainAnchor` at `POST /api/appchain/tx`, and there is no
+node-side or per-app anchor route.
+
 **On-demand anchoring** (needed by certificates and votes) would be `POST /api/apps/{id}/anchor`, owner-signed,
 refused unless the application is on a dedicated chain or has paid for it (§9). Not part of the first release.
 

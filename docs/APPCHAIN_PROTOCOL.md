@@ -80,11 +80,15 @@ Only the third adds anything to the ledger.
 | Blast radius if the server is compromised | Nothing — no key on it | **The whole chain**, including its transfer | Anchors only; owner revokes one tx later |
 | Blast radius if the phone is lost | Chain is frozen until recovery | Unaffected (server is owner) | Unaffected (owner key needs recovery; anchors continue) |
 | Anchor cadence it can sustain | When a human remembers | Every N hours, forever | Every N hours, forever |
-| Exists today? | **Yes** — `AppChainsScreen` | **Yes** — `appchain-cli anchor` | **No** — §8 |
+| Exists today? | **Yes** — `AppChainsScreen` | **Yes** — `appchain-cli anchor`, an owner-signed `AppChainAnchor` posted to `/api/appchain/tx` (no server-side anchor route exists) | **No** — §8 |
 
 **The recommendation this document makes:** default a new chain to **M1**, and treat **M2 as a decision
 you make when automation is genuinely needed**, because M2 is the only mode where a server compromise
 costs you the chain. M3 is what most operators will actually want, which is why it is specified here.
+
+**Registry chains carry no enforced owner.** A legacy factory registry chain records an owner *label*, and
+nothing in the node checks it before a write. That is why the models above apply to ledger chains only, and
+why the registry is described everywhere as legacy rather than as a second way to own a chain.
 
 ---
 
@@ -175,6 +179,17 @@ Two rules that make this matrix safe:
 ## 8. M3 — delegated anchoring (the one new consensus feature)
 
 Everything above works today except M3. This section is the design, not the code.
+
+**Not implemented.** No `AppChainAuthorizeAnchorer` or `AppChainRevokeAnchorer` envelope exists in the node.
+The version-5 operation enum in `src/appchain/ledger.rs` carries `register`, `anchor` and `transfer_owner`
+only, and a transaction offering either payload is refused as an unknown operation. A chain therefore has
+exactly one signer today — its owner — and delegation is a v6 change, listed as roadmap row **P2** below.
+
+**The envelope itself is specified in code today.** Each operation is committed under the domain
+`UltraNet/appchain-envelope/v5` (`src/appchain/ledger.rs`), and that digest is pinned on three independent
+sides: `appchain-cli` (`cli_digests_match_the_node_vectors`), the Android `AppChainSignerTest`, and
+`tests/appchain_authorization_test.rs`. The published byte-level specification is **D-4 item T4** and does
+not exist yet, so until it does, the code and those three pins are the contract.
 
 ### 8.1 Two new payloads
 
