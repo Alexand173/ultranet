@@ -428,6 +428,67 @@ async fn an_unknown_field_is_rejected() {
     let _ = fs::remove_dir_all("test_db_appchain_auth_unknown");
 }
 
+/// Strictness is claimed at two levels — the envelope and the operation — but the test above only
+/// asserts the envelope. A client that adds an extension to one operation type will add it to the
+/// others, so all three are checked.
+///
+/// The assertion is on the *reason*, not just the status: an extra field must be refused by the
+/// deserialiser. Checking the status alone would pass for the wrong reason, because an anchor for an
+/// unregistered chain also answers 400.
+#[actix_web::test]
+async fn an_unknown_field_inside_each_operation_is_rejected() {
+    let alice = UltraWallet::new();
+    let blockchain = fresh_chain("test_db_appchain_auth_unknown_nested", &[&alice]);
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(AppState { blockchain: blockchain.clone() }))
+            .route("/api/appchain/tx", web::post().to(submit_appchain_tx)),
+    )
+    .await;
+
+    // Values are valid for each variant, so the only defect in each body is the extra field.
+    let cases: [(&str, AppChainOperation, u64); 3] = [
+        ("register", register("Extended"), APPCHAIN_REGISTER_FEE),
+        ("anchor", anchor(1, "ab".repeat(32)), APPCHAIN_ANCHOR_FEE),
+        (
+            "transfer_owner",
+            AppChainOperation::TransferOwner {
+                chain_id: 1,
+                new_owner: "cd".repeat(32),
+            },
+            APPCHAIN_TRANSFER_FEE,
+        ),
+    ];
+
+    for (operation_name, operation, fee) in cases {
+        let mut body = serde_json::to_value(signed_request(&alice, 0, fee, operation))
+            .expect("serialisable request");
+        body["operation"][operation_name]["extension"] = serde_json::json!(1);
+
+        let response = actix_test::call_service(
+            &app,
+            actix_test::TestRequest::post().uri("/api/appchain/tx").set_json(&body).to_request(),
+        )
+        .await;
+
+        let status = response.status().as_u16();
+        let bytes = actix_test::read_body(response).await;
+        let text = String::from_utf8_lossy(&bytes);
+
+        assert_eq!(status, 400, "{operation_name}: nested unknown field was not refused");
+        assert!(
+            text.contains("unknown field"),
+            "{operation_name}: 400 was not a deserialisation refusal: {text}"
+        );
+        assert!(
+            text.contains("extension"),
+            "{operation_name}: refusal does not name the offending field: {text}"
+        );
+    }
+
+    let _ = fs::remove_dir_all("test_db_appchain_auth_unknown_nested");
+}
+
 /// The published read surface, as a client sees it: the chain route 404s for an unknown id, the
 /// anchor route answers an empty list, and `from` addresses a sequence rather than an offset.
 #[actix_web::test]
