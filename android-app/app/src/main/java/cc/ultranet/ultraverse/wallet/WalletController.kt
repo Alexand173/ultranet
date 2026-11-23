@@ -43,7 +43,16 @@ internal class WalletController(
      * the request was still on the wire, and a second tap would put a second copy of the same signed
      * transfer on the network (D-5D §3.3: "`lock()` must not reset the in-flight guard").
      */
+    @Volatile
     private var submissionInFlight = false
+
+    /**
+     * The same guard for the AppChain write path. It is set only around the network call, so a second
+     * tap during a submission is refused instead of producing a second transaction with the same
+     * effect — which is the failure mode that has no refund attached to it.
+     */
+    @Volatile
+    private var appChainSubmissionInFlight = false
 
     suspend fun initialize() = runBusy {
         try {
@@ -415,15 +424,26 @@ internal class WalletController(
         signAppChain(AppChainOperation.TransferOwner(chainId, newOwnerHex.trim().lowercase()))
 
     /**
-     * The one place an AppChain transaction is signed and submitted. It deliberately does not touch
-     * `unresolvedTransfer`: an AppChain transaction carries no amount, so a failed submission cannot
-     * strand value the way an interrupted transfer can — it only costs a nonce and a retry.
+     * The one place an AppChain transaction is signed and submitted.
+     *
+     * An AppChain transaction carries no amount, so a failure cannot strand value the way an
+     * interrupted transfer can — but it can strand *intent*. If the node accepted the transaction and
+     * the answer was lost, signing again would put a second transaction with the same effect on the
+     * network (a second registration, a duplicate anchor). So an unknown outcome is recorded and must
+     * be reconciled against the account's nonce before another signature is offered, and a submission
+     * already on the wire is never duplicated by a second tap.
      */
     private suspend fun signAppChain(operation: AppChainOperation): AppChainOutcome {
+        if (appChainSubmissionInFlight) {
+            return AppChainOutcome.Rejected("This AppChain transaction is already being submitted.")
+        }
         state = state.copy(isBusy = true, error = null)
         idleSession.record(System.currentTimeMillis())
         try {
             check(activeSeed != null) { "Unlock the local wallet before signing an AppChain transaction." }
+            check(state.unresolvedAppChain == null) {
+                "Reconcile the previous AppChain transaction first: the node may already have it."
+            }
             val account = state.account
                 ?: throw IllegalStateException("Refresh the account before signing an AppChain transaction.")
             val fee = AppChainSigner.requiredFee(operation)
@@ -452,7 +472,42 @@ internal class WalletController(
                 if (generation != operationGeneration) {
                     throw IllegalStateException("The wallet was locked before the transaction could be submitted.")
                 }
-                val submission = withContext(Dispatchers.IO) { appChainApi.submitAppChain(signed) }
+                appChainSubmissionInFlight = true
+                val submission = try {
+                    withContext(Dispatchers.IO) { appChainApi.submitAppChain(signed) }
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    when (AppChainFailure.classify(error)) {
+                        // The node may have it. Keep the identity, say so plainly, and offer
+                        // reconciliation — never a retry.
+                        AppChainSubmissionState.Uncertain -> {
+                            val message = error.message ?: "The submission was interrupted."
+                            state = state.copy(
+                                unresolvedAppChain = UnresolvedAppChainTransaction(
+                                    operation = operation,
+                                    sender = account.address,
+                                    nonce = account.nonce,
+                                    submittedAtMillis = System.currentTimeMillis(),
+                                    failure = message,
+                                ),
+                                error = null,
+                            )
+                            return AppChainOutcome.Uncertain(message = message, nonce = account.nonce)
+                        }
+
+                        // The node considered it and refused it: nothing is pending.
+                        AppChainSubmissionState.Rejected -> {
+                            val message = error.message ?: "The node rejected the AppChain transaction."
+                            state = state.copy(error = message)
+                            return AppChainOutcome.Rejected(message)
+                        }
+
+                        // Only a 2xx produces this, and a 2xx is returned as a value, not thrown.
+                        AppChainSubmissionState.Accepted -> throw error
+                    }
+                } finally {
+                    appChainSubmissionInFlight = false
+                }
                 refreshAccount()
                 return AppChainOutcome.Accepted(
                     txHash = submission.txHash,
@@ -464,11 +519,87 @@ internal class WalletController(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            val message = error.message ?: "The AppChain transaction could not be submitted."
+            // Everything else was decided before the wire — locked, unaffordable, not prepared — so it
+            // is a refusal this wallet can state, not an unknown outcome.
+            val message = error.message ?: "The AppChain transaction could not be prepared."
             state = state.copy(error = message)
-            return AppChainOutcome.Failed(message)
+            return AppChainOutcome.Rejected(message)
         } finally {
             state = state.copy(isBusy = false)
+        }
+    }
+
+    /**
+     * Asks the node what became of an uncertain submission, and is the only way to clear one safely.
+     *
+     * The nonce is the whole question: if the account's nonce has moved past the one that transaction
+     * used, the node included it and there is nothing to retry. If it has not moved, the transaction is
+     * still unresolved — not failed — and signing again would repeat the same intent.
+     */
+    suspend fun reconcileAppChain(): AppChainReconciliation? {
+        val unresolved = state.unresolvedAppChain ?: return null
+        val address = state.storedWallet?.address ?: return null
+        return try {
+            val account = withContext(Dispatchers.IO) { api.account(address) }
+            state = state.copy(account = account)
+            when (AppChainReconciler.judge(unresolved.nonce, account.nonce)) {
+                AppChainReconciliation.Landed -> {
+                    state = state.copy(
+                        unresolvedAppChain = null,
+                        error = null,
+                        notice = "The node already included that transaction on nonce ${unresolved.nonce}. It will not be sent again.",
+                    )
+                    AppChainReconciliation.Landed
+                }
+
+                AppChainReconciliation.StillPending -> {
+                    state = state.copy(
+                        error = "The node has not included it and the account nonce is still ${account.nonce}. " +
+                            "Signing again now would send a second transaction with the same intent.",
+                    )
+                    AppChainReconciliation.StillPending
+                }
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            state = state.copy(error = error.message ?: "The node could not be reached to reconcile this transaction.")
+            null
+        }
+    }
+
+    /**
+     * Gives up on an uncertain submission — after refreshing the nonce, never before.
+     *
+     * If the refresh shows the transaction landed, it is resolved instead of discarded: discarding a
+     * transaction the node already has would be the one outcome this must never produce.
+     */
+    suspend fun discardUnresolvedAppChain(): AppChainReconciliation? {
+        val unresolved = state.unresolvedAppChain ?: return null
+        val address = state.storedWallet?.address ?: return null
+        return try {
+            val account = withContext(Dispatchers.IO) { api.account(address) }
+            state = state.copy(account = account)
+            if (AppChainReconciler.judge(unresolved.nonce, account.nonce) == AppChainReconciliation.Landed) {
+                state = state.copy(
+                    unresolvedAppChain = null,
+                    error = null,
+                    notice = "The node had already included that transaction (nonce ${unresolved.nonce}). Nothing was discarded.",
+                )
+                return AppChainReconciliation.Landed
+            }
+            state = state.copy(
+                unresolvedAppChain = null,
+                error = null,
+                notice = "Discarded an unresolved submission on nonce ${unresolved.nonce}. " +
+                    "The node has not included it, so the next signature uses nonce ${account.nonce}.",
+            )
+            AppChainReconciliation.StillPending
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            state = state.copy(error = error.message ?: "The node could not be reached, so nothing was discarded.")
+            null
         }
     }
 
@@ -554,6 +685,18 @@ internal class WalletController(
             isSubmitting = false,
             notice = null,
         )
+    }
+
+    /**
+     * The screen went off while the app was still started. Lock now rather than waiting for `ON_STOP`,
+     * and drop the idle clock so a stale session cannot be resumed by the score on the way back.
+     */
+    fun onScreenOff() {
+        if (state.unlocked) {
+            lock()
+        } else {
+            idleSession.clear()
+        }
     }
 
     fun dismissNotice() { state = state.copy(notice = null) }

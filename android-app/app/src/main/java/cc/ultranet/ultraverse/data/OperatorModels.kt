@@ -47,10 +47,18 @@ internal data class AppChainSubmission(
     val status: String,
 )
 
-/** Outcome of signing and submitting from the wallet, so the screen can show the truth. */
+/**
+ * Outcome of signing and submitting from the wallet, so the screen can show the truth.
+ *
+ * [Rejected] and [Uncertain] are different facts and must never be shown as one. A rejection means the
+ * node considered the transaction and refused it, so nothing is pending and nothing needs reconciling.
+ * An uncertain outcome means the request may have been accepted before the answer was lost, so the
+ * transaction is kept and reconciled against the account's nonce — it is not re-sent.
+ */
 internal sealed interface AppChainOutcome {
     data class Accepted(val txHash: String, val chainId: Int?) : AppChainOutcome
-    data class Failed(val message: String) : AppChainOutcome
+    data class Rejected(val message: String) : AppChainOutcome
+    data class Uncertain(val message: String, val nonce: Long) : AppChainOutcome
 }
 
 /** Public node counters used by the mining screen. */

@@ -56,6 +56,7 @@ import cc.ultranet.ultraverse.data.ServiceEntry
 import cc.ultranet.ultraverse.ui.appchains.AppChainsScreen
 import cc.ultranet.ultraverse.ui.chess.ChessScreen
 import cc.ultranet.ultraverse.data.UltraNetGamesApi
+import cc.ultranet.ultraverse.wallet.ScreenOffLock
 import cc.ultranet.ultraverse.ui.games.GameCatalog
 import cc.ultranet.ultraverse.ui.games.submitChessReward
 import cc.ultranet.ultraverse.ui.games.GamesScreen
@@ -151,6 +152,19 @@ internal fun UltraVerseApp(
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Screen off is its own trigger, not a substitute for ON_STOP: the activity can still be started
+    // when the screen goes dark, and the seed must not outlive the moment the device leaves the hand.
+    DisposableEffect(context, controller) {
+        val receiver = ScreenOffLock.register(context.applicationContext) {
+            controller.onScreenOff()
+            // Same rule as ON_STOP below: locking must not leave a signed-in-looking screen behind.
+            if (currentSection == HomeSection.Wallet && currentRoute != WalletRoute.Apps) {
+                route = WalletRoute.Portfolio
+            }
+        }
+        onDispose { ScreenOffLock.unregister(context.applicationContext, receiver) }
     }
 
     // An unlocked session that is left alone locks itself. Backgrounding is already covered above;
@@ -352,6 +366,9 @@ internal fun UltraVerseApp(
                 onRegister = { name -> controller.registerAppChain(name) },
                 onAnchor = { chainId, root -> controller.anchorAppChain(chainId, root) },
                 onTransfer = { chainId, newOwner -> controller.transferAppChainOwnership(chainId, newOwner) },
+                unresolvedAppChain = controller.state.unresolvedAppChain,
+                onReconcileAppChain = { controller.reconcileAppChain() },
+                onDiscardAppChain = { controller.discardUnresolvedAppChain() },
             )
 
             // Read-only and wallet-free on purpose: the ledger and the anchor history are public, and

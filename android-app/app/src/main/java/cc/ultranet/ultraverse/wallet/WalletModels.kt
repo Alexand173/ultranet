@@ -95,6 +95,11 @@ internal data class WalletUiState(
     val error: String? = null,
     val notice: String? = null,
     val unresolvedTransfer: SignedTransfer? = null,
+    /**
+     * An AppChain transaction the node may or may not have accepted. Held until the account's nonce
+     * says which, and while it is held the wallet refuses to sign another (D-5D §3.2/§3.3).
+     */
+    val unresolvedAppChain: UnresolvedAppChainTransaction? = null,
     val lastTransaction: TransactionRecord? = null,
 )
 

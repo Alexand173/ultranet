@@ -40,6 +40,9 @@ import cc.ultranet.ultraverse.data.AppChainAnchorRecord
 import cc.ultranet.ultraverse.data.AppChainLedger
 import cc.ultranet.ultraverse.data.AppChainLedgerChain
 import cc.ultranet.ultraverse.data.AppChainOutcome
+import cc.ultranet.ultraverse.wallet.AppChainOperation
+import cc.ultranet.ultraverse.wallet.AppChainReconciliation
+import cc.ultranet.ultraverse.wallet.UnresolvedAppChainTransaction
 import cc.ultranet.ultraverse.data.NodeEndpoint
 import cc.ultranet.ultraverse.data.NodeEndpointStore
 import cc.ultranet.ultraverse.data.UltraNetOperatorApi
@@ -76,6 +79,10 @@ internal fun AppChainsScreen(
     onRegister: suspend (String) -> AppChainOutcome,
     onAnchor: suspend (Int, String) -> AppChainOutcome,
     onTransfer: suspend (Int, String) -> AppChainOutcome,
+    // A submission whose fate the node has not told us. Shown, reconciled, and never silently retried.
+    unresolvedAppChain: UnresolvedAppChainTransaction?,
+    onReconcileAppChain: suspend () -> AppChainReconciliation?,
+    onDiscardAppChain: suspend () -> AppChainReconciliation?,
 ) {
     val context = LocalContext.current
     val endpointStore = remember(context) { NodeEndpointStore(context.applicationContext) }
@@ -143,6 +150,39 @@ internal fun AppChainsScreen(
             receipt = receipt,
             receiptTitle = receiptTitle,
             notice = notice,
+            unresolved = unresolvedAppChain,
+            onReconcile = {
+                scope.launch {
+                    notice = when (onReconcileAppChain()) {
+                        AppChainReconciliation.Landed -> {
+                            receipt = null
+                            load()
+                            "The node had already included that transaction, so it is resolved and will not be sent again."
+                        }
+
+                        AppChainReconciliation.StillPending ->
+                            "The node has not included it yet. Signing again now would repeat the same intent."
+
+                        null -> "The node could not be reached to reconcile this transaction."
+                    }
+                }
+            },
+            onDiscard = {
+                scope.launch {
+                    notice = when (onDiscardAppChain()) {
+                        AppChainReconciliation.Landed -> {
+                            receipt = null
+                            load()
+                            "The node had already included that transaction. Nothing was discarded."
+                        }
+
+                        AppChainReconciliation.StillPending ->
+                            "Discarded after refreshing the nonce. The next signature uses the account's current nonce."
+
+                        null -> "The node could not be reached, so nothing was discarded."
+                    }
+                }
+            },
             onBack = onBack,
             onRetry = ::load,
             onOpenWallet = onOpenWallet,
@@ -291,11 +331,67 @@ internal fun AppChainsScreen(
                         load()
                     }
 
-                    is AppChainOutcome.Failed -> notice = outcome.message
+                    is AppChainOutcome.Rejected -> notice = outcome.message
+
+                    // Not a failure and not a receipt: the wallet is holding it, and the registry card
+                    // below offers "check the node" or "discard" — never a silent retry.
+                    is AppChainOutcome.Uncertain -> {
+                        notice = null
+                        receipt = null
+                    }
                 }
             },
         )
     }
+}
+
+/**
+ * A submission whose fate the wallet does not know.
+ *
+ * The wording is the point: this is not "failed". The node may have accepted it and lost the answer,
+ * so the two safe actions are asking the node what its nonce says, and giving up after a refresh.
+ * There is deliberately no "try again" here, because that would sign a second transaction with the
+ * same effect.
+ */
+@Composable
+private fun UnresolvedSubmissionCard(
+    pending: UnresolvedAppChainTransaction,
+    onReconcile: () -> Unit,
+    onDiscard: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        ToolInlineMessage(
+            title = "Submission not confirmed",
+            text = "${operationLabel(pending.operation)} on nonce ${pending.nonce} may or may not have reached the node. " +
+                "It has not been reported as rejected. Signing again before this is resolved could repeat it.",
+        )
+        Spacer(Modifier.height(8.dp))
+        ToolPrimaryAction(
+            label = "Check the node",
+            onClick = onReconcile,
+            modifier = Modifier.testTag("appchain-reconcile"),
+        )
+        Spacer(Modifier.height(6.dp))
+        ToolPrimaryAction(
+            label = "Discard and sign again",
+            onClick = onDiscard,
+            modifier = Modifier.testTag("appchain-discard"),
+        )
+        if (pending.failure.isNotBlank()) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "What the wallet saw: ${pending.failure}",
+                color = UltraVerseColors.dim,
+                fontSize = 11.sp,
+            )
+        }
+    }
+}
+
+private fun operationLabel(operation: AppChainOperation): String = when (operation) {
+    is AppChainOperation.Register -> "Registration of \"${operation.name}\""
+    is AppChainOperation.Anchor -> "Anchor for AppChain #${operation.chainId}"
+    is AppChainOperation.TransferOwner -> "Ownership transfer of AppChain #${operation.chainId}"
 }
 
 /** What the owner is about to sign. Built only from values already shown on a screen. */
@@ -330,6 +426,9 @@ private fun Registry(
     receipt: AppChainOutcome.Accepted?,
     receiptTitle: String,
     notice: String?,
+    unresolved: UnresolvedAppChainTransaction?,
+    onReconcile: () -> Unit,
+    onDiscard: () -> Unit,
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onOpenWallet: () -> Unit,
@@ -365,6 +464,12 @@ private fun Registry(
                     Spacer(Modifier.height(8.dp))
                     Column(Modifier.padding(horizontal = 16.dp)) {
                         ToolInlineMessage(text = it, isError = true)
+                    }
+                }
+                unresolved?.let { pending ->
+                    Spacer(Modifier.height(8.dp))
+                    Column(Modifier.padding(horizontal = 16.dp)) {
+                        UnresolvedSubmissionCard(pending = pending, onReconcile = onReconcile, onDiscard = onDiscard)
                     }
                 }
                 receipt?.let {

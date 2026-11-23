@@ -93,7 +93,7 @@ class AppChainsFlowTest {
                 signedName = name
                 AppChainOutcome.Accepted(txHash, chainId = null)
             },
-            onAnchor = { _, _ -> AppChainOutcome.Failed("anchor is not exercised here") },
+            onAnchor = { _, _ -> AppChainOutcome.Rejected("anchor is not exercised here") },
         )
 
         awaitTag("appchain-register")
@@ -134,7 +134,7 @@ class AppChainsFlowTest {
 
         showScreen(
             walletAddress = ownerAddress,
-            onRegister = { AppChainOutcome.Failed("registration is not exercised here") },
+            onRegister = { AppChainOutcome.Rejected("registration is not exercised here") },
             onAnchor = { chainId, requestedRoot ->
                 signatures.incrementAndGet()
                 signedChainId = chainId
@@ -176,7 +176,7 @@ class AppChainsFlowTest {
 
         showScreen(
             walletAddress = ownerAddress,
-            onRegister = { AppChainOutcome.Failed("registration is not exercised here") },
+            onRegister = { AppChainOutcome.Rejected("registration is not exercised here") },
             onAnchor = { _, _ ->
                 signatures.incrementAndGet()
                 AppChainOutcome.Accepted(txHash, chainId = 2)
@@ -208,8 +208,8 @@ class AppChainsFlowTest {
 
         showScreen(
             walletAddress = ownerAddress,
-            onRegister = { AppChainOutcome.Failed("registration is not exercised here") },
-            onAnchor = { _, _ -> AppChainOutcome.Failed("anchor is not exercised here") },
+            onRegister = { AppChainOutcome.Rejected("registration is not exercised here") },
+            onAnchor = { _, _ -> AppChainOutcome.Rejected("anchor is not exercised here") },
             onTransfer = { chainId, newOwner ->
                 signatures.incrementAndGet()
                 signedChainId = chainId
@@ -258,8 +258,8 @@ class AppChainsFlowTest {
 
         showScreen(
             walletAddress = ownerAddress,
-            onRegister = { AppChainOutcome.Failed("registration is not exercised here") },
-            onAnchor = { _, _ -> AppChainOutcome.Failed("anchor is not exercised here") },
+            onRegister = { AppChainOutcome.Rejected("registration is not exercised here") },
+            onAnchor = { _, _ -> AppChainOutcome.Rejected("anchor is not exercised here") },
             onTransfer = { _, _ ->
                 signatures.incrementAndGet()
                 AppChainOutcome.Accepted(txHash, chainId = 1)
@@ -285,7 +285,7 @@ class AppChainsFlowTest {
         onRegister: suspend (String) -> AppChainOutcome,
         onAnchor: suspend (Int, String) -> AppChainOutcome,
         onTransfer: suspend (Int, String) -> AppChainOutcome = { _, _ ->
-            AppChainOutcome.Failed("transfer is not exercised in this case")
+            AppChainOutcome.Rejected("transfer is not exercised in this case")
         },
     ) {
         compose.setContent {
@@ -298,6 +298,9 @@ class AppChainsFlowTest {
                     onRegister = onRegister,
                     onAnchor = onAnchor,
                     onTransfer = onTransfer,
+                    unresolvedAppChain = null,
+                    onReconcileAppChain = { null },
+                    onDiscardAppChain = { null },
                 )
             }
         }

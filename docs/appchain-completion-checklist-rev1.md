@@ -2,7 +2,7 @@
 
 **Revision:** 1, 2026-11-22. Replaces the per-document status sections for tracking purposes; the decision
 documents remain the record of *why*.
-**Code revision:** `0a50928` on top of `c3a31ae`, `f5a532f` and `c05fb94`, all on top of `cda5132`. The
+**Code revision:** this commit, on top of `0a50928`, `c3a31ae`, `f5a532f`, `c05fb94` and `cda5132`. The
 binary built from `cda5132` is what production runs (row 17b). None of it is pushed (row 24).
 **Repository note:** this file is mirrored at `docs/appchain-completion-checklist-rev1.md`; the decision
 documents it cites (D-1, D-4, D-5A–D) live in the planning workspace, not in the repository.
@@ -46,7 +46,7 @@ documents it cites (D-1, D-4, D-5A–D) live in the planning workspace, not in t
 | 25 | **Android release (APK)** | **NOT DONE — committed only** | `186e213` holds the client work. No release APK was built or distributed, and the endpoint / intake / lock sheets have not been walked on a physical phone | release decision |
 
 | 26 | **D-5A consistency checks (scriptable)** | **PASS 2026-11-23** | 77 markdown files scanned. (1) retired route named without a status: **0** (after `docs/CHESS_APPCHAIN_PLAN.md:116`, the last one, was corrected). (2) capabilities claimed without implementation: 0 hits for unique-name or metadata claims. (3) all **36** routes named in the guide resolve to a literal in `src/api.rs` or are marked retired: **0 unresolved**. (4) the guide's chain count matches `GET /api/appchain/ledger`: **3** chains (#1, #2, #3), and the stale "Active AppChains: 0" prose is gone. (5) relative-link check: **0** broken project links — the single hit is `./.kombai/debug/…`, a local scratch file that is not part of the repository | check 5 of D-5A §5 (digest spec vs pinned vectors) is vacuous until D-4 T4 publishes one |
-| 27 | **D-5D §3 requirements not yet implemented** | **OPEN — three separate items** | (a) **§3.2 second defect:** a failed AppChain submission is not marked unresolved and does not refresh the nonce, so a timeout after the node accepted it leaves a stale nonce and the next attempt fails as "Invalid nonce!". (b) **§3.3 failure semantics:** a transport failure must be distinguishable from a rejection and must refresh the account before any retry — `signAppChain`'s catch block has neither, only a message. (c) **§3.3 screen-off lock:** lock on screen-off, not only `ON_STOP`; today the triggers are the manual action, `ON_STOP`, and the idle poll. §3.3's *unresolved-state* clause is now fully implemented and tested (row 13) | needs its own approval; (a) and (b) touch `signAppChain`, (c) touches the lifecycle observer |
+| 27 | **D-5D §3 failure semantics and screen-off lock** | **CLOSED 2026-11-23 — this commit** | (a) **Uncertain submissions are held, not reported as failures.** `signAppChain` records an `UnresolvedAppChainTransaction` (operation, sender, nonce, time, what the wallet saw), refuses a second signature while it is held, and clears it only through `reconcileAppChain()`, which reads the account's nonce from the node: a nonce past the submitted one means the transaction landed and is never re-sent; an unchanged nonce leaves it unresolved with the message that signing again would repeat the same intent. `discardUnresolvedAppChain()` refreshes first and **resolves instead of discarding** if it landed. (b) **Transport is not rejection.** `AppChainFailure.classify` maps `IOException` to `Uncertain`, node answers 408/409/425/429/5xx to `Uncertain` and other 4xx to `Rejected` (the same uncertain set the transfer path uses), and decisions made before the wire to `Rejected`. `AppChainOutcome` is now `Accepted` / `Rejected` / `Uncertain`, so the screen cannot show a timeout as a rejection: the registry renders a "Submission not confirmed" card with **Check the node** and **Discard and sign again** — never a retry. (c) **Screen off locks.** `ScreenOffReceiver` + `ScreenOffLock` register for `ACTION_SCREEN_OFF` (API 33 not-exported flag) and call `WalletController.onScreenOff()`, which locks and clears the idle clock; returning to the foreground does not unlock, and manual and idle locks are untouched. Evidence: `AppChainFailureTest` **6/6** (JVM), `AppChainUncertainOutcomeTest` **PASS 4**, `ScreenOffLockTest` **PASS 3**, `AppChainsFlowTest` **PASS 5**, full JVM suite **43/43** | the system's delivery of `ACTION_SCREEN_OFF` is not exercised by the suite — the receiver's handling of that intent, and its registration on this API level, are |
 
 ---
 
@@ -111,6 +111,11 @@ any chain, spending ULTRA, submitting any anchor or transaction, and touching pr
 - Committed 2026-11-23 in four commits: `c05fb94` (13 documentation files), `f5a532f` (the `fhe_demo`
   example), `c3a31ae` (website metadata), `0a50928` (both Android session defects, 8 files). This checklist
   and `docs/PRODUCTION_READINESS_REPORT_2026-11-22.md` are committed alongside them. Not pushed.
+- Row 27 (this commit): `./gradlew testDebugUnitTest --rerun-tasks` **43/43** (37 existing +
+  `AppChainFailureTest` 6); `./run-instrumented-tests.sh AppChainUncertainOutcomeTest ScreenOffLockTest
+  AppChainsFlowTest` → **PASS 4**, **PASS 3**, **PASS 5**; `./run-instrumented-tests.sh
+  LockedWalletSubmissionTest UltraNetPayScreenTest GroupedHomeScreenTest` re-run against the changed
+  controller and app shell. Emulator: `UltraVerse_API_36`, headless, KVM, ~20 s boot.
 - D-5A / D-5D change set (2026-11-23): `cargo build --bin fhe_demo` exit 0;
   `cargo test --lib configuration_tests` **27/27 PASS**; `cargo test --test appchain_authorization_test`
   **10/10 PASS**; `./gradlew testDebugUnitTest --rerun-tasks` **37/37 PASS** (27 existing + `SubmissionGateTest`
