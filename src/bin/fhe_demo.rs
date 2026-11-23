@@ -107,20 +107,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     println!("📡 Node response: {}", resp.text().await?);
 
-    // 7. Demo Anchoring sa ZK-FHE
-    println!("\n⚓ Simulating AppChain Anchoring with ZK-FHE Proof...");
-    let anchor_req = serde_json::json!({
-        "chain_id": 1,
-        "state_root": "0xABC123",
-        "proof": "STARK_FHE_TRACE_DUMMY_PROOF"
-    });
-
-    let resp = client
-        .post("http://127.0.0.1:8081/api/appchain/anchor")
-        .json(&anchor_req)
-        .send()
-        .await?;
-    println!("📡 L1 Anchor Response: {}", resp.text().await?);
+    // 7. AppChain anchoring is owner-signed, so this demo does not submit one.
+    //
+    // The node-side anchor routes are retired and answer 410 Gone. Posting a demo root to one of
+    // them would demonstrate a refusal, not an anchor, so the step says what replaced it instead.
+    println!("\n⚓ AppChain anchoring is owner-signed; this demo does not submit an anchor");
+    println!("   Retired (410 Gone): /api/appchain/{{chain_id}}/anchor and .../anchor/test");
+    println!("   An anchor is an AppChainAnchor transaction signed by the chain owner and POSTed");
+    println!("   to /api/appchain/tx; appchain-cli anchor does the same from a key file.");
 
     println!("\n============================================================");
     println!("🎉 DEMO COMPLETE!");
