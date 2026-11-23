@@ -26,8 +26,9 @@ use actix_web::{
         header::{AUTHORIZATION, COOKIE},
         Method, StatusCode,
     },
+    error::InternalError,
     middleware::{from_fn, Next},
-    web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
+    web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder, ResponseError,
 };
 use hex;
 use parking_lot::RwLock;
@@ -1577,13 +1578,16 @@ async fn anchor_appchain(path: web::Path<u32>) -> impl Responder {
     }))
 }
 
-async fn legacy_anchor_appchain(
-    _state: web::Data<AppState>,
-    _req: web::Json<AppChainAnchorRequest>,
-) -> impl Responder {
-    HttpResponse::NotImplemented().json(serde_json::json!({
+// Retired, exactly like the two routes beside it, and for the same reason.
+//
+// It deliberately takes no body extractor. While it took `web::Json<AppChainAnchorRequest>`, a caller
+// with a malformed body was answered 400 by the extractor before the handler ran — so a route that no
+// longer exists reported a request error instead of telling the caller what to do instead. Whether the
+// body parses cannot change whether anchoring is retired.
+async fn legacy_anchor_appchain() -> impl Responder {
+    HttpResponse::Gone().json(serde_json::json!({
         "success": false,
-        "message": "Use POST /api/appchain/{chain_id}/anchor; client-supplied roots and proofs are not accepted."
+        "message": "Anchoring an AppChain from the node is retired. Only the chain owner can anchor it: sign an AppChainAnchor transaction with the owner wallet and post it to /api/appchain/tx"
     }))
 }
 
@@ -3611,6 +3615,29 @@ fn appchain_route_banner() -> [&'static str; 3] {
     ]
 }
 
+/// One envelope for every API error, including the ones actix raises before a handler runs.
+///
+/// Without this, a body that is not valid JSON is answered by the extractor as `text/plain`, so a client
+/// cannot parse the failure without inspecting the content type first — and no SDK does that reliably.
+/// The status is preserved rather than flattened into 400: a malformed body or a missing content type is
+/// 400, an oversized body stays 413, because a client that retries on 400 must not retry on 413.
+pub fn json_error_config() -> web::JsonConfig {
+    web::JsonConfig::default().error_handler(|error, _request| {
+        // Ask actix for the status instead of matching variants by hand. There are two overflow
+        // variants — `OverflowKnownLength` when Content-Length is sent, `Overflow` when it is chunked —
+        // and a hand-written match on one of them answered 400 where the contract promises 413. The
+        // regression test caught it; delegating to `status_code()` covers both, and keeps a
+        // serialisation failure as 500 rather than flattening it into a client error.
+        let status = error.status_code();
+        let body = serde_json::json!({
+            "success": false,
+            "message": format!("Malformed request: {error}"),
+            "data": null,
+        });
+        InternalError::from_response(error, HttpResponse::build(status).json(body)).into()
+    })
+}
+
 pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Result<()> {
     let api_bind = configured_api_bind()?;
     let local_snapshot_enabled = local_validator_snapshot::configured_enabled()?;
@@ -3697,6 +3724,7 @@ pub async fn run_server(blockchain: Arc<RwLock<UltraBlockchain>>) -> std::io::Re
             .app_data(admin_auth.clone())
             .app_data(auth_service.clone())
             .app_data(approval_gateway.clone())
+            .app_data(json_error_config())
             .service(web::resource("/").to(index))
             .service(web::resource("/dashboard").to(index))
             .service(web::resource("/VALIDATOR_GUIDE.md").to(validator_guide))
@@ -4107,7 +4135,11 @@ mod configuration_tests {
         )
         .await;
 
-        for route in ["/api/appchain/1/anchor", "/api/appchain/1/anchor/test"] {
+        for route in [
+            "/api/appchain/1/anchor",
+            "/api/appchain/1/anchor/test",
+            "/api/appchain/anchor",
+        ] {
             // Retirement is not a bypass: the middleware still answers first.
             let unauthenticated = actix_test::call_service(
                 &app,
@@ -4147,6 +4179,25 @@ mod configuration_tests {
                 "{route} must say the owner signs it: {message}",
             );
         }
+
+        // Retirement must not depend on the body parsing. While the legacy handler still took a JSON
+        // extractor, a malformed body was refused with 400 before the retirement message existed, which
+        // reads to a caller as "fix your request" rather than "this route is gone".
+        let malformed = actix_test::call_service(
+            &app,
+            actix_test::TestRequest::post()
+                .uri("/api/appchain/anchor")
+                .insert_header((AUTHORIZATION, format!("Bearer {token}")))
+                .insert_header(("content-type", "application/json"))
+                .set_payload("{\"chain_id\": 1, \"state_root\": ")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(
+            malformed.status(),
+            StatusCode::GONE,
+            "a malformed body must not turn a retired route into a 400",
+        );
     }
 
     #[test]
