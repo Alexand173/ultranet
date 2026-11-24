@@ -180,12 +180,11 @@ with — the node-side path is retired and answers `410 Gone`. The only way a di
 chain is an ownership transfer signed by the current owner.
 
 **Where the decision stands.** That is the *implemented* behaviour: the owner check is enforced in
-`src/lib.rs`, and the retirement of the admin anchor routes is deployed. It is not yet a *ratified*
-policy. The architecture it implements — D-1, "owner-signed is the only model" — is owner decision
-**O-1**, which is still **PENDING OWNER** (`docs/appchain-completion-checklist-rev1.md`, row 1). Nothing
-in this runbook records that approval. `docs/appchain/O1-OWNER-AUTHORISATION-AUDIT.md` sets out the
-evidence the decision rests on; if the owner decides differently, this section is the first thing to
-change.
+`src/lib.rs`, and the retirement of the admin anchor routes is deployed. It is also *ratified* policy:
+owner decision **O-1** — D-1, "owner-signed is the only model" — was **approved on 2026-11-24** and is
+recorded in `docs/appchain/O1-OWNER-DECISION-2026-11-24.md`, from the technical evidence in
+`docs/appchain/O1-OWNER-AUTHORISATION-AUDIT.md`. O-1 fixes the authority model only: it authorises no
+deployment, publication, registration, ownership transfer or economics change.
 
 The CLI appears at exactly one moment: when the owner wants something *automated* to sign for them —
 a game anchoring its results every day. That is an operator decision, not a user step, and it is

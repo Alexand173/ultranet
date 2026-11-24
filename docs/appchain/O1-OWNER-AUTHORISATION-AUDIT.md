@@ -5,9 +5,10 @@
 the games, the wallet UI or the deployment.
 
 > **This document records evidence. It is not the decision.** Owner decision **O-1** — "owner-signed is
-> the only model" — is still **PENDING OWNER**
-> ([checklist row 1](../appchain-completion-checklist-rev1.md)). Nothing here may be cited as that
-> approval having been given, and the row stays pending until the owner records a decision themselves.
+> the only model" — was **APPROVED on 2026-11-24** and is recorded separately in
+> [O1-OWNER-DECISION-2026-11-24.md](./O1-OWNER-DECISION-2026-11-24.md)
+> ([checklist row 1](../appchain-completion-checklist-rev1.md)). The approval is in that record, not
+> here; this page is what the decision was based on and stays as written so the reasoning can be checked.
 
 ---
 
