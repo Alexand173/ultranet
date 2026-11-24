@@ -8,6 +8,62 @@ person can tell what is running and how to roll back.
 
 Backups are kept beside the binary as `UltraNet.bak-<UTC timestamp>`.
 
+## 2026-11-24T13:36Z — AppChain proof scheme made truthful (built, not deployed)
+
+| | |
+|---|---|
+| Status | **built and recorded only.** Nothing was installed, promoted, uploaded, restarted or served. Production still runs the 2026-11-22 binary, `69aeddd9…` |
+| Source | `b9bfb293b99bf49a064b86e9bda60b070774aa4c`, clean tree (0 entries in `git status --porcelain`) |
+| Artefact | `target/release/UltraNet`, 25,766,344 B |
+| sha256 | `14aff6d0f065a4d3c4a9b1f91f17faa9670bccf09a7b041f673ac08024d74870` |
+| Built with | `rustc 1.97.0 (2d8144b78 2026-07-07)`, `cargo 1.97.0 (c980f4866 2026-06-30)`, active toolchain `1.97.0-x86_64-unknown-linux-gnu` selected by `rust-toolchain.toml` |
+| Build | `cargo build --release --locked --bin UltraNet -j 4` → exit 0, `Finished \`release\` profile [optimized] target(s) in 28.96s`, wall 0:29.01, 13:35:51Z → 13:36:20Z |
+| Supersedes | the local artefact `a73068ce…`, 25,766,512 B, built 2026-11-23 21:22 from `78be820`. That one was never recorded here and was never deployed |
+
+### Why
+
+Two commits, each confined to `src/api.rs` and `tests/appchain_api_test.rs`:
+
+1. `c4d294b` — the `/create` retirement message now names `POST /api/appchain/tx`, and the retirement
+   test covers all four retired write routes instead of three, including the malformed-body case on
+   each. This completes the C1 gate, whose `/create` coverage had not been committed.
+2. `b9bfb29` — the two `proof_scheme` constants. A registry chain reports
+   `server-computed state hash (retired, not a state proof)`; a ledger chain reports
+   `owner-signed state root (a signature, not a state proof)`. `/overview` reports the ledger value,
+   and the merge path leaves a chain's own value alone.
+
+Both views had been reporting `SHA3-256 server state commitment v1`, a name for a mechanism this node
+cannot perform: it holds no owner key and computes no state commitment for anyone.
+
+### Verification of the build
+
+| Check | Result |
+|---|---|
+| `cargo check --locked --all-targets` | Finished, no errors |
+| `cargo test --locked -j 1 --test appchain_api_test` | 1 passed, 0 failed |
+| `cargo test --locked -j 1 --lib a_registry_chain_describes_its_retired_mechanism_truthfully` | 1 passed, 0 failed |
+| `cargo test --locked -j 1 --lib retired_appchain_anchor_routes_answer_gone` | 1 passed, 0 failed |
+| sha256 recomputed from the file after the value above was recorded | matches this table |
+
+Only the value of an informational field changed: no route, status code, fee, key, storage, envelope
+or genesis change.
+
+### What production still answers
+
+Read-only checks on 2026-11-24, no credential, no write:
+
+| Check | Result |
+|---|---|
+| `GET /api/appchain/ledger` terms | version 5, register 10000, anchor 1000, transfer 1000, gas 100000/1, activation 10 — unchanged |
+| chains | #1 UltraGrid `7d2cd1cc…`, #2 Registry `d4fca721…`, #3 Ultra Chess `7d2cd1cc…` — unchanged |
+| `GET /api/appchain/overview` `proof_scheme` | `SHA3-256 server state commitment v1` — the pre-C3 string, because this artefact is not deployed |
+
+### Promotion
+
+Not performed, and not implied by this entry. When this artefact is promoted, use the same preflight as
+the 2026-11-22 entry: record the running sha, back it up beside the binary, install by atomic `mv`,
+restart once, verify `/proc/<pid>/exe` and the listener, then add a new section here with the result.
+
 ## 2026-11-22T20:00Z — AppChain: provenance committed, retired routes settled, banner corrected
 
 | | |
