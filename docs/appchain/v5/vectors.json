@@ -1,0 +1,106 @@
+{
+  "$comment": "Pinned version-5 signing vectors. Generated from src/appchain/ledger.rs:820-822, where the node's own test (version_5_digests_are_pinned) asserts these exact values. A client that reproduces these digests signs envelopes this node accepts; one that does not will be rejected with 'Invalid Dilithium signature'.",
+  "envelope_version": 5,
+  "domain": "UltraNet/appchain-envelope/v5",
+  "digest": "SHA3-256",
+  "fixed_fields": {
+    "recipient": "appchain",
+    "amount": 0,
+    "chain_id": 0,
+    "gas_limit": 100000,
+    "gas_price": 1,
+    "proof_type": "Ownership"
+  },
+  "preimage_order": [
+    "sender as ASCII bytes",
+    "recipient as ASCII bytes",
+    "amount as u64 little-endian",
+    "fee as u64 little-endian",
+    "timestamp as u64 little-endian",
+    "nullifier, 32 raw bytes",
+    "nonce as u64 little-endian",
+    "gas_limit as u64 little-endian",
+    "gas_price as u64 little-endian",
+    "domain as ASCII bytes",
+    "version as u32 little-endian",
+    "chain_id as u32 little-endian",
+    "operation tag as ASCII bytes",
+    "operation payload (see payload_encoding)"
+  ],
+  "payload_encoding": {
+    "register": "name length as u64 little-endian, then name as ASCII bytes",
+    "anchor": "chain_id as u32 little-endian, then state_root as 32 raw bytes",
+    "transfer_owner": "chain_id as u32 little-endian, then new_owner length as u64 little-endian, then new_owner as ASCII bytes"
+  },
+  "vectors": [
+    {
+      "operation": "register",
+      "tag": "AppChainRegister",
+      "inputs": {
+        "sender": "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e",
+        "recipient": "appchain",
+        "amount": 0,
+        "fee": 10000,
+        "timestamp": 1800000000,
+        "nullifier": "1111111111111111111111111111111111111111111111111111111111111111",
+        "nonce": 0,
+        "gas_limit": 100000,
+        "gas_price": 1,
+        "version": 5,
+        "chain_id": 0,
+        "payload": { "name": "UltraNet Grid" }
+      },
+      "digest": "7dcaf29f0809d289fdf6e10223ae79c6e7e1b319d45c51de8b17550756130f90"
+    },
+    {
+      "operation": "anchor",
+      "tag": "AppChainAnchor",
+      "inputs": {
+        "sender": "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e",
+        "recipient": "appchain",
+        "amount": 0,
+        "fee": 1000,
+        "timestamp": 1800000000,
+        "nullifier": "1111111111111111111111111111111111111111111111111111111111111111",
+        "nonce": 1,
+        "gas_limit": 100000,
+        "gas_price": 1,
+        "version": 5,
+        "chain_id": 0,
+        "payload": {
+          "chain_id": 1,
+          "state_root": "abababababababababababababababababababababababababababababababab"
+        }
+      },
+      "digest": "f1c64d0830b020aa34c0add54ae7815f61cbe0007e2b6795e844bbbfadd43a72"
+    },
+    {
+      "operation": "transfer_owner",
+      "tag": "AppChainTransferOwner",
+      "inputs": {
+        "sender": "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e",
+        "recipient": "appchain",
+        "amount": 0,
+        "fee": 1000,
+        "timestamp": 1800000000,
+        "nullifier": "1111111111111111111111111111111111111111111111111111111111111111",
+        "nonce": 2,
+        "gas_limit": 100000,
+        "gas_price": 1,
+        "version": 5,
+        "chain_id": 0,
+        "payload": {
+          "chain_id": 1,
+          "new_owner": "2859eb671f8e03129932efd184f4707352a9770e61fc5e6b8215911c8bd377ed"
+        }
+      },
+      "digest": "702b1dd8dcdf04061511aea85a9d049843b3e2e531cca690b9176d50b8bcf9ab"
+    }
+  ],
+  "reproduced_by": [
+    "src/appchain/ledger.rs::signing_vectors::version_5_digests_are_pinned",
+    "src/bin/appchain-cli.rs (its own test asserts the same three digests)",
+    "android-app AppChainSignerTest (device test, same three digests)",
+    "tests/appchain_wire_format_test.rs (pins the JSON representation of the byte fields)"
+  ]
+}
