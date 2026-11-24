@@ -161,6 +161,24 @@ async fn register_then_anchor_through_the_public_api() {
         views[0]["anchor_availability"], "not-implemented",
         "the node holds no owner key, so it cannot anchor this chain for the owner"
     );
+    // C3: a ledger chain's roots are owner-signed, so the node must not advertise the retired
+    // server-side proof scheme for it. That string named a mechanism the node cannot perform.
+    assert_eq!(
+        views[0]["proof_scheme"],
+        UltraNet::api::APPCHAIN_PROOF_SCHEME_LEDGER,
+        "a ledger chain must describe its real proof model: {overview}"
+    );
+    assert_ne!(
+        views[0]["proof_scheme"],
+        UltraNet::api::APPCHAIN_PROOF_SCHEME_REGISTRY,
+        "a ledger chain must not borrow the registry's description"
+    );
+    // The value must not claim more than a signature gives: the owner commits to a root, which is not
+    // a proof that the root describes a valid state.
+    assert_ne!(
+        views[0]["proof_scheme"], "SHA3-256 server state commitment v1",
+        "the retired server-side scheme must not be reported for a ledger chain"
+    );
     assert_eq!(overview["totals"]["anchor_count"], 0);
 
     let list: Value = actix_test::call_and_read_body_json(&app, get("/api/appchain/list")).await;

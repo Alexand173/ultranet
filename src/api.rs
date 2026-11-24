@@ -1448,7 +1448,21 @@ async fn create_appchain() -> impl Responder {
 // signature is the bypass this retirement exists to remove, so the switch went with it rather than
 // staying available behind an environment variable.
 
-const APPCHAIN_PROOF_SCHEME: &str = "SHA3-256 server state commitment v1";
+/// What a chain in the retired factory registry actually had: a hash the node computed over a snapshot
+/// of its own state. It fixes a value, but nobody can recompute it from a state transition they can
+/// check, so it is a commitment in the weak sense and not a proof. Anchoring from the node is retired,
+/// so this describes history rather than a service.
+pub const APPCHAIN_PROOF_SCHEME_REGISTRY: &str =
+    "server-computed state hash (retired, not a state proof)";
+
+/// What a ledger chain's roots actually are: the owner signs a state root and the node records it.
+///
+/// The signature proves **authorship** — that this owner committed to this root — not that the root
+/// describes a valid state, so the wording deliberately stops short of calling it a proof. Reporting
+/// the registry's scheme here was the stronger error: it named a mechanism that cannot exist for these
+/// chains at all, because the node holds no owner key.
+pub const APPCHAIN_PROOF_SCHEME_LEDGER: &str =
+    "owner-signed state root (a signature, not a state proof)";
 
 // Node-side anchoring is retired, so nothing this node reports may claim it is available. The website
 // maps an unknown value to "anchoring disabled", which is now the truth for every chain.
@@ -1473,7 +1487,7 @@ fn appchain_view(
         latest_anchor_at: config.latest_anchor_at,
         latest_state_root: config.latest_state_root.clone(),
         anchor_availability: appchain_anchor_availability(),
-        proof_scheme: APPCHAIN_PROOF_SCHEME,
+        proof_scheme: APPCHAIN_PROOF_SCHEME_REGISTRY,
         source: "registry",
         registered_tx: None,
         registered_block: None,
@@ -1520,7 +1534,7 @@ fn ledger_appchain_view(
         latest_state_root: chain.latest_state_root.clone(),
         // The node holds no owner key, so it cannot anchor this chain on the owner's behalf.
         anchor_availability: "not-implemented",
-        proof_scheme: APPCHAIN_PROOF_SCHEME,
+        proof_scheme: APPCHAIN_PROOF_SCHEME_LEDGER,
         source: "ledger",
         registered_tx: Some(chain.registered_tx.clone()),
         registered_block: Some(chain.registered_block),
@@ -3197,7 +3211,10 @@ pub async fn appchain_overview(state: web::Data<AppState>) -> impl Responder {
             totals: appchain_overview_totals(&chains),
             chains,
             anchor_availability: appchain_anchor_availability(),
-            proof_scheme: APPCHAIN_PROOF_SCHEME,
+            // The node cannot anchor anything for anyone since the retirement, so the only model it
+            // can describe is the owner-signed one. Reporting the retired scheme's name here would be
+            // a summary that contradicts every chain it summarises.
+            proof_scheme: APPCHAIN_PROOF_SCHEME_LEDGER,
             updated_at: now_seconds(),
         }),
         Err(error) => HttpResponse::InternalServerError().json(serde_json::json!({
@@ -4209,6 +4226,42 @@ mod configuration_tests {
                 "{route}: a malformed body must not turn a retired route into a 400",
             );
         }
+    }
+
+    /// A chain that only the retired factory registry knows about must describe what it actually had,
+    /// not a scheme that sounds stronger. This is the one construction path the HTTP tests cannot
+    /// reach, because creating a registry chain through the API has been 410 since the retirement.
+    #[test]
+    fn a_registry_chain_describes_its_retired_mechanism_truthfully() {
+        let db = TemporaryApiDb::new("appchain-registry-proof-scheme");
+        let blockchain =
+            UltraBlockchain::new(db.path().to_str().expect("temporary path must be UTF-8"));
+        let config = crate::appchain::AppChainConfig {
+            id: 9,
+            name: "Legacy".to_string(),
+            owner: "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e".to_string(),
+            account_address: String::new(),
+            genesis_root: [0u8; 32],
+            anchor_fee: crate::appchain::DEFAULT_APPCHAIN_ANCHOR_FEE,
+            anchor_spend: 0,
+            anchor_count: 0,
+            latest_anchor_at: None,
+            latest_state_root: None,
+        };
+
+        let view = super::appchain_view(&blockchain, &config);
+
+        assert_eq!(view.proof_scheme, super::APPCHAIN_PROOF_SCHEME_REGISTRY);
+        assert_ne!(
+            view.proof_scheme,
+            super::APPCHAIN_PROOF_SCHEME_LEDGER,
+            "a registry chain's roots were not owner-signed",
+        );
+        assert!(
+            !view.proof_scheme.contains("server state commitment"),
+            "the retired marketing name must not survive as a mechanism: {}",
+            view.proof_scheme,
+        );
     }
 
     #[test]
