@@ -8,6 +8,42 @@ person can tell what is running and how to roll back.
 
 Backups are kept beside the binary as `UltraNet.bak-<UTC timestamp>`.
 
+## 2026-11-24T18:39Z — A2 release artefact built from the published commit (built, not deployed)
+
+| | |
+|---|---|
+| Status | **built and recorded only.** Nothing was installed, promoted, uploaded or restarted. Production still runs its previous binary, untouched by this entry |
+| Source | `33b4eacd93f6ac2419ea23cb17717c6ab82df4e4` (the 14-commit range `7368b23..33b4eac` published to `origin/main`), clean tree (0 entries in `git status --porcelain`) |
+| Artefact | `target/release/UltraNet`, 25,762,784 B |
+| sha256 | `099bb28d5c08d7108b53b1731f795a52d0e47cf026cbe0eff892a81f8479c6aa` |
+| Built with | `rustc 1.97.0 (2d8144b78 2026-07-07)`, `cargo 1.97.0 (c980f4866 2026-06-30)`, active toolchain `1.97.0-x86_64-unknown-linux-gnu` selected by `rust-toolchain.toml` |
+| Build | `cargo build --release --locked --bin UltraNet -j 4` → exit 0, `Finished \`release\` profile [optimized] target(s) in 30.64s`, wall 0:30.69, 18:39:09Z → 18:39:39Z, 263 % CPU, peak RSS 1,501,012 kB |
+| CI at source | run `45434122263` (Windows suite) green: 557 passed, 0 failed, 1 ignored, 31 binaries; Linux `cargo check --all-targets` green; run `45434122132` version consistency green |
+| Supersedes | `14aff6d0…` (25,766,344 B), built from `b9bfb29`. **Do not promote that one as the artefact for this HEAD** — it predates five commits and cannot be mapped to the published tree |
+
+### Why
+
+The published range adds no code to *this* binary. Between `b9bfb29` and `33b4eac` the only source change is
+`f58973f` — `src/games/records.rs`, `records_config.rs`, `tests.rs` — and that code is **not linked into
+`UltraNet`**: `strings target/release/UltraNet` finds zero occurrences of `RECORDS_OWNER_ADDRESS`,
+`RECORDS_PEER_ANCHOR_CHAINS` or `GAMES_REWARD`. The Records service is a separate target
+(`src/bin/ultranet-records.rs`, installed at `/opt/ultranet-records/ultranet-records` via
+`deploy/ultranet-records.service`), and it is **not** covered by this entry.
+
+So the behaviour of this artefact equals `14aff6d0…`; what changed is provenance — it is now provably built
+from the commit that CI validated and that `origin/main` points at, rather than from a five-commit-old tree.
+
+### Verification of the build
+
+| Check | Result |
+|---|---|
+| Hash, three independent tools | `sha256sum`, `openssl dgst -sha256` and Python `hashlib` all return `099bb28d…c6aa` |
+| Size | 25,762,784 B, file written 2026-11-24T18:39:39Z (the build window above) |
+| Cargo says the tree is fully built | re-running the same command prints `Finished` in 0.28s with **no** `Compiling` line — the artefact is current for `33b4eac`, not stale |
+| Recompiled, not copied | the build log contains one `Compiling UltraNet v3.0.0` unit at 18:39; the five-commit-old binary is not reused |
+| Dependencies | `Cargo.lock`, `Cargo.toml` and `rust-toolchain.toml` are byte-identical between `b9bfb29` and `33b4eac` (`git diff --stat` empty), so cached dependency objects are the same locked set |
+| Production untouched | no `systemctl` call, no upload, no file replaced; this entry exists only in the repository |
+
 ## 2026-11-24T13:36Z — AppChain proof scheme made truthful (built, not deployed)
 
 | | |
