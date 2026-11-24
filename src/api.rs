@@ -1440,7 +1440,7 @@ async fn get_manifest() -> impl Responder {
 async fn create_appchain() -> impl Responder {
     HttpResponse::Gone().json(serde_json::json!({
         "success": false,
-        "message": "AppChain creation through the node is retired. Register by signing an AppChainRegister transaction with the owner key: appchain-cli register --key-file <owner-key> --name <name> --node <api-url>",
+        "message": "AppChain creation through the node is retired. Register by signing an AppChainRegister transaction with the owner key and posting it to /api/appchain/tx (appchain-cli register --key-file <owner-key> --name <name> --node <api-url>)",
     }))
 }
 
@@ -4136,6 +4136,7 @@ mod configuration_tests {
         .await;
 
         for route in [
+            "/api/appchain/create",
             "/api/appchain/1/anchor",
             "/api/appchain/1/anchor/test",
             "/api/appchain/anchor",
@@ -4180,24 +4181,34 @@ mod configuration_tests {
             );
         }
 
-        // Retirement must not depend on the body parsing. While the legacy handler still took a JSON
-        // extractor, a malformed body was refused with 400 before the retirement message existed, which
-        // reads to a caller as "fix your request" rather than "this route is gone".
-        let malformed = actix_test::call_service(
-            &app,
-            actix_test::TestRequest::post()
-                .uri("/api/appchain/anchor")
-                .insert_header((AUTHORIZATION, format!("Bearer {token}")))
-                .insert_header(("content-type", "application/json"))
-                .set_payload("{\"chain_id\": 1, \"state_root\": ")
-                .to_request(),
-        )
-        .await;
-        assert_eq!(
-            malformed.status(),
-            StatusCode::GONE,
-            "a malformed body must not turn a retired route into a 400",
-        );
+        // Retirement must not depend on the body parsing. While the legacy anchor handler still took a
+        // JSON extractor, a malformed body was refused with 400 before the retirement message existed,
+        // which reads to a caller as "fix your request" rather than "this route is gone".
+        //
+        // Every retired write route is checked, not only the one that had the defect: a route that
+        // answers 410 on a valid body and 400 on a broken one is still a route that looks alive.
+        for route in [
+            "/api/appchain/create",
+            "/api/appchain/1/anchor",
+            "/api/appchain/1/anchor/test",
+            "/api/appchain/anchor",
+        ] {
+            let malformed = actix_test::call_service(
+                &app,
+                actix_test::TestRequest::post()
+                    .uri(route)
+                    .insert_header((AUTHORIZATION, format!("Bearer {token}")))
+                    .insert_header(("content-type", "application/json"))
+                    .set_payload("{\"chain_id\": 1, \"state_root\": ")
+                    .to_request(),
+            )
+            .await;
+            assert_eq!(
+                malformed.status(),
+                StatusCode::GONE,
+                "{route}: a malformed body must not turn a retired route into a 400",
+            );
+        }
     }
 
     #[test]
