@@ -26,8 +26,9 @@ unit's credentials directory. The systemd unit also makes the other service's di
 (`InaccessiblePaths`), so even a misplaced file is not readable from here.
 
 **What a compromised Games service can do to this one.** It holds the peer secret, so it can send a valid
-signed request. It can ask for an anchor of any root on chains `RECORDS_PEER_ANCHOR_CHAINS` allows (default
-`1,2`, UltraGrid and Ultra Chess). It can have at most `RECORDS_PEER_ANCHORS_PER_DAY` (default 8) distinct roots anchored per UTC day, so it
+signed request. It can ask for an anchor of any root on chains `RECORDS_PEER_ANCHOR_CHAINS` allows, which by
+default is **no chain at all**: the list is empty because the key here owns only the Registry chain (#2), and
+#1 UltraGrid and #3 Ultra Chess belong to `7d2cd1cc…`. It can have at most `RECORDS_PEER_ANCHORS_PER_DAY` (default 8) distinct roots anchored per UTC day, so it
 cannot drain the owner wallet by asking for many (each anchor costs 0.001 `$ULTRA`). That allowance is kept
 in the database, so restarting or crashing this service does not reset it (§4.3). It cannot anchor the
 registry's own chain or the L1 (refused with `403 forbidden`), cannot read or change a registry record (a different database, a different user), and cannot sign
@@ -341,7 +342,7 @@ what it submitted and what its own ledger sync has seen, not what a wallet will 
 | Symptom | Likely cause | What to do |
 |---|---|---|
 | Games service logs `peer_unauthenticated` | the two peer secrets differ, or the clocks differ by over 60 s | compare the two credential files' contents (never print them in a ticket); check `timedatectl` |
-| Games service logs `forbidden` | the chain is not in `RECORDS_PEER_ANCHOR_CHAINS`, or the day's `RECORDS_PEER_ANCHORS_PER_DAY` is used up (normal use is one anchor per game per day, so a used-up cap is a signal, not a nuisance) | add the game's chain (never the registry's) and restart; investigate a used-up cap before raising it |
+| Games service logs `forbidden` | the chain is not in `RECORDS_PEER_ANCHOR_CHAINS` (empty by default), or the day's `RECORDS_PEER_ANCHORS_PER_DAY` is used up (normal use is one anchor per game per day, so a used-up cap is a signal, not a nuisance) | add the game's chain and restart — only if this service's owner key actually owns that chain, and never the registry's; investigate a used-up cap before raising it |
 | `anchoring_disabled` (503) | `RECORDS_ANCHOR_CLI` unset | set it, restart |
 | `anchor_failed` (502) | `appchain-cli` failed: owner wallet empty, key not the chain's owner, node unreachable | `journalctl -u ultranet-records`; check the owner balance |
 | A registry day stays `closed` / `anchored` for hours | the anchor is not landing | `close-day --date <day>` shows `last error` |

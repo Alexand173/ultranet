@@ -103,8 +103,9 @@ cannot be replayed or redirected; an unauthenticated caller cannot fill the repl
 same answer. The format is documented in the module and verified against Python's `hmac`. It gives
 authentication, not confidentiality, which is why the Games service accepts only a loopback URL.
 
-*What an authenticated peer may ask for.* Anchor a root on chains in `RECORDS_PEER_ANCHOR_CHAINS` (default
-`1,2`) **that the Records Service's key actually owns** — the list is a ceiling, not a grant, and L1 still
+*What an authenticated peer may ask for.* Anchor a root on chains in `RECORDS_PEER_ANCHOR_CHAINS` (default:
+**none**, because the key owns only the Registry chain) **that the Records Service's key actually owns** —
+the list is a ceiling, not a grant, and L1 still
 refuses an anchor whose sender is not the chain's owner, so a chain owned by another address is refused
 and retried rather than anchored — and at most `RECORDS_PEER_ANCHORS_PER_DAY` (default 8) distinct roots per
 UTC day, so a compromised peer cannot drain the owner wallet. The allowance is **durable** (P2.1): reserved in the Records database before

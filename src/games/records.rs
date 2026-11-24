@@ -38,6 +38,11 @@ pub struct RecordsConfig {
     pub anchor_resubmit_after_seconds: u64,
     /// The only chains a peer service (the Games Reward Service) may ask this one to anchor. Never the
     /// registry's own chain, never the L1: a compromised peer must not be able to anchor *as* the registry.
+    ///
+    /// **Empty by default, and that is correct.** A chain may only be listed when the key that signs here
+    /// actually owns it: the anchor is that key's L1 transaction, so any other chain refuses it. This
+    /// service's key is the Registry owner and the Registry chain is anchored as the registry's own, never
+    /// on a peer's behalf, so no chain qualifies until an operator names one this key owns.
     pub peer_anchor_chains: Vec<u32>,
     /// The most distinct roots a peer may have anchored in one UTC day, across all chains. Every anchor
     /// costs the owner wallet a fee, so a compromised peer must not be able to drain it. A repeated ask
@@ -62,7 +67,7 @@ impl RecordsConfig {
             catch_up_days: 7,
             anchor_retry_seconds: 600,
             anchor_resubmit_after_seconds: 3_600,
-            peer_anchor_chains: vec![1, 2],
+            peer_anchor_chains: Vec::new(),
             peer_anchors_per_day: 8,
             peer_submissions_per_root: 3,
             owner_address: None,

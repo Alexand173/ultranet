@@ -229,8 +229,9 @@ Discrepancies that remain, deliberately:
    the owner vote is the remaining gate. D-4 publication stays blocked until it is recorded.
 2. **Promotion of the C3 artefact** (`14aff6d0…`) is a separate decision with its own build-and-restart
    gate. Nothing was deployed as part of this audit.
-3. **Checklist row 9** (peer-anchor on chain #1) still needs a production environment change — either the
-   ownership handover, or removing `1` from `RECORDS_PEER_ANCHOR_CHAINS`.
+3. **Checklist row 9** (peer-anchor on chain #1): the repository now defaults `RECORDS_PEER_ANCHOR_CHAINS`
+   to empty, so no peer anchor is attempted on a chain this signer does not own. The live environment still
+   needs that value and one Records restart, under a separate approval.
 
 ## 10. What this audit does not establish
 

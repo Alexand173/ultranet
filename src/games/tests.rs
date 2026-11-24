@@ -420,6 +420,9 @@ fn harness(options: Options) -> Harness {
     let tick = clock.clone();
     let records_anchorer = Arc::new(FakeAnchorer::default());
     let mut records_config = RecordsConfig::new();
+    // Stated, not inherited: the production default is an empty list, because the service's key owns only
+    // its registry chain. These tests exercise the peer path, so they name the chains they allow.
+    records_config.peer_anchor_chains = vec![1, 2];
     records_config.registry_chain_id = options.registry_chain;
     records_config.owner_address = Some(A.to_string());
     let records_tick = clock.clone();
@@ -3949,10 +3952,12 @@ mod split {
         let (_, tx, _) = day_row_state(&h, &yesterday);
         let root: [u8; 32] = h.records_anchorer.calls.lock().unwrap()[0].1;
         h.chain.add_anchor(1, 1, root, h.records.now());
+        let mut restarted_config = RecordsConfig::new();
+        restarted_config.peer_anchor_chains = vec![1, 2];
         let restarted = Arc::new(RecordsService::new(
             GamesStore::open(Path::new(":memory:")).unwrap(),
             RegistryCaps::standard(),
-            RecordsConfig::new(),
+            restarted_config,
             h.chain.clone(),
             Some(h.records_anchorer.clone()),
             Some(PeerVerifier::new(SECRET.to_vec(), "games").unwrap()),
@@ -4151,6 +4156,7 @@ mod split {
             RegistryCaps::standard(),
             {
                 let mut config = RecordsConfig::new();
+                config.peer_anchor_chains = vec![1, 2];
                 config.owner_address = Some(A.to_string());
                 config.registry_chain_id = registry_chain;
                 config
@@ -4562,6 +4568,7 @@ mod split {
         let records = {
             let clock = clock.clone();
             let mut config = RecordsConfig::new();
+            config.peer_anchor_chains = vec![1, 2];
             config.owner_address = Some(A.to_string());
             config.registry_chain_id = Some(3);
             Arc::new(RecordsService::new(

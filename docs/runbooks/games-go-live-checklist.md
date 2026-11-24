@@ -51,7 +51,8 @@ HOST: appchain-cli register --key-file records-anchor-owner.key.enc --name "Ultr
 - [ ] Chain #1 (UltraGrid) is handed to the owner key by `appchain-owner-key.md` §2, and the ledger shows the
   new owner. Until then Grid's days are refused by the chain and retried.
 - [ ] Chess chain: register only if you will anchor chess; it does **not** turn prizes on. If you do, it is
-  in `RECORDS_PEER_ANCHOR_CHAINS` (default `1,2`).
+  in `RECORDS_PEER_ANCHOR_CHAINS`, which has **no default**: name a chain only once the Records owner key
+  actually owns it, because the anchor is that key's transaction and L1 refuses it anywhere else.
 
 - [ ] **After registering chains or any other use of the owner key by hand**, run `ultranet-records peer-reconcile --acknowledge-owner-transactions`:
   the service counts the owner's transactions against its own recorded attempts and refuses to anchor until you say that

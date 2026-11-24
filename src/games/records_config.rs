@@ -254,8 +254,32 @@ mod tests {
         assert_eq!(c.caps, RegistryCaps::standard());
         assert!(c.anchor.is_none() && c.peer_credential.is_none());
         assert_eq!(c.service.registry_chain_id, None);
-        assert_eq!(c.service.peer_anchor_chains, vec![1, 2]);
+        assert!(
+            c.service.peer_anchor_chains.is_empty(),
+            "no chain may be a peer target until an operator names one this key owns: {:?}",
+            c.service.peer_anchor_chains
+        );
         assert!(c.service.require_chain_presence);
+    }
+
+    /// The list must start empty. This service's key is the Registry owner; UltraGrid (#1) and Ultra Chess
+    /// (#3) belong to `7d2cd1cc…`, so L1 refuses this signer on both, and the Registry chain is anchored as
+    /// the registry's own, never on a peer's behalf. A non-empty default only buys refused submissions.
+    #[test]
+    fn the_default_peer_list_names_no_chain_because_this_key_owns_only_its_registry_chain() {
+        // Naming a chain explicitly is how an operator opts in, once the key owns that chain.
+        let named = config(&[("RECORDS_PEER_ANCHOR_CHAINS", "1")]).unwrap();
+        assert_eq!(named.service.peer_anchor_chains, vec![1]);
+        // The L1 can never be named, and the registry's chain is never a peer target either.
+        assert!(config(&[("RECORDS_PEER_ANCHOR_CHAINS", "0")]).is_err());
+        let registry_as_peer = config(&[
+            ("RECORDS_PEER_ANCHOR_CHAINS", "2"),
+            ("RECORDS_REGISTRY_CHAIN_ID", "2"),
+        ]);
+        assert!(registry_as_peer.is_err());
+        // An empty value is an empty list, not an error.
+        let empty = config(&[("RECORDS_PEER_ANCHOR_CHAINS", "")]).unwrap();
+        assert!(empty.service.peer_anchor_chains.is_empty());
     }
 
     #[test]
@@ -264,11 +288,17 @@ mod tests {
             config(&[("RECORDS_REGISTRY_CHAIN_ID", "3")]).unwrap().service.registry_chain_id,
             Some(3)
         );
-        for bad in ["0", "1", "2", "-1", "three", ""] {
+        // Shape rules, independent of the peer list: never the L1, never a non-integer.
+        for bad in ["0", "-1", "three", ""] {
             assert!(config(&[("RECORDS_REGISTRY_CHAIN_ID", bad)]).is_err(), "{bad:?}");
         }
+        // With no peer list in force, any AppChain id is allowed: on the live ledger the registry's chain is
+        // #2, which is the chain this service's owner key owns.
+        let registry_two = config(&[("RECORDS_REGISTRY_CHAIN_ID", "2")]).unwrap();
+        assert_eq!(registry_two.service.registry_chain_id, Some(2));
         // If the peer is allowed another chain, the registry may not use it.
         assert!(config(&[("RECORDS_PEER_ANCHOR_CHAINS", "1,2,7"), ("RECORDS_REGISTRY_CHAIN_ID", "7")]).is_err());
+        assert!(config(&[("RECORDS_PEER_ANCHOR_CHAINS", "2"), ("RECORDS_REGISTRY_CHAIN_ID", "2")]).is_err());
         assert!(config(&[("RECORDS_PEER_ANCHOR_CHAINS", "1"), ("RECORDS_REGISTRY_CHAIN_ID", "2")]).is_ok());
         assert!(config(&[("RECORDS_PEER_ANCHOR_CHAINS", "0,1")]).is_err());
         assert!(config(&[("RECORDS_PEER_ANCHOR_CHAINS", "a,b")]).is_err());
