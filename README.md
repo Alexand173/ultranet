@@ -120,7 +120,7 @@ The node-side routes are **retired** and answer `410 Gone`, naming the replaceme
 
 ### What is `ULTRANET_ADMIN_TOKEN`?
 
-Every node API requires a private administrator bearer token to protect state-changing operations such as mining, pruning, and AppChain management. Existing deployments use `ULTRANET_ADMIN_TOKEN`; the new disposable systemd staging unit uses `ULTRANET_ADMIN_TOKEN_FILE` with an encrypted credential projection. The token is **not** your wallet key, public node identifier, `DILITHIUM_PUB_KEY`, or a value that ordinary website users should share. Do not configure both token sources; the runtime rejects that ambiguous state.
+Every node API requires a private administrator bearer token to protect the administrative state-changing operations — mining and pruning. AppChain writes are **not** among them: a registration, an anchor or an ownership transfer is authorised by the owner's signature on an L1 transaction submitted to `POST /api/appchain/tx`, and the retired admin AppChain routes answer `410 Gone` whatever credential they are given (see [AppChain management and ownership](#appchain-management-and-ownership)). Existing deployments use `ULTRANET_ADMIN_TOKEN`; the new disposable systemd staging unit uses `ULTRANET_ADMIN_TOKEN_FILE` with an encrypted credential projection. The token is **not** your wallet key, public node identifier, `DILITHIUM_PUB_KEY`, or a value that ordinary website users should share. Do not configure both token sources; the runtime rejects that ambiguous state.
 
 Create it locally, then place it only in your service environment or private `UltraNetNode.env` file:
 

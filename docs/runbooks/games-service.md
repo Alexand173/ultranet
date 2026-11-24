@@ -208,7 +208,12 @@ balance, rewards stop (safely: wins are recorded as `pool_low`), so top the wall
 
 **Chain days.** The service closes yesterday and asks the Records Service to anchor it, every ten minutes
 until it is on the ledger, so normally you watch rather than run anything: `journalctl -u ultranet-games -f` and
-`GET /api/appchain/ledger/1/anchors`. `close-day --game grid --date <yesterday>` does it by hand, but it
+`GET /api/appchain/ledger/1/anchors`. The request cannot succeed for a chain the anchor signer does
+**not** own: L1 refuses an anchor whose `sender` is not the chain's owner, and the day stays retried.
+The signer is the Registry owner, and chain #1 still belongs to another address, so Grid's days are
+refused until the handover in [`games-go-live-checklist.md`](./games-go-live-checklist.md) is done. A
+refusal here is the authorisation working, not a fault to work around.
+`close-day --game grid --date <yesterday>` does it by hand, but it
 loads the full configuration and the credentials the unit holds, so it is not a plain-shell command —
 `status`, `audit`, `payouts` and `backup` are the four that only open the database. `close-day` is safe to
 repeat: a day closes once, and the ledger is checked before anything is submitted, by this service and again by

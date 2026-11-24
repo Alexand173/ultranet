@@ -177,8 +177,15 @@ chain's screen whenever they want. No CLI, no server, no terminal.
 **What no other party can do, by construction:** anchor that chain. The node refuses an `AppChainAnchor`
 whose `sender` is not the chain's recorded owner, and there is no server-side anchor route to bypass that
 with — the node-side path is retired and answers `410 Gone`. The only way a different key ever anchors the
-chain is an ownership transfer signed by the current owner. See D-1 for the decision that made this the
-only model.
+chain is an ownership transfer signed by the current owner.
+
+**Where the decision stands.** That is the *implemented* behaviour: the owner check is enforced in
+`src/lib.rs`, and the retirement of the admin anchor routes is deployed. It is not yet a *ratified*
+policy. The architecture it implements — D-1, "owner-signed is the only model" — is owner decision
+**O-1**, which is still **PENDING OWNER** (`docs/appchain-completion-checklist-rev1.md`, row 1). Nothing
+in this runbook records that approval. `docs/appchain/O1-OWNER-AUTHORISATION-AUDIT.md` sets out the
+evidence the decision rests on; if the owner decides differently, this section is the first thing to
+change.
 
 The CLI appears at exactly one moment: when the owner wants something *automated* to sign for them —
 a game anchoring its results every day. That is an operator decision, not a user step, and it is

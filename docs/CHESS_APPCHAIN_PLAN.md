@@ -51,7 +51,7 @@ the receipt idea, the prize arithmetic and the caps.
                     │ node: appchain state     │    │ node: 0.0001 $ULTRA    │
                     │ chess/game/{id} = {...}  │    │ to the player's address│
                     └────────────┬─────────────┘    └────────────────────────┘
-                                 │ batched anchor (0.001 per anchor, from treasury)
+                                 │ batched anchor (0.001, from the owner wallet)
                                  ▼
                     ┌──────────────────────────┐
                     │ appchain anchor: root    │
@@ -59,11 +59,17 @@ the receipt idea, the prize arithmetic and the caps.
                     └──────────────────────────┘
 ```
 
+> **This diagram is the superseded §3 sketch,** kept for the reasoning that follows. There is no
+> per-chain state write and no treasury: receipts live in the service's own database, and the daily root
+> is an owner-signed `AppChainAnchor` from the owner wallet, submitted to `POST /api/appchain/tx`. The
+> "admin token" arrow is retired with the routes it pointed at — L1 authorises on the signature.
+
 Two consequences worth stating up front, because they shape everything else:
 
-1. **The app cannot write the receipt itself.** `POST /api/appchain/{id}/state` is operator-authed,
-   and the admin token must never ship in an APK. The prize service holds the token, writes the
-   receipt, and pays — the phone only talks to the service.
+1. **The app cannot write the receipt itself.** There is no per-chain state route to write to: §3 below
+   sketched `POST /api/appchain/{id}/state`, and it was never built. The service records the receipt in
+   its own database and commits one daily root; the admin token must never ship in an APK, so the phone
+   only talks to the service.
 2. **A win is computed on the phone, so it is self-reported.** Nothing on the node can tell a real
    win from a patched client claiming one. The caps in §5 are the whole defence, and they must be
    written down as the design, not discovered later as a bug.
@@ -91,14 +97,16 @@ Applications.
 
 ## 3. Node: minimal state path
 
-Two routes, the smallest thing that makes an anchor mean something.
+**Neither route exists.** The table below is the sketch that motivated §1's constraint, and it is kept
+only for that reasoning: it was never implemented, `src/api.rs` has no `/api/appchain/{id}/state` route,
+and the service keeps receipts in its own database while committing one daily root.
 
 | Method | Route | Auth | Body / query | Response |
 |---|---|---|---|---|
-| POST | `/api/appchain/{chain_id}/state` | operator token | `{ "key": "chess/game/{id}", "value": "{...}" }` | `201 { key, state_version, stored_at }` |
-| GET | `/api/appchain/{chain_id}/state` | public | `?prefix=chess/&limit=50&after={key}` | `{ state_version, entries: [{key, value, updated_at}], next }` |
+| POST | ~~`/api/appchain/{chain_id}/state`~~ never built | operator token | `{ "key": "chess/game/{id}", "value": "{...}" }` | `201 { key, state_version, stored_at }` |
+| GET | ~~`/api/appchain/{chain_id}/state`~~ never built | public | `?prefix=chess/&limit=50&after={key}` | `{ state_version, entries: [{key, value, updated_at}], next }` |
 
-Limits, enforced in the handler and not merely documented:
+Limits the sketch specified — nothing enforces them, because there is no handler:
 
 - key ≤ 120 chars, `[A-Za-z0-9._:/-]` only; value ≤ 4 KiB
 - per chain: ≤ 100,000 keys, ≤ 32 MiB of values

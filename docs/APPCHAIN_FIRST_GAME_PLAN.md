@@ -10,13 +10,24 @@
 > per day** (the owner's later instruction, not 10), and the 10-base-unit reward stays only as a **test**
 > value until the 1 `$ULTRA` pool ends. Where this document and v2 disagree, v2 wins once ratified.
 
-## 1. Starting point (from the code)
+## 1. Starting point (from the code, as it stood on 2026-11-14)
 
-- An AppChain is a registry entry: `name`, an `owner` **text** field, and a treasury derived from the chain ID (`src/appchain/factory.rs`). Creating and anchoring a chain are admin-only routes.
-- Anchoring commits the AppChain's own storage inside the node (`l3/<id>`) and charges 0.001 `$ULTRA` to the treasury. Roots supplied by clients are refused on purpose.
-- **Nothing can write to an AppChain's storage.** There is no transaction route, and `produce_block` runs through the Move stub. Anchoring therefore commits empty state.
-- The treasury can only be debited for anchor fees. It can't pay anyone.
-- Mainnet has 0 AppChains, so changing the registry format needs no migration.
+This is the snapshot §2 reasons from, kept so the reasoning stays readable. It is not the current state;
+the note at the end of the section is.
+
+- An AppChain was a registry entry: `name`, an `owner` **text** field, and a treasury derived from the chain ID (`src/appchain/factory.rs`). Creating and anchoring a chain were admin-only routes.
+- Anchoring committed the AppChain's own storage inside the node (`l3/<id>`) and charged 0.001 `$ULTRA` to the treasury. Roots supplied by clients were refused.
+- **Nothing could write to an AppChain's storage.** There was no transaction route, and `produce_block` ran through the Move stub. Anchoring therefore committed empty state.
+- The treasury could only be debited for anchor fees. It could not pay anyone.
+- Mainnet had 0 AppChains, so changing the registry format needed no migration.
+
+**Current state (2026-11-24).** The consensus ledger in `src/appchain/ledger.rs` replaced that model.
+`AppChainRegister`, `AppChainAnchor` and `AppChainTransferOwner` are owner-signed L1 transactions
+submitted to `POST /api/appchain/tx`: the node assigns a unique L1 chain id, records the signing address
+as the owner, and requires `sender == owner` for an anchor or a transfer. It never computes a state root,
+holds no owner key and keeps no treasury for a ledger chain, so a root is the **owner's** claim, which L1
+records and does not recompute. The admin routes in the first bullet are retired and answer `410 Gone`.
+Three chains are registered: #1 UltraGrid, #2 Registry and #3 Ultra Chess.
 
 ## 2. Node changes (generic, for every AppChain)
 
@@ -29,10 +40,16 @@
 5. **Fees are debited explicitly** in both block re-execution and `update_state`. Today `update_state` debits only standard transfers, while the fee loop pays every transaction's fee to validators.
 6. Routes: `POST /api/appchain/tx` (signed register or anchor), `GET /api/appchain/ledger`, `GET /api/appchain/ledger/{id}`, `GET /api/appchain/ledger/{id}/anchors`.
 
-**Retire once active:**
-- The admin-triggered anchor route that computes a root from the node's own `l3/<id>` storage. It is not owner-signed and not in a block.
-- The node-side AppChain runtime (Move VM / `produce_block`). AppChain state lives with its owner, not inside L1 nodes.
-- The keyless derived treasury address. `$ULTRA` sent there cannot leave. The owner pays the anchor fee directly.
+**What this list asked for, and where each item stands:**
+
+- The admin-triggered anchor route that computed a root from the node's own `l3/<id>` storage. **Done** —
+  retired, and it answers `410 Gone` whatever credential it is given; no owner-signed anchor was ever
+  routed through it.
+- The node-side AppChain runtime (Move VM / `produce_block`). **Never built.** AppChain state lives with
+  its owner, not inside L1 nodes, so there was nothing to retire.
+- The keyless derived treasury address. **Still present in the legacy factory registry**, whose creation
+  route is retired (`410 Gone`). Ledger chains have no treasury at all, so the owner pays the anchor fee
+  directly; `$ULTRA` already sent to a derived treasury address still cannot leave.
 
 **Later, before thousands of chains:** permissionless registration is already covered by (1). Name rules and pricing can be tuned by later governance.
 

@@ -33,6 +33,12 @@ in the database, so restarting or crashing this service does not reset it (§4.3
 registry's own chain or the L1 (refused with `403 forbidden`), cannot read or change a registry record (a different database, a different user), and cannot sign
 anything. That is why the allow-list exists, and why it should stay as short as it is.
 
+**The allow-list is a ceiling, not a grant.** Whatever a peer asks for, the anchor is still an owner-signed
+L1 transaction from *this* service's key, so a chain owned by a different address refuses it. Today that
+key (`d4fca721…`) owns **#2 Registry** and nothing else: a request naming #1 UltraGrid is refused by the
+chain and retried until an owner handover changes who owns it. The service has no way to force it, and a
+refusal is the authorisation working rather than a misconfiguration to route around.
+
 ## 1. What lives where
 
 | Thing | Path | Notes |

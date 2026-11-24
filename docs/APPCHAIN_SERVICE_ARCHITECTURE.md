@@ -82,7 +82,7 @@ from strangers' input. So:
 | Refuses to start if it finds | `games-payout-signer.json` or `games-abuse.key` | an owner key or passphrase, under either service's names |
 | Filesystem | the unit makes the other service's `/etc`, `/var/lib` and `/opt` directories inaccessible | the same, the other way round |
 | Moves money | no code path does | yes (payouts) |
-| Signs anchors | yes, through `appchain-cli` | no code path does |
+| Signs anchors | yes, through `appchain-cli`, for chains whose owner key it holds | no code path does |
 
 *Which service owns each credential:* the chain owner's key and its passphrase belong to the Records Service
 alone; the payout key and the abuse key belong to the Games Reward Service alone; the peer secret is held by
@@ -104,8 +104,10 @@ same answer. The format is documented in the module and verified against Python'
 authentication, not confidentiality, which is why the Games service accepts only a loopback URL.
 
 *What an authenticated peer may ask for.* Anchor a root on chains in `RECORDS_PEER_ANCHOR_CHAINS` (default
-`1,2`), and at most `RECORDS_PEER_ANCHORS_PER_DAY` (default 8) distinct roots per UTC day, so a compromised peer
-cannot drain the owner wallet. The allowance is **durable** (P2.1): reserved in the Records database before
+`1,2`) **that the Records Service's key actually owns** — the list is a ceiling, not a grant, and L1 still
+refuses an anchor whose sender is not the chain's owner, so a chain owned by another address is refused
+and retried rather than anchored — and at most `RECORDS_PEER_ANCHORS_PER_DAY` (default 8) distinct roots per
+UTC day, so a compromised peer cannot drain the owner wallet. The allowance is **durable** (P2.1): reserved in the Records database before
 anything is submitted, with the attempt recorded before the signer is called, so a restart or a crash cannot
 reset it and a failed submission cannot exceed it (`peer_usage.rs`; runbook `records-service.md` §4.3, §5).
 Corrupt state fails closed. **Time is never evidence:** the ledger accepts a repeated root (each anchor takes the next
