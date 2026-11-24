@@ -212,7 +212,7 @@ All five were corrected in `23685d9` (documentation only).
 | D2 | `docs/APPCHAIN_FIRST_GAME_PLAN.md:15-17,33` | present-tense admin-only registration/anchoring, client roots refused, treasury debit; "Retire once active" still open | §1 is dated as a snapshot with a current-state note; the list states what each item's status actually is |
 | D3 | `docs/CHESS_APPCHAIN_PLAN.md:54,64,98` | treasury-funded batched anchor; `POST /api/appchain/{id}/state` operator-authed | diagram captioned as the superseded sketch, cost charged to the owner wallet; the §3 table is struck through and marked never built |
 | D4 | `docs/runbooks/records-service.md:29-30`, `docs/runbooks/games-service.md:209-211`, `docs/APPCHAIN_SERVICE_ARCHITECTURE.md:85,106` | implied the Records service could anchor any allow-listed chain, chain #1 included | states the allow-list is a ceiling; the signer owns #2 only, so #1 is refused and retried until the handover |
-| D5 | `docs/runbooks/appchain-owner-key.md:177-181` | "See D-1 for the decision that made this the only model" | separates implemented behaviour from ratified policy; O-1 is PENDING OWNER |
+| D5 | `docs/runbooks/appchain-owner-key.md:177-181` | "See D-1 for the decision that made this the only model" | separates implemented behaviour from ratified policy; O-1 was PENDING OWNER at the time and was approved 2026-11-24 ([record](./O1-OWNER-DECISION-2026-11-24.md)) |
 
 Discrepancies that remain, deliberately:
 
