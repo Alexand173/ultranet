@@ -4,6 +4,7 @@
 //! reported by the phone and cannot be verified; the receipts say so). See
 //! `docs/GAMES_RULES_AND_PAYOUTS.md` for the rules and why each exists.
 
+pub mod adapter;
 pub mod anchor;
 pub mod api;
 pub mod auth;

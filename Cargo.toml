@@ -122,6 +122,7 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 argon2 = "0.5"
 chacha20poly1305 = "0.10"
 base64 = "0.21"
+wasmi = { version = "2.0.3", default-features = false, features = ["std", "stable", "validate", "portable-dispatch"] }
 
 # ✅ FHE (Fully Homomorphic Encryption) - Zama TFHE-rs
 [target.'cfg(unix)'.dependencies]
@@ -131,3 +132,6 @@ tfhe = { version = "0.7", features = ["integer", "x86_64-unix", "boolean"] }
 # The Windows build supplies its own OS-backed seed to TFHE and uses the
 # portable software PRNG so older x86_64 CPUs do not require RDSEED or AES-NI.
 tfhe = { version = "0.7", features = ["integer", "boolean"] }
+
+[dev-dependencies]
+wat = "1"
