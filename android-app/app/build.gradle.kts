@@ -11,8 +11,11 @@ android {
         applicationId = "cc.ultranet.ultraverse"
         minSdk = 23
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // 2 / 0.2.0 is the first build signed with the production key. A debug-signed install cannot be
+        // upgraded in place over it: same applicationId, different signing identity, so the platform
+        // refuses the update and the stored wallet must be backed up and re-imported first.
+        versionCode = 2
+        versionName = "0.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
@@ -33,10 +36,45 @@ android {
     // the debug key so it installs in place of the debug build (same applicationId, same data, so
     // the stored wallet survives), but it is not debuggable, so the platform AOT-compiles it at
     // install time. Use it to walk UI flows locally; keep the debug build for tests and debugging.
+    // Production signing comes from the environment, never from the tree:
+    //   ANDROID_RELEASE_STORE_FILE  ANDROID_RELEASE_STORE_PASSWORD
+    //   ANDROID_RELEASE_KEY_ALIAS   ANDROID_RELEASE_KEY_PASSWORD
+    // With those set, `assembleRelease` produces a distributable, v1-v4 signed APK. Without them it
+    // falls back to the debug key so the local UI-walk workflow still works — visible in the signer
+    // certificate, so a debug-signed artefact cannot be mistaken for a release one.
+    signingConfigs {
+        create("release") {
+            val storePath = System.getenv("ANDROID_RELEASE_STORE_FILE")
+            val storePass = System.getenv("ANDROID_RELEASE_STORE_PASSWORD")
+            val alias = System.getenv("ANDROID_RELEASE_KEY_ALIAS")
+            val keyPass = System.getenv("ANDROID_RELEASE_KEY_PASSWORD")
+            if (!storePath.isNullOrBlank() && !storePass.isNullOrBlank() &&
+                !alias.isNullOrBlank() && !keyPass.isNullOrBlank()
+            ) {
+                storeFile = file(storePath)
+                storePassword = storePass
+                keyAlias = alias
+                keyPassword = keyPass
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = true
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig =
+                if (signingConfigs.getByName("release").storeFile != null) {
+                    signingConfigs.getByName("release")
+                } else {
+                    logger.warn(
+                        "ANDROID_RELEASE_* is not set: the release variant is debug-signed and must not be distributed.",
+                    )
+                    signingConfigs.getByName("debug")
+                }
         }
     }
 
