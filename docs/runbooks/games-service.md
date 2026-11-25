@@ -230,6 +230,32 @@ Edge limits: POST on these routes 5 / hour per client (each is a signature check
 step to version 6 is additive and transactional; to go back, restore the backup taken before the upgrade (an older
 binary refuses a newer database rather than misreading it).
 
+**Reward pools and reward policies (catalog games).** Each catalog game has its own pool, funded only by the owner
+of its AppChain; UltraNet funds no game. This is built and tested at the service and database level
+(`src/games/pools.rs`); **there are no HTTP routes and no operator CLI for it yet, and the payout worker does not
+read it**, so nothing here moves money today.
+
+- **Deposit model.** The owner makes an ordinary L1 transfer to the payout address and sends an owner-signed
+  claim naming the transaction and the game. The ledger must show a confirmed transfer from that owner to the
+  payout address; the pool is credited with exactly that amount. The transaction hash is a primary key, so a
+  transfer funds one game once, never twice and never two games.
+- **Isolation.** The on-chain funds sit under the one payout key; separation is the pool ledger
+  (`funded`, `reserved`, `paid`, `withdrawn`, with `reserved + paid + withdrawn <= funded` enforced by the
+  database). A solvency check compares everything owed (all pools plus the older Grid and Chess balances) with the
+  payout wallet's real balance and freezes reservations if the wallet holds less. This is platform custody; the
+  guarantee is the ledger, not a separate key per game.
+- **What may earn.** Only a result verified by the game's approved adapter (a platform decision; every game starts
+  `record_only`) with an outcome the active policy pays for, within its limits and the pool's unreserved balance.
+  One result id is credited once, however often or however concurrently it is submitted.
+- **Reward policy.** The owner proposes (signed); it is checked against the platform ceilings (the existing `MAX_*`
+  limits) and stored as an immutable, hashed version that does nothing until a platform operator approves it. The
+  approver and time are recorded; a new version supersedes the old; each credit keeps the version and hash it was
+  priced under. A policy is refused approval if the pool cannot pay even one reward, and no reward is promised
+  (`promised_reward`) unless one is active and covered.
+- **Withdrawal.** The owner may take back unreserved funds; the amount leaves the pool's accounting at once and one
+  transfer to the chain's *current* owner is queued for the payout worker (not yet built).
+- **Reward money is not AppChain fees.** Registration, anchor and transfer fees are not read or changed here.
+
 **Wallet sign-in.** `GAMES_REQUIRE_PLAYER_AUTH` (default `true`) makes the routes that act for a player
 (`/grid/answers`, `/chess/results`, `/withdraw`) require a session proving the player controls the wallet whose
 address is in the body; a mismatching session is refused even when the setting is off. The flow, with the

@@ -6,7 +6,7 @@
 
 use super::{
     anchor::{AnchorError, Anchorer},
-    chain::{AnchorPoint, ChainError, GamesChain, OwnerActivity, OwnerTx, TxView},
+    chain::{AnchorPoint, ChainError, GamesChain, OwnerActivity, OwnerTx, TransferView, TxView},
     roots,
     rules::{Policy, GAME_CHESS, GAME_GRID},
     peer::PeerVerifier,
@@ -65,6 +65,8 @@ struct FakeChain {
     nonce_override: Mutex<Option<u64>>,
     /// Who owns each AppChain on the ledger right now. A chain not listed is not registered.
     owners: Mutex<HashMap<u32, String>>,
+    /// L1 transfers by hash, as the ledger would show them.
+    transfers: Mutex<HashMap<String, TransferView>>,
 }
 
 impl FakeChain {
@@ -83,6 +85,13 @@ impl FakeChain {
 
 #[async_trait]
 impl GamesChain for FakeChain {
+    async fn transfer(&self, hash: &str) -> Result<Option<TransferView>, ChainError> {
+        if self.down.load(Ordering::SeqCst) {
+            return Err(ChainError::Unavailable);
+        }
+        Ok(self.transfers.lock().unwrap().get(hash).cloned())
+    }
+
     async fn chain_owner(&self, chain_id: u32) -> Result<Option<String>, ChainError> {
         if self.down.load(Ordering::SeqCst) {
             return Err(ChainError::Unavailable);
@@ -6335,5 +6344,576 @@ mod platform_catalog_http {
             assert_eq!(status, 404, "{uri}");
         }
         assert!(h.service.catalog_games(None).unwrap().is_empty());
+    }
+}
+
+// --- per-game reward pools and reward policies ---------------------------------------------------
+
+mod reward_pools {
+    use super::*;
+    use crate::games::adapter::{AdapterModule, AdapterOutput, Outcome, RuntimeLimits, ValidatedResult};
+    use crate::games::catalog::{self, CatalogGame};
+    use crate::games::pools::{self, PolicyTerms, PoolError};
+    use crate::games::service::AdminProof;
+
+    const ADAPTER: [u8; 32] = [0xAD; 32];
+    const OTHER_ADAPTER: [u8; 32] = [0xEE; 32];
+
+    fn wallet() -> (QuantumKeyPair, String) {
+        let keys = QuantumKeyPair::generate();
+        let address = QuantumKeyPair::address_from_public_key(&keys.public_key);
+        (keys, address)
+    }
+
+    fn proof(h: &Harness, keys: &QuantumKeyPair, action: &str, chain: u32, game_id: &str, name: &str) -> AdminProof {
+        let mut fresh = [0u8; 16];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut fresh);
+        let nonce = hex::encode(fresh);
+        let timestamp = h.service.now();
+        let digest = catalog::admin_digest(action, chain, game_id, name, "", "", &nonce, timestamp);
+        AdminProof { nonce, timestamp, public_key: hex::encode(&keys.public_key), signature: hex::encode(keys.sign(&digest)) }
+    }
+
+    /// A game on `chain`, owned by a fresh wallet, with the adapter approved by the platform.
+    async fn game_on(h: &Harness, chain: u32) -> (QuantumKeyPair, String, CatalogGame) {
+        let (keys, owner) = wallet();
+        h.chain.owners.lock().unwrap().insert(chain, owner.clone());
+        let registered = {
+            let mut fresh = [0u8; 16];
+            rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut fresh);
+            let nonce = hex::encode(fresh);
+            let ts = h.service.now();
+            let digest = catalog::admin_digest("register", chain, "", "Pool Game", "", "", &nonce, ts);
+            let p = AdminProof { nonce, timestamp: ts, public_key: hex::encode(&keys.public_key), signature: hex::encode(keys.sign(&digest)) };
+            h.service.catalog_register(chain, "Pool Game", "", p).await.unwrap()
+        };
+        h.service.platform_approve_adapter(&registered.game_id, ADAPTER, 1, "ops").unwrap();
+        (keys, owner, h.service.catalog_game(&registered.game_id).unwrap())
+    }
+
+    fn terms(reward: u64) -> PolicyTerms {
+        PolicyTerms { reward_units: reward, eligible_outcomes: "win".into(), per_player_per_day: 3, per_game_per_day: 100, effective_from: 0 }
+    }
+
+    /// The owner sends `amount` to the payout address, then claims it for the game.
+    async fn fund(h: &Harness, keys: &QuantumKeyPair, owner: &str, game: &CatalogGame, amount: u64, tag: u8) -> Result<pools::PoolView, GamesError> {
+        let hash = hex::encode([tag; 32]);
+        h.chain.transfers.lock().unwrap().insert(
+            hash.clone(),
+            crate::games::chain::TransferView { sender: owner.to_string(), recipient: h.payout_address.clone(), amount, pending: false },
+        );
+        let p = proof(h, keys, "pool-fund", game.chain_id, &game.game_id, &hash);
+        h.service.pool_fund(&game.game_id, &hash, p).await
+    }
+
+    async fn propose(h: &Harness, keys: &QuantumKeyPair, game: &CatalogGame, t: PolicyTerms) -> Result<pools::PolicyRow, GamesError> {
+        let summary = format!("{}|{}|{}|{}|{}", t.reward_units, t.eligible_outcomes, t.per_player_per_day, t.per_game_per_day, t.effective_from);
+        let p = proof(h, keys, "policy-propose", game.chain_id, &game.game_id, &summary);
+        h.service.policy_propose(&game.game_id, t, p).await
+    }
+
+    /// Fund, propose and approve a policy, ready to reserve rewards.
+    async fn ready(h: &Harness, chain: u32, funds: u64, reward: u64) -> (QuantumKeyPair, String, CatalogGame) {
+        let (keys, owner, game) = game_on(h, chain).await;
+        fund(h, &keys, &owner, &game, funds, chain as u8).await.unwrap();
+        let row = propose(h, &keys, &game, terms(reward)).await.unwrap();
+        h.service.platform_decide_policy(&game.game_id, row.version, true, "ops", "within the ceilings").unwrap();
+        (keys, owner, game)
+    }
+
+    fn verdict(outcome: Outcome, module: [u8; 32]) -> ValidatedResult {
+        ValidatedResult { output: AdapterOutput { outcome, score: 1, result_digest: [0; 32] }, fuel_used: 10, module_hash: module }
+    }
+
+    fn player(n: u8) -> String {
+        hex::encode([n; 32])
+    }
+
+    // --- funding -------------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn the_owner_funds_a_pool_with_a_confirmed_transfer_and_it_counts_once() {
+        let h = harness(Options::default());
+        let (keys, owner, game) = game_on(&h, 7).await;
+        let view = fund(&h, &keys, &owner, &game, 5_000, 1).await.unwrap();
+        assert_eq!((view.funded, view.available, view.reserved), (5_000, 5_000, 0));
+        // The same transaction cannot be claimed again: not by this game, not by another.
+        let again = proof(&h, &keys, "pool-fund", 7, &game.game_id, &hex::encode([1u8; 32]));
+        assert!(matches!(h.service.pool_fund(&game.game_id, &hex::encode([1u8; 32]), again).await, Err(GamesError::Conflict)));
+        assert_eq!(h.service.pool(&game.game_id).unwrap().funded, 5_000, "the replay added nothing");
+        // A second, separate transfer adds to it.
+        assert_eq!(fund(&h, &keys, &owner, &game, 700, 2).await.unwrap().funded, 5_700);
+    }
+
+    #[tokio::test]
+    async fn a_deposit_the_ledger_does_not_show_properly_is_never_credited() {
+        let h = harness(Options::default());
+        let (keys, owner, game) = game_on(&h, 7).await;
+        let (stranger, _) = wallet();
+        let hash = hex::encode([9u8; 32]);
+        let transfer = |sender: &str, recipient: &str, amount: u64, pending: bool| {
+            h.chain.transfers.lock().unwrap().insert(hash.clone(), crate::games::chain::TransferView { sender: sender.into(), recipient: recipient.into(), amount, pending });
+        };
+        let claim = |signer: &QuantumKeyPair| proof(&h, signer, "pool-fund", 7, &game.game_id, &hash);
+        // Unknown transaction.
+        assert!(matches!(h.service.pool_fund(&game.game_id, &hash, claim(&keys)).await, Err(GamesError::NotFound(_))));
+        // Pending, wrong recipient, zero amount, someone else's transfer.
+        transfer(&owner, &h.payout_address, 100, true);
+        assert!(matches!(h.service.pool_fund(&game.game_id, &hash, claim(&keys)).await, Err(GamesError::Invalid(_))), "pending");
+        transfer(&owner, &player(1), 100, false);
+        assert!(matches!(h.service.pool_fund(&game.game_id, &hash, claim(&keys)).await, Err(GamesError::Forbidden(_))), "wrong recipient");
+        transfer(&owner, &h.payout_address, 0, false);
+        assert!(matches!(h.service.pool_fund(&game.game_id, &hash, claim(&keys)).await, Err(GamesError::Forbidden(_))), "zero amount");
+        transfer(&player(2), &h.payout_address, 100, false);
+        assert!(matches!(h.service.pool_fund(&game.game_id, &hash, claim(&keys)).await, Err(GamesError::Forbidden(_))), "sent by someone else");
+        // A stranger cannot claim even a perfect deposit for this game.
+        transfer(&owner, &h.payout_address, 100, false);
+        assert!(matches!(h.service.pool_fund(&game.game_id, &hash, claim(&stranger)).await, Err(GamesError::Forbidden(_))));
+        // Malformed hash.
+        assert!(matches!(h.service.pool_fund(&game.game_id, "abc", claim(&keys)).await, Err(GamesError::Invalid(_))));
+        assert_eq!(h.service.pool(&game.game_id).unwrap().funded, 0, "none of that created money");
+        // Only the real thing does.
+        assert_eq!(h.service.pool_fund(&game.game_id, &hash, claim(&keys)).await.unwrap().funded, 100);
+    }
+
+    // --- isolation -----------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn one_games_funds_can_never_pay_another_games_reward() {
+        let h = harness(Options::default());
+        let (_, _, rich) = ready(&h, 7, 10_000, 100).await;
+        let (_, _, poor) = ready_unfunded(&h, 8).await;
+        let win = verdict(Outcome::Win, ADAPTER);
+        // The unfunded game cannot reserve anything, however rich the other one is.
+        assert!(matches!(h.service.reserve_reward(&poor.game_id, "r1", &player(1), &win), Err(GamesError::Forbidden(_))));
+        assert_eq!(h.service.pool(&poor.game_id).unwrap().available, 0, "its own pool is empty, whatever the other holds");
+        // And the rich game pays from its own pool only.
+        h.service.reserve_reward(&rich.game_id, "r1", &player(1), &win).unwrap();
+        assert_eq!(h.service.pool(&rich.game_id).unwrap().reserved, 100);
+        assert_eq!(h.service.pool(&poor.game_id).unwrap().reserved, 0);
+        assert!(h.service.store().pool_audit().unwrap().is_empty());
+    }
+
+    /// A game with an approved adapter and an approved policy but an empty pool, which needs a pool to approve:
+    /// so fund it, approve, then take the funds back.
+    async fn ready_unfunded(h: &Harness, chain: u32) -> (QuantumKeyPair, String, CatalogGame) {
+        let (keys, owner, game) = ready(h, chain, 1_000, 100).await;
+        let p = proof(h, &keys, "pool-withdraw", chain, &game.game_id, "1000");
+        h.service.pool_withdraw(&game.game_id, 1_000, p).await.unwrap();
+        assert_eq!(h.service.pool(&game.game_id).unwrap().available, 0);
+        (keys, owner, game)
+    }
+
+    // --- what may earn money -------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn only_a_result_verified_by_the_approved_adapter_earns_anything() {
+        let h = harness(Options::default());
+        let (keys, owner, record_only) = {
+            // A game the platform has NOT approved an adapter for stays record-only.
+            let (keys, owner) = wallet();
+            h.chain.owners.lock().unwrap().insert(9, owner.clone());
+            let mut fresh = [0u8; 16];
+            rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut fresh);
+            let nonce = hex::encode(fresh);
+            let ts = h.service.now();
+            let digest = catalog::admin_digest("register", 9, "", "Unverified", "", "", &nonce, ts);
+            let p = AdminProof { nonce, timestamp: ts, public_key: hex::encode(&keys.public_key), signature: hex::encode(keys.sign(&digest)) };
+            let game = h.service.catalog_register(9, "Unverified", "", p).await.unwrap();
+            (keys, owner, game)
+        };
+        assert_eq!(record_only.validation_scheme, "record_only");
+        fund(&h, &keys, &owner, &record_only, 5_000, 9).await.unwrap();
+        let win = verdict(Outcome::Win, ADAPTER);
+        assert!(matches!(h.service.reserve_reward(&record_only.game_id, "r1", &player(1), &win), Err(GamesError::Forbidden(_))), "record_only games pay nothing, funded or not");
+        assert_eq!(h.service.pool(&record_only.game_id).unwrap().reserved, 0);
+        assert_eq!(h.service.promised_reward(&record_only.game_id).unwrap(), None, "and promise nothing");
+
+        // A verified game: the verdict must come from the approved module, and be a paying outcome.
+        let (_, _, game) = ready(&h, 7, 5_000, 100).await;
+        let from_other_module = verdict(Outcome::Win, OTHER_ADAPTER);
+        assert!(matches!(h.service.reserve_reward(&game.game_id, "r1", &player(1), &from_other_module), Err(GamesError::Forbidden(_))), "a different module");
+        for outcome in [Outcome::Loss, Outcome::Cancelled, Outcome::Invalid, Outcome::Tie] {
+            assert!(matches!(h.service.reserve_reward(&game.game_id, "r2", &player(1), &verdict(outcome, ADAPTER)), Err(GamesError::Forbidden(_))), "{outcome:?} does not pay under a win-only policy");
+        }
+        assert_eq!(h.service.pool(&game.game_id).unwrap().reserved, 0, "no refusal promised anything");
+        assert_eq!(h.service.reserve_reward(&game.game_id, "r3", &player(1), &win).unwrap().amount_units, 100);
+    }
+
+    #[tokio::test]
+    async fn the_validation_scheme_is_a_gate_of_its_own_whatever_the_adapter_field_says() {
+        // An adapter is on record but the scheme says record-only (a half-reverted or damaged row): nothing pays,
+        // and nothing is promised, until the scheme itself says verified.
+        let h = harness(Options::default());
+        let (_, _, game) = ready(&h, 7, 5_000, 100).await;
+        let win = verdict(Outcome::Win, ADAPTER);
+        assert!(h.service.reserve_reward(&game.game_id, "before", &player(1), &win).is_ok());
+        h.service
+            .store()
+            .lock()
+            .unwrap()
+            .execute("UPDATE platform_games SET validation_scheme = 'record_only' WHERE game_id = ?1", [&game.game_id])
+            .unwrap();
+        assert!(matches!(h.service.reserve_reward(&game.game_id, "after", &player(2), &win), Err(GamesError::Forbidden(_))));
+        assert_eq!(h.service.promised_reward(&game.game_id).unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_real_adapter_verdict_flows_from_the_wasm_runtime_into_a_credit() {
+        let h = harness(Options::default());
+        // A real module: outcome comes from the first payload byte, as in the runtime's own tests.
+        let wat = r#"(module (memory (export "memory") 1 2)
+          (func (export "adapter_abi_version") (result i32) i32.const 1)
+          (func (export "input_buffer") (result i32) i32.const 1024)
+          (func (export "input_capacity") (result i32) i32.const 4200)
+          (func (export "output_buffer") (result i32) i32.const 8192)
+          (func (export "adapter_run") (param i32) (result i32)
+            (i32.store8 (i32.const 8192) (i32.const 1))
+            (i32.store8 (i32.const 8193) (i32.load8_u (i32.const 1061)))
+            (i32.store (i32.const 8194) (i32.const 7))
+            i32.const 38))"#;
+        let module = AdapterModule::compile(&::wat::parse_str(wat).unwrap(), RuntimeLimits::default()).unwrap();
+        let (keys, owner, game) = game_on(&h, 7).await;
+        h.service.platform_approve_adapter(&game.game_id, module.hash(), 1, "ops").unwrap();
+        fund(&h, &keys, &owner, &game, 1_000, 1).await.unwrap();
+        let row = propose(&h, &keys, &game, terms(100)).await.unwrap();
+        h.service.platform_decide_policy(&game.game_id, row.version, true, "ops", "ok").unwrap();
+        let validated = module.validate_result(&[5u8; 32], &[1]).unwrap(); // payload[0] = 1: a win
+        let credit = h.service.reserve_reward(&game.game_id, "match-1", &player(5), &validated).unwrap();
+        assert_eq!((credit.amount_units, credit.state.as_str(), credit.module_hash.as_str()), (100, "reserved", hex::encode(module.hash()).as_str()));
+        // A loss from the same module earns nothing.
+        let loss = module.validate_result(&[5u8; 32], &[2]).unwrap();
+        assert!(matches!(h.service.reserve_reward(&game.game_id, "match-2", &player(5), &loss), Err(GamesError::Forbidden(_))));
+    }
+
+    // --- reward policy -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn a_policy_is_proposed_by_the_owner_approved_by_the_platform_and_inert_until_then() {
+        let h = harness(Options::default());
+        let (keys, owner, game) = game_on(&h, 7).await;
+        fund(&h, &keys, &owner, &game, 5_000, 1).await.unwrap();
+        let v1 = propose(&h, &keys, &game, terms(100)).await.unwrap();
+        assert_eq!((v1.version, v1.status.as_str(), v1.proposed_by.as_str()), (1, "proposed", owner.as_str()));
+        assert_eq!(v1.policy_hash.len(), 64);
+        // Proposed is not approved: no reward can be reserved and none is promised.
+        let win = verdict(Outcome::Win, ADAPTER);
+        assert!(matches!(h.service.reserve_reward(&game.game_id, "r1", &player(1), &win), Err(GamesError::Forbidden(_))));
+        assert_eq!(h.service.promised_reward(&game.game_id).unwrap(), None);
+        // The platform approves; the approver and time are recorded and the catalog points at the hash.
+        let approved = h.service.platform_decide_policy(&game.game_id, 1, true, "ops-alice", "within the ceilings").unwrap();
+        assert_eq!((approved.status.as_str(), approved.decided_at.is_some()), ("approved", true));
+        assert_ne!(approved.decided_by.as_deref(), Some(owner.as_str()), "the owner did not approve their own policy");
+        assert_eq!(h.service.catalog_game(&game.game_id).unwrap().reward_policy_ref.as_deref(), Some(approved.policy_hash.as_str()));
+        assert_eq!(h.service.promised_reward(&game.game_id).unwrap(), Some(100));
+        // A decision is final.
+        assert!(matches!(h.service.platform_decide_policy(&game.game_id, 1, false, "ops", "changed my mind"), Err(GamesError::Invalid(_))));
+        assert!(matches!(h.service.platform_decide_policy(&game.game_id, 9, true, "ops", ""), Err(GamesError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn a_policy_beyond_the_platform_ceilings_or_from_a_stranger_is_refused() {
+        let h = harness(Options::default());
+        let (keys, owner, game) = game_on(&h, 7).await;
+        fund(&h, &keys, &owner, &game, 5_000, 1).await.unwrap();
+        let mut too_rich = terms(100);
+        too_rich.reward_units = crate::games::config::MAX_REWARD_UNITS + 1;
+        assert!(matches!(propose(&h, &keys, &game, too_rich).await, Err(GamesError::Invalid(_))));
+        let mut too_many = terms(100);
+        too_many.per_player_per_day = crate::games::config::MAX_REWARDED_PER_ADDRESS_PER_DAY + 1;
+        assert!(matches!(propose(&h, &keys, &game, too_many).await, Err(GamesError::Invalid(_))));
+        let mut too_broad = terms(100);
+        too_broad.per_game_per_day = crate::games::config::MAX_REWARDED_PER_GAME_PER_DAY + 1;
+        assert!(matches!(propose(&h, &keys, &game, too_broad).await, Err(GamesError::Invalid(_))));
+        for bad in ["loss", "win,loss", "", "cancelled"] {
+            let mut t = terms(100);
+            t.eligible_outcomes = bad.into();
+            assert!(matches!(propose(&h, &keys, &game, t).await, Err(GamesError::Invalid(_))), "{bad:?}");
+        }
+        let mut zero = terms(100);
+        zero.reward_units = 0;
+        assert!(matches!(propose(&h, &keys, &game, zero).await, Err(GamesError::Invalid(_))));
+        let (stranger, _) = wallet();
+        assert!(matches!(propose(&h, &stranger, &game, terms(100)).await, Err(GamesError::Forbidden(_))));
+        assert!(h.service.store().policies(&game.game_id).unwrap().is_empty(), "nothing that was refused was stored");
+        // The boundary values themselves are allowed.
+        let ceiling = PolicyTerms { reward_units: crate::games::config::MAX_REWARD_UNITS, eligible_outcomes: "win,tie".into(), per_player_per_day: crate::games::config::MAX_REWARDED_PER_ADDRESS_PER_DAY, per_game_per_day: crate::games::config::MAX_REWARDED_PER_GAME_PER_DAY, effective_from: 0 };
+        assert!(propose(&h, &keys, &game, ceiling).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn the_platform_will_not_approve_a_policy_the_pool_cannot_pay_even_once() {
+        let h = harness(Options::default());
+        let (keys, owner, game) = game_on(&h, 7).await;
+        fund(&h, &keys, &owner, &game, 50, 1).await.unwrap(); // 50 units, against a reward of 100
+        let row = propose(&h, &keys, &game, terms(100)).await.unwrap();
+        assert!(matches!(h.service.platform_decide_policy(&game.game_id, row.version, true, "ops", ""), Err(GamesError::Forbidden(_))));
+        assert_eq!(h.service.store().policy(&game.game_id, 1).unwrap().unwrap().status, "proposed", "still undecided");
+        // The owner tops the pool up and it can be approved.
+        fund(&h, &keys, &owner, &game, 60, 2).await.unwrap();
+        assert!(h.service.platform_decide_policy(&game.game_id, 1, true, "ops", "").is_ok());
+        // A rejection is recorded and changes nothing else.
+        let second = propose(&h, &keys, &game, terms(200)).await.unwrap();
+        let rejected = h.service.platform_decide_policy(&game.game_id, second.version, false, "ops", "too generous for the funding").unwrap();
+        assert_eq!(rejected.status, "rejected");
+        assert_eq!(h.service.store().policy_active(&game.game_id, h.service.now()).unwrap().unwrap().version, 1);
+    }
+
+    #[tokio::test]
+    async fn a_new_version_supersedes_the_old_and_never_reprices_a_completed_credit() {
+        let h = harness(Options::default());
+        let (keys, _, game) = ready(&h, 7, 10_000, 100).await;
+        let win = verdict(Outcome::Win, ADAPTER);
+        let early = h.service.reserve_reward(&game.game_id, "early", &player(1), &win).unwrap();
+        let v2 = propose(&h, &keys, &game, terms(250)).await.unwrap();
+        let v2 = h.service.platform_decide_policy(&game.game_id, v2.version, true, "ops", "").unwrap();
+        let rows = h.service.store().policies(&game.game_id).unwrap();
+        assert_eq!(rows.iter().map(|r| r.status.as_str()).collect::<Vec<_>>(), ["superseded", "approved"]);
+        // History is kept: version 1's terms and hash are exactly what they were.
+        assert_eq!((rows[0].reward_units, rows[0].version), (100, 1));
+        let later = h.service.reserve_reward(&game.game_id, "later", &player(2), &win).unwrap();
+        assert_eq!((later.amount_units, later.policy_version, later.policy_hash.as_str()), (250, 2, v2.policy_hash.as_str()));
+        let early_again = h.service.store().pool_credit(&early.credit_id).unwrap().unwrap();
+        assert_eq!((early_again.amount_units, early_again.policy_version), (100, 1), "the earlier credit keeps the price it was made at");
+    }
+
+    #[tokio::test]
+    async fn a_policy_that_is_not_yet_effective_does_not_apply() {
+        let h = harness(Options::default());
+        let (keys, owner, game) = game_on(&h, 7).await;
+        fund(&h, &keys, &owner, &game, 10_000, 1).await.unwrap();
+        let mut later = terms(100);
+        later.effective_from = h.service.now() + 3_600;
+        let row = propose(&h, &keys, &game, later).await.unwrap();
+        h.service.platform_decide_policy(&game.game_id, row.version, true, "ops", "").unwrap();
+        let win = verdict(Outcome::Win, ADAPTER);
+        assert!(matches!(h.service.reserve_reward(&game.game_id, "r1", &player(1), &win), Err(GamesError::Forbidden(_))), "approved, but not yet in force");
+        h.advance(3_601);
+        assert!(h.service.reserve_reward(&game.game_id, "r1", &player(1), &win).is_ok());
+    }
+
+    // --- limits and funds ----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn the_policys_daily_limits_hold_and_reset_at_midnight_utc() {
+        let h = harness(Options::default());
+        let (keys, owner, game) = game_on(&h, 7).await;
+        fund(&h, &keys, &owner, &game, 100_000, 1).await.unwrap();
+        let limits = PolicyTerms { reward_units: 10, eligible_outcomes: "win".into(), per_player_per_day: 2, per_game_per_day: 3, effective_from: 0 };
+        let row = propose(&h, &keys, &game, limits).await.unwrap();
+        h.service.platform_decide_policy(&game.game_id, row.version, true, "ops", "").unwrap();
+        let win = verdict(Outcome::Win, ADAPTER);
+        h.service.reserve_reward(&game.game_id, "a", &player(1), &win).unwrap();
+        h.service.reserve_reward(&game.game_id, "b", &player(1), &win).unwrap();
+        assert!(matches!(h.service.reserve_reward(&game.game_id, "c", &player(1), &win), Err(GamesError::GameLimit)), "a third for one player");
+        h.service.reserve_reward(&game.game_id, "d", &player(2), &win).unwrap();
+        assert!(matches!(h.service.reserve_reward(&game.game_id, "e", &player(3), &win), Err(GamesError::GameLimit)), "a fourth for the game");
+        h.next_day();
+        assert!(h.service.reserve_reward(&game.game_id, "f", &player(1), &win).is_ok(), "a new UTC day starts the counts again");
+    }
+
+    #[tokio::test]
+    async fn without_enough_funds_no_reward_is_promised_and_nothing_is_reserved() {
+        let h = harness(Options::default());
+        let (_, _, game) = ready(&h, 7, 150, 100).await;
+        let win = verdict(Outcome::Win, ADAPTER);
+        assert_eq!(h.service.promised_reward(&game.game_id).unwrap(), Some(100));
+        h.service.reserve_reward(&game.game_id, "r1", &player(1), &win).unwrap();
+        // 50 left against a reward of 100: the second win is refused, creates no credit, and the promise is withdrawn.
+        assert!(matches!(h.service.reserve_reward(&game.game_id, "r2", &player(2), &win), Err(GamesError::Forbidden(_))));
+        let pool = h.service.pool(&game.game_id).unwrap();
+        assert_eq!((pool.funded, pool.reserved, pool.available), (150, 100, 50));
+        assert_eq!(h.service.promised_reward(&game.game_id).unwrap(), None, "no promise the pool cannot keep");
+        // The refused result left no trace in the books.
+        assert!(h.service.store().pool_audit().unwrap().is_empty());
+    }
+
+    // --- double spending -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn a_result_is_credited_once_however_many_times_it_is_submitted() {
+        let h = harness(Options::default());
+        let (_, _, game) = ready(&h, 7, 1_000, 100).await;
+        let win = verdict(Outcome::Win, ADAPTER);
+        let first = h.service.reserve_reward(&game.game_id, "match-1", &player(1), &win).unwrap();
+        let replay = h.service.reserve_reward(&game.game_id, "match-1", &player(1), &win).unwrap();
+        assert_eq!(first.credit_id, replay.credit_id, "the same credit comes back");
+        assert_eq!(h.service.pool(&game.game_id).unwrap().reserved, 100, "reserved once");
+        // The same result id claimed for a different player is refused, not paid twice.
+        assert!(matches!(h.service.reserve_reward(&game.game_id, "match-1", &player(2), &win), Err(GamesError::ResultConflict)));
+        assert_eq!(h.service.pool(&game.game_id).unwrap().reserved, 100);
+        // The same id in another game is another result.
+        let (_, _, other) = ready(&h, 8, 1_000, 100).await;
+        assert!(h.service.reserve_reward(&other.game_id, "match-1", &player(1), &win).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_credit_settles_once_and_the_accounting_follows() {
+        let h = harness(Options::default());
+        let (_, _, game) = ready(&h, 7, 1_000, 100).await;
+        let win = verdict(Outcome::Win, ADAPTER);
+        let a = h.service.reserve_reward(&game.game_id, "a", &player(1), &win).unwrap();
+        let b = h.service.reserve_reward(&game.game_id, "b", &player(2), &win).unwrap();
+        assert_eq!(h.service.pool(&game.game_id).unwrap().available, 800);
+        let paid = h.service.settle_reward(&a.credit_id, true).unwrap();
+        assert_eq!((paid.reserved, paid.paid, paid.available), (100, 100, 800));
+        let released = h.service.settle_reward(&b.credit_id, false).unwrap();
+        assert_eq!((released.reserved, released.paid, released.available), (0, 100, 900), "a released credit gives its reservation back");
+        // Settling again moves nothing, whichever way it is asked.
+        assert!(matches!(h.service.settle_reward(&a.credit_id, true), Err(GamesError::Invalid(_))));
+        assert!(matches!(h.service.settle_reward(&a.credit_id, false), Err(GamesError::Invalid(_))));
+        assert!(matches!(h.service.settle_reward(&b.credit_id, true), Err(GamesError::Invalid(_))));
+        assert!(matches!(h.service.settle_reward(&"00".repeat(16), true), Err(GamesError::NotFound(_))));
+        let pool = h.service.pool(&game.game_id).unwrap();
+        assert_eq!((pool.funded, pool.reserved, pool.paid, pool.withdrawn, pool.available), (1_000, 0, 100, 0, 900));
+        assert!(h.service.store().pool_audit().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn concurrent_wins_cannot_spend_more_than_the_pool_holds() {
+        let h = harness(Options::default());
+        let (_, _, game) = ready(&h, 7, 1_000, 100).await; // enough for exactly ten rewards
+        let outcomes: Vec<Result<crate::games::pools::Credit, GamesError>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..40u32)
+                .map(|n| {
+                    let service = h.service.clone();
+                    let game_id = game.game_id.clone();
+                    scope.spawn(move || service.reserve_reward(&game_id, &format!("match-{n}"), &hex::encode([(n % 250) as u8 + 1; 32]), &verdict(Outcome::Win, ADAPTER)))
+                })
+                .collect();
+            handles.into_iter().map(|handle| handle.join().unwrap()).collect()
+        });
+        // The per-player limit also applies (3 a day), so count what the funds alone allow with distinct players.
+        let granted = outcomes.iter().filter(|r| r.is_ok()).count();
+        let pool = h.service.pool(&game.game_id).unwrap();
+        assert_eq!(pool.reserved, 100 * granted as u64, "what was reserved is exactly what was granted");
+        assert!(pool.reserved <= pool.funded, "never more than the pool holds");
+        assert_eq!(granted, 10, "ten rewards of 100 against 1,000 funded");
+        assert!(h.service.store().pool_audit().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_same_result_raced_from_many_threads_makes_one_credit() {
+        let h = harness(Options::default());
+        let (_, _, game) = ready(&h, 7, 1_000, 100).await;
+        let results: Vec<Result<crate::games::pools::Credit, GamesError>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..16)
+                .map(|_| {
+                    let service = h.service.clone();
+                    let game_id = game.game_id.clone();
+                    scope.spawn(move || service.reserve_reward(&game_id, "one-match", &player(1), &verdict(Outcome::Win, ADAPTER)))
+                })
+                .collect();
+            handles.into_iter().map(|handle| handle.join().unwrap()).collect()
+        });
+        let ids: HashSet<String> = results.iter().filter_map(|r| r.as_ref().ok().map(|c| c.credit_id.clone())).collect();
+        assert_eq!(ids.len(), 1, "every thread was told about the same single credit");
+        assert_eq!(h.service.pool(&game.game_id).unwrap().reserved, 100);
+    }
+
+    // --- withdrawal ----------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn the_owner_takes_back_only_unreserved_funds_and_only_to_the_current_owner() {
+        let h = harness(Options::default());
+        let (keys, owner, game) = ready(&h, 7, 1_000, 100).await;
+        let win = verdict(Outcome::Win, ADAPTER);
+        h.service.reserve_reward(&game.game_id, "a", &player(1), &win).unwrap(); // 100 reserved
+        assert!(matches!(withdraw(&h, &keys, &game, 901).await, Err(GamesError::Forbidden(_))), "reserved funds cannot be taken back");
+        assert!(matches!(withdraw(&h, &keys, &game, 0).await, Err(GamesError::Forbidden(_))));
+        let after = withdraw(&h, &keys, &game, 900).await.unwrap();
+        assert_eq!((after.withdrawn, after.available, after.reserved), (900, 0, 100));
+        // A stranger cannot withdraw, and the amount is bound into what the owner signed.
+        let (stranger, _) = wallet();
+        let p = proof(&h, &stranger, "pool-withdraw", 7, &game.game_id, "1");
+        assert!(matches!(h.service.pool_withdraw(&game.game_id, 1, p).await, Err(GamesError::Forbidden(_))));
+        let signed_for_one = proof(&h, &keys, "pool-withdraw", 7, &game.game_id, "1");
+        assert!(matches!(h.service.pool_withdraw(&game.game_id, 500, signed_for_one).await, Err(GamesError::AdminProofInvalid)));
+        // The destination is whoever owns the chain now: after a handover, the new owner.
+        let (heir, heir_address) = wallet();
+        h.chain.owners.lock().unwrap().insert(7, heir_address.clone());
+        fund(&h, &heir, &heir_address, &game, 300, 77).await.unwrap();
+        let p = proof(&h, &heir, "pool-withdraw", 7, &game.game_id, "300");
+        h.service.pool_withdraw(&game.game_id, 300, p).await.unwrap();
+        let history = h.service.catalog_history(&game.game_id).unwrap();
+        let last = history.last().unwrap();
+        assert_eq!((last.action.as_str(), last.actor.as_str()), ("pool-withdraw", heir_address.as_str()));
+        assert!(last.detail.contains(&heir_address), "the queued return goes to the new owner");
+        let _ = owner;
+        assert!(h.service.store().pool_audit().unwrap().is_empty());
+    }
+
+    async fn withdraw(h: &Harness, keys: &QuantumKeyPair, game: &CatalogGame, amount: u64) -> Result<pools::PoolView, GamesError> {
+        let p = proof(h, keys, "pool-withdraw", game.chain_id, &game.game_id, &amount.to_string());
+        h.service.pool_withdraw(&game.game_id, amount, p).await
+    }
+
+    // --- restart, reconciliation, solvency -----------------------------------------------------
+
+    #[test]
+    fn the_pools_survive_a_restart_and_the_books_can_be_re_derived() {
+        use crate::games::catalog::AuditRecord;
+        let path = std::env::temp_dir().join(format!("games-pools-restart-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let game_id = "ab".repeat(16);
+        let owner = "cd".repeat(32);
+        let record = |n: u8| AuditRecord { actor: &owner, action: "x", chain_owner: &owner, detail: "{}", digest: [n; 32] };
+        {
+            let store = GamesStore::open(&path).unwrap();
+            store.catalog_register(&game_id, 7, "Persistent", "", 1_000, 20, &record(1)).unwrap();
+            store.pool_record_deposit(&game_id, &"11".repeat(32), &owner, 1_000, 1_001, &record(2)).unwrap();
+            store.platform_approve_adapter(&game_id, &ADAPTER, 1, 1_002, &record(3)).unwrap();
+            let t = terms(100);
+            store.policy_propose(&game_id, &t, &owner, 1_003, &record(4)).unwrap();
+            store.policy_decide(&game_id, 1, true, &"ee".repeat(32), "ok", 1_004, &record(5)).unwrap();
+            let credit = store.pool_reserve(&game_id, "m1", &"33".repeat(32), &"44".repeat(16), &verdict(Outcome::Win, ADAPTER), 2_000).unwrap();
+            store.pool_settle(&credit.credit_id, true, 2_001).unwrap();
+            store.pool_reserve(&game_id, "m2", &"33".repeat(32), &"55".repeat(16), &verdict(Outcome::Win, ADAPTER), 2_002).unwrap();
+        }
+        let reopened = GamesStore::open(&path).unwrap();
+        let pool = reopened.pool_view(&game_id).unwrap();
+        assert_eq!((pool.funded, pool.reserved, pool.paid, pool.available), (1_000, 100, 100, 800));
+        assert!(reopened.pool_audit().unwrap().is_empty(), "the books re-derive from the records");
+        assert_eq!(reopened.policy_active(&game_id, 3_000).unwrap().unwrap().version, 1);
+        // A claimed deposit stays claimed, a credited result stays credited, a settled credit stays settled.
+        assert!(matches!(reopened.pool_record_deposit(&game_id, &"11".repeat(32), &owner, 1_000, 3_000, &record(9)), Err(PoolError::AlreadyClaimed)));
+        let again = reopened.pool_reserve(&game_id, "m1", &"33".repeat(32), &"66".repeat(16), &verdict(Outcome::Win, ADAPTER), 3_000).unwrap();
+        assert_eq!(again.state, "paid", "the same result is the same credit, already paid");
+        assert_eq!(reopened.pool_view(&game_id).unwrap().reserved, 100);
+        // Damage the stored figure by hand: the audit says so, naming the pool and the difference.
+        drop(reopened);
+        let raw = rusqlite::Connection::open(&path).unwrap();
+        raw.execute("UPDATE game_pools SET funded = funded + 500", []).unwrap();
+        drop(raw);
+        let issues = GamesStore::open(&path).unwrap().pool_audit().unwrap();
+        assert!(issues.iter().any(|issue| issue.contains("funded is 1500")), "{issues:?}");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn the_database_itself_refuses_a_pool_that_spends_more_than_it_holds() {
+        let store = GamesStore::open(std::path::Path::new(":memory:")).unwrap();
+        let guard = store.lock().unwrap();
+        guard.execute("INSERT INTO game_pools (game_id, funded) VALUES (?1, 100)", [&"ab".repeat(16)]).unwrap();
+        assert!(guard.execute("UPDATE game_pools SET reserved = 101", []).is_err(), "reserved beyond funded");
+        assert!(guard.execute("UPDATE game_pools SET paid = 60, withdrawn = 41", []).is_err(), "paid and withdrawn beyond funded");
+        assert!(guard.execute("UPDATE game_pools SET reserved = -1", []).is_err(), "a negative balance");
+    }
+
+    #[tokio::test]
+    async fn a_payout_wallet_that_holds_less_than_is_owed_freezes_rewards_until_it_is_checked() {
+        // The wallet holds 500; the pool is funded with 1,000. The service owes more than it holds.
+        let h = harness(Options { pool_balance: 500, ..Options::default() });
+        let (_, _, game) = ready(&h, 7, 1_000, 100).await;
+        let win = verdict(Outcome::Win, ADAPTER);
+        assert!(h.service.reserve_reward(&game.game_id, "ok-before", &player(1), &win).is_ok(), "nothing has noticed yet");
+        assert!(matches!(h.service.pool_check_solvency().await, Err(GamesError::PayoutsPaused)));
+        assert!(h.service.store().pools_frozen().unwrap().is_some());
+        assert!(matches!(h.service.reserve_reward(&game.game_id, "after", &player(2), &win), Err(GamesError::PayoutsPaused)), "frozen for everyone");
+        // Once the wallet is topped up and an operator clears the freeze, rewards resume.
+        h.node.balance.store(5_000, Ordering::SeqCst);
+        h.service.pool_check_solvency().await.unwrap();
+        h.service.store().pools_set_frozen(false, None).unwrap();
+        assert!(h.service.reserve_reward(&game.game_id, "after", &player(2), &win).is_ok());
     }
 }

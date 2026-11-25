@@ -567,7 +567,7 @@ impl GamesService {
     /// request's digest. The signature is checked first (cheap, no I/O), then the ledger is asked who owns
     /// the chain *now*; the two must be the same address.
     #[allow(clippy::too_many_arguments)]
-    async fn authorize_admin(
+    pub(super) async fn authorize_admin(
         &self,
         action: &str,
         chain_id: u32,
@@ -692,6 +692,24 @@ impl GamesService {
         Ok(self.store.catalog_history(game_id)?)
     }
 
+    pub(super) fn chain(&self) -> &Arc<dyn GamesChain> {
+        &self.chain
+    }
+
+    pub(super) fn payout_address(&self) -> &str {
+        &self.config.payout_address
+    }
+
+    /// What the payout wallet really holds, as the node reports it. Unreadable is an error, never a guess.
+    pub(super) async fn payout_balance(&self) -> Result<u64, GamesError> {
+        let account = self
+            .node
+            .account(&self.config.payout_address)
+            .await
+            .map_err(|_| GamesError::ChainUnavailable)?;
+        account.balance_base_units().ok_or(GamesError::ChainUnavailable)
+    }
+
     /// Issue a one-time sign-in challenge for `address`.
     pub fn auth_challenge(&self, address: &str, purpose: &str) -> Result<ChallengeView, GamesError> {
         let address = self.normalize_address(address)?;
@@ -779,7 +797,7 @@ impl GamesService {
         }
     }
 
-    fn normalize_address(&self, address: &str) -> Result<String, GamesError> {
+    pub(super) fn normalize_address(&self, address: &str) -> Result<String, GamesError> {
         let address = address.trim().to_ascii_lowercase();
         let address = address.strip_prefix("0x").unwrap_or(&address).to_string();
         if roots::address_bytes(&address).is_none() {

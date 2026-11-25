@@ -53,6 +53,15 @@ pub struct OwnerActivity {
 }
 
 /// One transaction as the node reports it by hash.
+/// A transfer as the ledger shows it: who sent how much to whom, and whether a block has confirmed it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TransferView {
+    pub sender: String,
+    pub recipient: String,
+    pub amount: u64,
+    pub pending: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TxView {
     pub sender: String,
@@ -102,6 +111,9 @@ pub trait GamesChain: Send + Sync {
         chain_id: u32,
         root: &[u8; 32],
     ) -> Result<Option<AnchorPoint>, ChainError>;
+
+    /// One transfer by hash with its amount, or `None` if the node has neither mined nor pending one.
+    async fn transfer(&self, hash: &str) -> Result<Option<TransferView>, ChainError>;
 
     /// The current L1 owner of `chain_id`, or `None` if it is not registered. Read live, never cached: game
     /// administration follows this address.
@@ -170,6 +182,25 @@ impl HttpChain {
             .ok_or(ChainError::Invalid)?;
         parse_anchors(&body)
     }
+}
+
+/// A transaction answer read as a transfer. `Ok(None)` when the node says there is no such transaction; an
+/// error when the answer is not one this code can trust. The status must be exactly `pending` or `confirmed`.
+pub fn transfer_from_body(body: &Value) -> Result<Option<TransferView>, ChainError> {
+    if body["success"] != Value::Bool(true) {
+        return Ok(None);
+    }
+    let data = &body["data"];
+    let status = data["status"].as_str().ok_or(ChainError::Invalid)?;
+    if status != "pending" && status != "confirmed" {
+        return Err(ChainError::Invalid);
+    }
+    Ok(Some(TransferView {
+        sender: data["sender"].as_str().ok_or(ChainError::Invalid)?.to_string(),
+        recipient: data["recipient"].as_str().ok_or(ChainError::Invalid)?.to_string(),
+        amount: data["amount"].as_u64().ok_or(ChainError::Invalid)?,
+        pending: status == "pending",
+    }))
 }
 
 /// The owner a ledger answer names for `chain_id`: only if the answer is about that chain and the owner is a
@@ -300,6 +331,16 @@ impl GamesChain for HttpChain {
             timestamp: data["timestamp"].as_u64().ok_or(ChainError::Invalid)?,
             pending: status == "pending",
         }))
+    }
+
+    async fn transfer(&self, hash: &str) -> Result<Option<TransferView>, ChainError> {
+        if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(ChainError::Invalid);
+        }
+        let Some(body) = self.get(&format!("/api/transaction/{hash}")).await? else {
+            return Ok(None);
+        };
+        transfer_from_body(&body)
     }
 
     async fn chain_owner(&self, chain_id: u32) -> Result<Option<String>, ChainError> {

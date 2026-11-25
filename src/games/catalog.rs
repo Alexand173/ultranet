@@ -251,7 +251,7 @@ fn read_game(row: &rusqlite::Row<'_>) -> rusqlite::Result<GameRow> {
     ))
 }
 
-fn write_audit(tx: &rusqlite::Transaction<'_>, game_id: &str, now: u64, audit: &AuditRecord<'_>) -> Result<(), CatalogError> {
+pub(super) fn write_audit(tx: &rusqlite::Transaction<'_>, game_id: &str, now: u64, audit: &AuditRecord<'_>) -> Result<(), CatalogError> {
     let inserted = tx.execute(
         "INSERT INTO platform_game_audit (game_id, at, actor, action, chain_owner, detail, digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![game_id, to_i64(now)?, audit.actor, audit.action, audit.chain_owner, audit.detail, audit.digest.as_slice()],
