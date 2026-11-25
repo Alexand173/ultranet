@@ -20,6 +20,7 @@
 //! which is the job of the caps, the chain-presence rule and the reverse proxy's rate limits.
 
 use super::service::{
+    AdminProof,
     date_start, shift_date, ChessResultRequest, GamesError, GamesService, GridAnswerRequest,
 };
 use crate::ultragrid;
@@ -51,6 +52,12 @@ pub fn configure_routes(config: &mut web::ServiceConfig) {
         .app_data(json_config())
         .route("/api/games/status", web::get().to(status))
         .route("/api/games/grid/day", web::get().to(grid_day))
+        .route("/api/games/catalog", web::post().to(catalog_register))
+        .route("/api/games/catalog", web::get().to(catalog_list))
+        .route("/api/games/catalog/{game_id}", web::get().to(catalog_game))
+        .route("/api/games/catalog/{game_id}/update", web::post().to(catalog_update))
+        .route("/api/games/catalog/{game_id}/status", web::post().to(catalog_status))
+        .route("/api/games/catalog/{game_id}/history", web::get().to(catalog_history))
         .route("/api/games/auth/challenge", web::post().to(auth_challenge))
         .route("/api/games/auth/verify", web::post().to(auth_verify))
         .route("/api/games/auth/logout", web::post().to(auth_logout))
@@ -245,6 +252,123 @@ async fn withdraw(
         return error_response(&error);
     }
     respond(service.withdraw(&body.address))
+}
+
+// --- the game catalog ----------------------------------------------------------------------------
+//
+// Anyone may read. Every change carries a signed owner proof (never a session) and is checked against the
+// ledger's current owner of the game's chain.
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RegisterBody {
+    nonce: String,
+    chain_id: u32,
+    name: String,
+    #[serde(default)]
+    description: String,
+    timestamp: u64,
+    public_key: String,
+    signature: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateBody {
+    nonce: String,
+    name: String,
+    #[serde(default)]
+    description: String,
+    timestamp: u64,
+    public_key: String,
+    signature: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatusBody {
+    nonce: String,
+    status: String,
+    timestamp: u64,
+    public_key: String,
+    signature: String,
+}
+
+#[derive(Deserialize)]
+struct CatalogQuery {
+    chain_id: Option<u32>,
+}
+
+fn proof(nonce: String, timestamp: u64, public_key: String, signature: String) -> AdminProof {
+    AdminProof { nonce, timestamp, public_key, signature }
+}
+
+/// A game id is 32 lowercase hex characters; anything else cannot name a game.
+fn game_id_or_404(id: String) -> Result<String, GamesError> {
+    if id.len() == 32 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+        Ok(id)
+    } else {
+        Err(GamesError::NotFound("no such game".into()))
+    }
+}
+
+async fn catalog_register(service: web::Data<GamesService>, body: web::Json<RegisterBody>) -> HttpResponse {
+    let body = body.into_inner();
+    respond(
+        service
+            .catalog_register(body.chain_id, &body.name, &body.description, proof(body.nonce, body.timestamp, body.public_key, body.signature))
+            .await,
+    )
+}
+
+async fn catalog_list(service: web::Data<GamesService>, query: web::Query<CatalogQuery>) -> HttpResponse {
+    respond(service.catalog_games(query.chain_id).map(|games| json!({ "games": games })))
+}
+
+async fn catalog_game(service: web::Data<GamesService>, id: web::Path<String>) -> HttpResponse {
+    respond(game_id_or_404(id.into_inner()).and_then(|id| service.catalog_game(&id)))
+}
+
+async fn catalog_history(service: web::Data<GamesService>, id: web::Path<String>) -> HttpResponse {
+    respond(
+        game_id_or_404(id.into_inner())
+            .and_then(|id| service.catalog_history(&id))
+            .map(|entries| json!({ "history": entries })),
+    )
+}
+
+async fn catalog_update(
+    service: web::Data<GamesService>,
+    id: web::Path<String>,
+    body: web::Json<UpdateBody>,
+) -> HttpResponse {
+    let body = body.into_inner();
+    let id = match game_id_or_404(id.into_inner()) {
+        Ok(id) => id,
+        Err(error) => return error_response(&error),
+    };
+    respond(
+        service
+            .catalog_update(&id, &body.name, &body.description, proof(body.nonce, body.timestamp, body.public_key, body.signature))
+            .await,
+    )
+}
+
+async fn catalog_status(
+    service: web::Data<GamesService>,
+    id: web::Path<String>,
+    body: web::Json<StatusBody>,
+) -> HttpResponse {
+    let body = body.into_inner();
+    let id = match game_id_or_404(id.into_inner()) {
+        Ok(id) => id,
+        Err(error) => return error_response(&error),
+    };
+    respond(
+        service
+            .catalog_set_status(&id, &body.status, proof(body.nonce, body.timestamp, body.public_key, body.signature))
+            .await,
+    )
 }
 
 /// The wallet session a request carries, if any. It travels in its own header because the reverse proxy

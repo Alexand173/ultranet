@@ -102,6 +102,10 @@ pub trait GamesChain: Send + Sync {
         chain_id: u32,
         root: &[u8; 32],
     ) -> Result<Option<AnchorPoint>, ChainError>;
+
+    /// The current L1 owner of `chain_id`, or `None` if it is not registered. Read live, never cached: game
+    /// administration follows this address.
+    async fn chain_owner(&self, chain_id: u32) -> Result<Option<String>, ChainError>;
 }
 
 const PAGE: u64 = 50;
@@ -166,6 +170,20 @@ impl HttpChain {
             .ok_or(ChainError::Invalid)?;
         parse_anchors(&body)
     }
+}
+
+/// The owner a ledger answer names for `chain_id`: only if the answer is about that chain and the owner is a
+/// well-formed address. Anything else is an answer this code cannot trust, never a guessed owner.
+pub fn chain_owner_from_body(body: &Value, chain_id: u32) -> Result<String, ChainError> {
+    let chain = &body["chain"];
+    if chain["id"].as_u64() != Some(u64::from(chain_id)) {
+        return Err(ChainError::Invalid);
+    }
+    let owner = chain["owner"].as_str().ok_or(ChainError::Invalid)?;
+    if owner.len() != 64 || !owner.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+        return Err(ChainError::Invalid);
+    }
+    Ok(owner.to_string())
 }
 
 pub fn parse_anchors(body: &Value) -> Result<Vec<AnchorPoint>, ChainError> {
@@ -282,6 +300,13 @@ impl GamesChain for HttpChain {
             timestamp: data["timestamp"].as_u64().ok_or(ChainError::Invalid)?,
             pending: status == "pending",
         }))
+    }
+
+    async fn chain_owner(&self, chain_id: u32) -> Result<Option<String>, ChainError> {
+        match self.get(&format!("/api/appchain/ledger/{chain_id}")).await? {
+            None => Ok(None),
+            Some(body) => chain_owner_from_body(&body, chain_id).map(Some),
+        }
     }
 
     async fn anchors_since(

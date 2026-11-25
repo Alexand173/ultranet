@@ -13,6 +13,7 @@
 
 use super::{
     auth::{self, AuthConfig, AuthError},
+    catalog::{self, AuditEntry, AuditRecord, CatalogError, CatalogGame},
     anchor::Anchorer,
     chain::{ChainError, GamesChain},
     registry::RegistryError,
@@ -72,6 +73,8 @@ pub struct ServiceConfig {
     /// Require a wallet session for the routes that act for a player (answers, results, withdrawals). An
     /// address in a request body is not proof of anything; with this on, it must match the session's.
     pub require_player_auth: bool,
+    /// The most games one AppChain may hold in the catalog (a platform limit against spam, not a price).
+    pub catalog_max_games_per_chain: u32,
 }
 
 impl ServiceConfig {
@@ -89,6 +92,7 @@ impl ServiceConfig {
             // The library default is open so existing in-process callers keep working; the service's own
             // configuration (`GamesConfig`) turns this on unless an operator says otherwise.
             require_player_auth: false,
+            catalog_max_games_per_chain: 20,
         }
     }
 }
@@ -137,6 +141,10 @@ pub enum GamesError {
     AnchorFailed(String),
     #[error("the peer could not be authenticated")]
     PeerUnauthenticated,
+    #[error("the owner proof did not verify")]
+    AdminProofInvalid,
+    #[error("this AppChain already has the most games it may hold")]
+    CatalogFull,
     #[error("sign in with your wallet first")]
     AuthRequired,
     #[error("the sign-in could not be verified")]
@@ -176,6 +184,8 @@ impl GamesError {
             GamesError::AnchorFailed(_) => "anchor_failed",
             GamesError::PeerUnauthenticated => "peer_unauthenticated",
             GamesError::NotFound(_) => "not_found",
+            GamesError::AdminProofInvalid => "proof_invalid",
+            GamesError::CatalogFull => "chain_full",
             GamesError::AuthRequired => "auth_required",
             GamesError::AuthFailed => "auth_failed",
             GamesError::SessionMismatch => "session_mismatch",
@@ -193,7 +203,8 @@ impl GamesError {
             GamesError::InvalidKey
             | GamesError::PeerUnauthenticated
             | GamesError::AuthRequired
-            | GamesError::AuthFailed => 401,
+            | GamesError::AuthFailed
+            | GamesError::AdminProofInvalid => 401,
             GamesError::GameSuspended | GamesError::Forbidden(_) | GamesError::SessionMismatch => 403,
             GamesError::AnchorFailed(_) => 502,
             GamesError::NotFound(_) => 404,
@@ -203,13 +214,26 @@ impl GamesError {
             | GamesError::PlayerLimit
             | GamesError::OwnerLimit
             | GamesError::RegistrationLimit
-            | GamesError::AuthRateLimited => 429,
+            | GamesError::AuthRateLimited
+            | GamesError::CatalogFull => 429,
             GamesError::Disabled
             | GamesError::PayoutsPaused
             | GamesError::ChainUnavailable
             | GamesError::AnchoringDisabled
             | GamesError::ReconciliationRequired(_) => 503,
             GamesError::Internal(_) => 500,
+        }
+    }
+}
+
+impl From<CatalogError> for GamesError {
+    fn from(error: CatalogError) -> Self {
+        match error {
+            CatalogError::Store(error) => error.into(),
+            CatalogError::ProofInvalid => GamesError::AdminProofInvalid,
+            CatalogError::Invalid(message) => GamesError::Invalid(message),
+            CatalogError::NotFound(message) => GamesError::NotFound(message),
+            CatalogError::ChainFull => GamesError::CatalogFull,
         }
     }
 }
@@ -407,6 +431,17 @@ pub struct DailyReport {
     pub errors: Vec<(String, String, String)>,
 }
 
+/// A signed administrative request: the owner's public key and signature over the digest of the action.
+/// A player's wallet session is not accepted in its place.
+#[derive(Debug, Clone)]
+pub struct AdminProof {
+    /// Fresh each time, chosen by the signer (16 to 64 lowercase hex characters).
+    pub nonce: String,
+    pub timestamp: u64,
+    pub public_key: String,
+    pub signature: String,
+}
+
 /// What a wallet needs in order to sign in: the challenge and the digest it must sign.
 #[derive(Debug, Clone, Serialize)]
 pub struct ChallengeView {
@@ -524,6 +559,137 @@ impl GamesService {
 
     pub fn today(&self) -> String {
         date_of(self.now())
+    }
+
+    // --- the game catalog ------------------------------------------------------------------
+
+    /// Check a signed administrative request and return who signed it, the chain's current owner and the
+    /// request's digest. The signature is checked first (cheap, no I/O), then the ledger is asked who owns
+    /// the chain *now*; the two must be the same address.
+    #[allow(clippy::too_many_arguments)]
+    async fn authorize_admin(
+        &self,
+        action: &str,
+        chain_id: u32,
+        game_id: &str,
+        name: &str,
+        description: &str,
+        status: &str,
+        proof: &AdminProof,
+    ) -> Result<(String, String, [u8; 32]), GamesError> {
+        catalog::check_timestamp(proof.timestamp, self.now())?;
+        catalog::check_nonce(&proof.nonce)?;
+        let digest = catalog::admin_digest(action, chain_id, game_id, name, description, status, &proof.nonce, proof.timestamp);
+        let actor = catalog::verify_admin_signature(&digest, &proof.public_key, &proof.signature)?;
+        let owner = self
+            .chain
+            .chain_owner(chain_id)
+            .await
+            .map_err(|_| GamesError::ChainUnavailable)?
+            .ok_or_else(|| GamesError::NotFound("that AppChain is not registered on the ledger".into()))?;
+        if owner != actor {
+            return Err(GamesError::Forbidden(format!(
+                "only the current owner of AppChain #{chain_id} may do that"
+            )));
+        }
+        Ok((actor, owner, digest))
+    }
+
+    /// Register a game on an AppChain. The game id is generated here and never changes; the name is a label.
+    pub async fn catalog_register(
+        &self,
+        chain_id: u32,
+        name: &str,
+        description: &str,
+        proof: AdminProof,
+    ) -> Result<CatalogGame, GamesError> {
+        if chain_id == 0 {
+            return Err(GamesError::Invalid("chain_id must be an AppChain, not the L1".into()));
+        }
+        let name = catalog::clean_label(name, "name", catalog::NAME_MAX_CHARS, true)?;
+        let description = catalog::clean_label(description, "description", catalog::DESCRIPTION_MAX_CHARS, false)?;
+        let (actor, owner, digest) = self
+            .authorize_admin(catalog::ACTION_REGISTER, chain_id, "", &name, &description, "", &proof)
+            .await?;
+        let mut id = [0u8; 16];
+        OsRng.fill_bytes(&mut id);
+        let game_id = hex::encode(id);
+        let detail = serde_json::json!({ "chain_id": chain_id, "name": name }).to_string();
+        Ok(self.store.catalog_register(
+            &game_id,
+            chain_id,
+            &name,
+            &description,
+            self.now(),
+            self.config.catalog_max_games_per_chain,
+            &AuditRecord { actor: &actor, action: catalog::ACTION_REGISTER, chain_owner: &owner, detail: &detail, digest },
+        )?)
+    }
+
+    fn known_game(&self, game_id: &str) -> Result<CatalogGame, GamesError> {
+        self.store
+            .catalog_game(game_id)?
+            .ok_or_else(|| GamesError::NotFound("no such game".into()))
+    }
+
+    /// Change a game's display metadata. Authority is the chain's current owner, not whoever registered it.
+    pub async fn catalog_update(
+        &self,
+        game_id: &str,
+        name: &str,
+        description: &str,
+        proof: AdminProof,
+    ) -> Result<CatalogGame, GamesError> {
+        let game = self.known_game(game_id)?;
+        let name = catalog::clean_label(name, "name", catalog::NAME_MAX_CHARS, true)?;
+        let description = catalog::clean_label(description, "description", catalog::DESCRIPTION_MAX_CHARS, false)?;
+        let (actor, owner, digest) = self
+            .authorize_admin(catalog::ACTION_UPDATE, game.chain_id, game_id, &name, &description, "", &proof)
+            .await?;
+        let detail = serde_json::json!({ "name": name }).to_string();
+        Ok(self.store.catalog_update(
+            game_id,
+            &name,
+            &description,
+            self.now(),
+            &AuditRecord { actor: &actor, action: catalog::ACTION_UPDATE, chain_owner: &owner, detail: &detail, digest },
+        )?)
+    }
+
+    /// Enable or disable a game. Its id, records and history are untouched either way.
+    pub async fn catalog_set_status(
+        &self,
+        game_id: &str,
+        status: &str,
+        proof: AdminProof,
+    ) -> Result<CatalogGame, GamesError> {
+        if status != catalog::STATUS_ACTIVE && status != catalog::STATUS_DISABLED {
+            return Err(GamesError::Invalid("status must be \"active\" or \"disabled\"".into()));
+        }
+        let game = self.known_game(game_id)?;
+        let (actor, owner, digest) = self
+            .authorize_admin(catalog::ACTION_STATUS, game.chain_id, game_id, "", "", status, &proof)
+            .await?;
+        let detail = serde_json::json!({ "status": status }).to_string();
+        Ok(self.store.catalog_set_status(
+            game_id,
+            status,
+            self.now(),
+            &AuditRecord { actor: &actor, action: catalog::ACTION_STATUS, chain_owner: &owner, detail: &detail, digest },
+        )?)
+    }
+
+    pub fn catalog_games(&self, chain_id: Option<u32>) -> Result<Vec<CatalogGame>, GamesError> {
+        Ok(self.store.catalog_games(chain_id)?)
+    }
+
+    pub fn catalog_game(&self, game_id: &str) -> Result<CatalogGame, GamesError> {
+        self.known_game(game_id)
+    }
+
+    pub fn catalog_history(&self, game_id: &str) -> Result<Vec<AuditEntry>, GamesError> {
+        self.known_game(game_id)?;
+        Ok(self.store.catalog_history(game_id)?)
     }
 
     /// Issue a one-time sign-in challenge for `address`.

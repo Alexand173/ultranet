@@ -17,7 +17,7 @@ use thiserror::Error;
 /// The schema this build writes. 1 was the games and payouts tables; 2 adds the game registry; 3 adds the
 /// durable accounting of peer anchors (`peer_usage.rs`); 4 adds the registry's anchor attempts
 /// (`registry_anchor.rs`), so the registry day is anchored under the same fail-closed rules.
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 pub const UTC_DAY_SECONDS: u64 = 86_400;
 
 #[derive(Debug, Error)]
@@ -1150,21 +1150,29 @@ fn migrate(connection: &Connection) -> Result<(), StoreError> {
             upgrade_to_registry(connection)?;
             upgrade_to_peer_usage(connection)?;
             upgrade_to_registry_anchors(connection)?;
-            return upgrade_to_auth(connection);
+            upgrade_to_auth(connection)?;
+            return upgrade_to_catalog(connection);
         }
         // A database from before the peer-anchor accounting: add its two tables and nothing else.
         Some(2) => {
             upgrade_to_peer_usage(connection)?;
             upgrade_to_registry_anchors(connection)?;
-            return upgrade_to_auth(connection);
+            upgrade_to_auth(connection)?;
+            return upgrade_to_catalog(connection);
         }
         // A database from before the registry's anchor attempts: add that table and nothing else.
         Some(3) => {
             upgrade_to_registry_anchors(connection)?;
-            return upgrade_to_auth(connection);
+            upgrade_to_auth(connection)?;
+            return upgrade_to_catalog(connection);
         }
         // A database from before wallet sign-in: add its two tables and nothing else.
-        Some(4) => return upgrade_to_auth(connection),
+        Some(4) => {
+            upgrade_to_auth(connection)?;
+            return upgrade_to_catalog(connection);
+        }
+        // A database from before the game catalog: add its two tables and nothing else.
+        Some(5) => return upgrade_to_catalog(connection),
         Some(other) => {
             return Err(StoreError::Malformed(format!(
                 "database schema {other} is not understood by this build (expects {SCHEMA_VERSION})"
@@ -1254,7 +1262,8 @@ fn migrate(connection: &Connection) -> Result<(), StoreError> {
     upgrade_to_registry(connection)?;
     upgrade_to_peer_usage(connection)?;
     upgrade_to_registry_anchors(connection)?;
-    upgrade_to_auth(connection)
+    upgrade_to_auth(connection)?;
+    upgrade_to_catalog(connection)
 }
 
 /// Schema 1 to 2, inside one transaction so a crash leaves a database that is plainly 1 or plainly 2.
@@ -1275,6 +1284,11 @@ fn upgrade_to_registry_anchors(connection: &Connection) -> Result<(), StoreError
 /// Schema 4 to 5, likewise: plainly 4 or plainly 5, never in between. Adds only the sign-in tables.
 fn upgrade_to_auth(connection: &Connection) -> Result<(), StoreError> {
     upgrade_step(connection, super::auth::AUTH_SCHEMA, 5)
+}
+
+/// Schema 5 to 6, likewise: plainly 5 or plainly 6, never in between. Adds only the catalog tables.
+fn upgrade_to_catalog(connection: &Connection) -> Result<(), StoreError> {
+    upgrade_step(connection, super::catalog::CATALOG_SCHEMA, 6)
 }
 
 fn upgrade_step(connection: &Connection, schema: &str, to_version: i64) -> Result<(), StoreError> {

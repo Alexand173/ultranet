@@ -7,6 +7,7 @@
 pub mod anchor;
 pub mod api;
 pub mod auth;
+pub mod catalog;
 pub mod chain;
 pub mod fence;
 pub mod config;

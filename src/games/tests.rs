@@ -63,6 +63,8 @@ struct FakeChain {
     hide_pending: AtomicBool,
     /// Report this as the account nonce instead of the number of owner transactions.
     nonce_override: Mutex<Option<u64>>,
+    /// Who owns each AppChain on the ledger right now. A chain not listed is not registered.
+    owners: Mutex<HashMap<u32, String>>,
 }
 
 impl FakeChain {
@@ -81,6 +83,13 @@ impl FakeChain {
 
 #[async_trait]
 impl GamesChain for FakeChain {
+    async fn chain_owner(&self, chain_id: u32) -> Result<Option<String>, ChainError> {
+        if self.down.load(Ordering::SeqCst) {
+            return Err(ChainError::Unavailable);
+        }
+        Ok(self.owners.lock().unwrap().get(&chain_id).cloned())
+    }
+
     async fn owner_appchain_activity(
         &self,
         _owner: &str,
@@ -5999,5 +6008,332 @@ mod wallet_auth_http {
         assert_eq!((status, body["code"].as_str()), (401, Some("auth_failed")));
         let (status, body) = call(&h, TestRequest::post().uri("/api/games/auth/logout")).await;
         assert_eq!((status, body["code"].as_str()), (401, Some("auth_required")));
+    }
+}
+
+// --- the game catalog --------------------------------------------------------------------------
+
+mod platform_catalog {
+    use super::*;
+    use crate::games::catalog::{self, AuditRecord, CatalogError, CatalogGame};
+    use crate::games::service::AdminProof;
+
+    fn wallet() -> (QuantumKeyPair, String) {
+        let keys = QuantumKeyPair::generate();
+        let address = QuantumKeyPair::address_from_public_key(&keys.public_key);
+        (keys, address)
+    }
+
+    /// A wallet that owns `chain` on the (fake) ledger.
+    fn owner_of(h: &Harness, chain: u32) -> (QuantumKeyPair, String) {
+        let (keys, address) = wallet();
+        h.chain.owners.lock().unwrap().insert(chain, address.clone());
+        (keys, address)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn signed(
+        keys: &QuantumKeyPair,
+        action: &str,
+        chain: u32,
+        game_id: &str,
+        name: &str,
+        description: &str,
+        status: &str,
+        timestamp: u64,
+    ) -> AdminProof {
+        let mut fresh = [0u8; 16];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut fresh);
+        let nonce = hex::encode(fresh);
+        let digest = catalog::admin_digest(action, chain, game_id, name, description, status, &nonce, timestamp);
+        AdminProof {
+            nonce,
+            timestamp,
+            public_key: hex::encode(&keys.public_key),
+            signature: hex::encode(keys.sign(&digest)),
+        }
+    }
+
+    async fn register(h: &Harness, keys: &QuantumKeyPair, chain: u32, name: &str) -> Result<CatalogGame, GamesError> {
+        let proof = signed(keys, "register", chain, "", name, "", "", h.service.now());
+        h.service.catalog_register(chain, name, "", proof).await
+    }
+
+    async fn rename(h: &Harness, keys: &QuantumKeyPair, game: &CatalogGame, name: &str) -> Result<CatalogGame, GamesError> {
+        let proof = signed(keys, "update", game.chain_id, &game.game_id, name, "", "", h.service.now());
+        h.service.catalog_update(&game.game_id, name, "", proof).await
+    }
+
+    async fn set_status(h: &Harness, keys: &QuantumKeyPair, game: &CatalogGame, status: &str) -> Result<CatalogGame, GamesError> {
+        let proof = signed(keys, "status", game.chain_id, &game.game_id, "", "", status, h.service.now());
+        h.service.catalog_set_status(&game.game_id, status, proof).await
+    }
+
+    #[tokio::test]
+    async fn the_owner_of_a_chain_registers_a_game_on_it() {
+        let h = harness(Options::default());
+        let (keys, owner) = owner_of(&h, 7);
+        let game = register(&h, &keys, 7, "Sky Racers").await.unwrap();
+        assert_eq!(game.game_id.len(), 32);
+        assert!(game.game_id.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_eq!((game.chain_id, game.name.as_str(), game.status.as_str()), (7, "Sky Racers", "active"));
+        assert_eq!(game.validation_scheme, "record_only", "nothing that moves money until a verified scheme exists");
+        assert_eq!((game.reward_policy_ref, game.adapter_ref), (None, None));
+        assert_eq!(game.created_by, owner);
+        let history = h.service.catalog_history(&game.game_id).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!((history[0].action.as_str(), history[0].actor.as_str(), history[0].chain_owner.as_str()), ("register", owner.as_str(), owner.as_str()));
+    }
+
+    #[tokio::test]
+    async fn nobody_but_the_current_owner_registers_updates_or_disables_and_nothing_is_created() {
+        let h = harness(Options::default());
+        let (_owner_keys, _) = owner_of(&h, 7);
+        let (stranger, _) = wallet();
+        // A perfectly valid signature by a wallet that does not own the chain.
+        assert!(matches!(register(&h, &stranger, 7, "Mine now").await, Err(GamesError::Forbidden(_))));
+        // A chain the ledger does not know, and the L1 itself.
+        assert!(matches!(register(&h, &stranger, 99, "Ghost").await, Err(GamesError::NotFound(_))));
+        let proof = signed(&stranger, "register", 0, "", "L1", "", "", h.service.now());
+        assert!(matches!(h.service.catalog_register(0, "L1", "", proof).await, Err(GamesError::Invalid(_))));
+        // An unreachable ledger is not a guess about the owner.
+        h.chain.down.store(true, Ordering::SeqCst);
+        assert!(matches!(register(&h, &stranger, 7, "Offline").await, Err(GamesError::ChainUnavailable)));
+        h.chain.down.store(false, Ordering::SeqCst);
+        assert!(h.service.catalog_games(None).unwrap().is_empty(), "no refused request created a game");
+    }
+
+    #[tokio::test]
+    async fn names_are_labels_so_many_games_can_share_one_and_one_chain_can_hold_many() {
+        let h = harness(Options::default());
+        let mut ids = HashSet::new();
+        for chain in 1..=5u32 {
+            let (keys, _) = owner_of(&h, chain);
+            for _ in 0..8 {
+                let game = register(&h, &keys, chain, "Chess").await.unwrap(); // the same label, every time
+                assert!(ids.insert(game.game_id), "an id is never reused");
+            }
+        }
+        assert_eq!(ids.len(), 40);
+        assert_eq!(h.service.catalog_games(Some(3)).unwrap().len(), 8, "one chain, eight games");
+        assert_eq!(h.service.catalog_games(None).unwrap().len(), 40, "five owners, five chains");
+        // A label is bounded and clean, nothing more.
+        let (keys, _) = owner_of(&h, 6);
+        assert!(matches!(register(&h, &keys, 6, "").await, Err(GamesError::Invalid(_))));
+        assert!(matches!(register(&h, &keys, 6, &"x".repeat(65)).await, Err(GamesError::Invalid(_))));
+        assert!(matches!(register(&h, &keys, 6, "bad\nname").await, Err(GamesError::Invalid(_))));
+    }
+
+    #[tokio::test]
+    async fn changing_the_label_or_the_status_never_changes_the_identity() {
+        let h = harness(Options::default());
+        let (keys, _) = owner_of(&h, 7);
+        let game = register(&h, &keys, 7, "First Name").await.unwrap();
+        let renamed = rename(&h, &keys, &game, "Second Name").await.unwrap();
+        assert_eq!((renamed.game_id.as_str(), renamed.name.as_str()), (game.game_id.as_str(), "Second Name"));
+        assert_eq!(set_status(&h, &keys, &game, "disabled").await.unwrap().status, "disabled");
+        assert_eq!(set_status(&h, &keys, &game, "active").await.unwrap().status, "active");
+        assert!(matches!(set_status(&h, &keys, &game, "paused").await, Err(GamesError::Invalid(_))));
+        let (stranger, _) = wallet();
+        assert!(matches!(rename(&h, &stranger, &game, "Hijacked").await, Err(GamesError::Forbidden(_))));
+        assert!(matches!(set_status(&h, &stranger, &game, "disabled").await, Err(GamesError::Forbidden(_))));
+        assert_eq!(h.service.catalog_game(&game.game_id).unwrap().name, "Second Name");
+        let actions: Vec<_> = h.service.catalog_history(&game.game_id).unwrap().into_iter().map(|e| e.action).collect();
+        assert_eq!(actions, ["register", "update", "status", "status"]);
+        assert!(matches!(h.service.catalog_game(&"00".repeat(16)), Err(GamesError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn administration_follows_the_chain_when_it_changes_hands_and_the_game_stays_the_same() {
+        let h = harness(Options::default());
+        let (alice, alice_address) = owner_of(&h, 7);
+        let game = register(&h, &alice, 7, "Heirloom").await.unwrap();
+        // Alice signs a rename now, but does not send it yet.
+        let early = signed(&alice, "update", 7, &game.game_id, "Alice's late edit", "", "", h.service.now());
+        // The chain is handed to Bob on the ledger.
+        let (bob, bob_address) = wallet();
+        h.chain.owners.lock().unwrap().insert(7, bob_address.clone());
+        assert!(matches!(rename(&h, &alice, &game, "Still mine").await, Err(GamesError::Forbidden(_))), "the old owner is out");
+        assert!(
+            matches!(h.service.catalog_update(&game.game_id, "Alice's late edit", "", early).await, Err(GamesError::Forbidden(_))),
+            "a request signed while she owned it is not honoured after"
+        );
+        let renamed = rename(&h, &bob, &game, "Bob's Heirloom").await.unwrap();
+        assert_eq!(renamed.game_id, game.game_id, "same identity");
+        assert_eq!(renamed.created_by, alice_address, "history is kept: who registered it");
+        let history = h.service.catalog_history(&game.game_id).unwrap();
+        assert_eq!((history[0].actor.as_str(), history[1].actor.as_str(), history[1].chain_owner.as_str()), (alice_address.as_str(), bob_address.as_str(), bob_address.as_str()));
+    }
+
+    #[tokio::test]
+    async fn a_signed_request_works_once_and_only_as_signed() {
+        let h = harness(Options::default());
+        let (keys, _) = owner_of(&h, 7);
+        let now = h.service.now();
+        let proof = signed(&keys, "register", 7, "", "Once", "", "", now);
+        let first = h.service.catalog_register(7, "Once", "", proof.clone()).await.unwrap();
+        assert!(matches!(h.service.catalog_register(7, "Once", "", proof.clone()).await, Err(GamesError::AdminProofInvalid)), "the identical request, again");
+        assert_eq!(h.service.catalog_games(Some(7)).unwrap().len(), 1, "a replay created no second game");
+        // A signature for one name is not a signature for another.
+        assert!(matches!(h.service.catalog_register(7, "Twice", "", proof).await, Err(GamesError::AdminProofInvalid)));
+        // Stale, future, malformed.
+        let stale = signed(&keys, "register", 7, "", "Stale", "", "", now - 400);
+        assert!(matches!(h.service.catalog_register(7, "Stale", "", stale).await, Err(GamesError::AdminProofInvalid)));
+        let future = signed(&keys, "register", 7, "", "Future", "", "", now + 400);
+        assert!(matches!(h.service.catalog_register(7, "Future", "", future).await, Err(GamesError::AdminProofInvalid)));
+        let junk = AdminProof { nonce: "ab".repeat(8), timestamp: now, public_key: "zz".into(), signature: "".into() };
+        let no_nonce = AdminProof { nonce: String::new(), ..signed(&keys, "register", 7, "", "No nonce", "", "", now) };
+        assert!(matches!(h.service.catalog_register(7, "No nonce", "", no_nonce).await, Err(GamesError::AdminProofInvalid)), "a request without a nonce is refused");
+        assert!(matches!(h.service.catalog_register(7, "Junk", "", junk).await, Err(GamesError::AdminProofInvalid)));
+        // A registration proof cannot be used as an update, nor a status proof as a registration.
+        let as_update = signed(&keys, "register", 7, "", "Reuse", "", "", now);
+        assert!(matches!(h.service.catalog_update(&first.game_id, "Reuse", "", as_update).await, Err(GamesError::AdminProofInvalid)));
+        // A player's sign-in is not an owner proof: the owner's own session proves nothing here.
+        let session = {
+            let address = QuantumKeyPair::address_from_public_key(&keys.public_key);
+            let challenge = h.service.auth_challenge(&address, "play").unwrap();
+            let digest = hex::decode(&challenge.digest).unwrap();
+            h.service.auth_verify(&challenge.challenge_id, &hex::encode(&keys.public_key), &hex::encode(keys.sign(&digest))).unwrap()
+        };
+        assert!(!session.token.is_empty());
+        let nothing = AdminProof { nonce: "cd".repeat(8), timestamp: now, public_key: hex::encode(&keys.public_key), signature: session.token };
+        assert!(matches!(h.service.catalog_register(7, "Session", "", nothing).await, Err(GamesError::AdminProofInvalid)));
+    }
+
+    #[tokio::test]
+    async fn a_chain_holds_a_bounded_number_of_games() {
+        let h = harness(Options::default());
+        let (keys, _) = owner_of(&h, 7);
+        let limit = crate::games::service::ServiceConfig::new(String::new()).catalog_max_games_per_chain;
+        for n in 0..limit {
+            register(&h, &keys, 7, &format!("Game {n}")).await.unwrap();
+        }
+        assert!(matches!(register(&h, &keys, 7, "One too many").await, Err(GamesError::CatalogFull)));
+        let (other, _) = owner_of(&h, 8);
+        register(&h, &other, 8, "Another chain is not affected").await.unwrap();
+    }
+
+    #[test]
+    fn the_catalog_survives_a_restart_and_a_used_request_stays_used() {
+        let path = std::env::temp_dir().join(format!("games-catalog-restart-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let owner = "cd".repeat(32);
+        let id = "ab".repeat(16);
+        let record = |digest: [u8; 32]| AuditRecord { actor: &owner, action: "register", chain_owner: &owner, detail: "{}", digest };
+        {
+            let store = GamesStore::open(&path).unwrap();
+            store.catalog_register(&id, 7, "Persistent", "", 1_000, 20, &record([1; 32])).unwrap();
+        }
+        let reopened = GamesStore::open(&path).unwrap();
+        let game = reopened.catalog_game(&id).unwrap().expect("the game is still there");
+        assert_eq!((game.chain_id, game.name.as_str(), game.created_by.as_str()), (7, "Persistent", owner.as_str()));
+        assert_eq!(reopened.catalog_history(&id).unwrap().len(), 1);
+        // The same signed request, after the restart, still cannot be used again (and creates no game).
+        let other = "ef".repeat(16);
+        assert!(matches!(reopened.catalog_register(&other, 7, "Replay", "", 1_001, 20, &record([1; 32])), Err(CatalogError::ProofInvalid)));
+        assert!(reopened.catalog_game(&other).unwrap().is_none(), "the refused replay rolled back completely");
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+mod platform_catalog_http {
+    use super::*;
+    use crate::games::{api, catalog};
+    use actix_web::{
+        test::{call_service, init_service, read_body_json, TestRequest},
+        web, App,
+    };
+    use serde_json::{json, Value};
+
+    async fn call(h: &Harness, request: actix_web::test::TestRequest) -> (u16, Value) {
+        let app = init_service(
+            App::new().app_data(web::Data::from(h.service.clone())).configure(api::configure_routes),
+        )
+        .await;
+        let response = call_service(&app, request.to_request()).await;
+        let status = response.status().as_u16();
+        (status, read_body_json(response).await)
+    }
+
+    fn body(keys: &QuantumKeyPair, action: &str, chain: u32, game_id: &str, name: &str, status: &str, now: u64) -> Value {
+        let mut fresh = [0u8; 16];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut fresh);
+        let nonce = hex::encode(fresh);
+        let digest = catalog::admin_digest(action, chain, game_id, name, "", status, &nonce, now);
+        json!({"nonce": nonce, "timestamp": now, "public_key": hex::encode(&keys.public_key), "signature": hex::encode(keys.sign(&digest))})
+    }
+
+    #[actix_web::test]
+    async fn a_game_is_registered_listed_renamed_disabled_and_audited_over_http() {
+        let h = harness(Options::default());
+        let keys = QuantumKeyPair::generate();
+        let owner = QuantumKeyPair::address_from_public_key(&keys.public_key);
+        h.chain.owners.lock().unwrap().insert(4, owner.clone());
+        let now = h.service.now();
+
+        let mut register = body(&keys, "register", 4, "", "Skyline", "", now);
+        register["chain_id"] = json!(4);
+        register["name"] = json!("Skyline");
+        let (status, created) = call(&h, TestRequest::post().uri("/api/games/catalog").set_json(register)).await;
+        assert_eq!(status, 200, "{created}");
+        let id = created["game_id"].as_str().unwrap().to_string();
+        assert_eq!((created["chain_id"].as_u64(), created["status"].as_str(), created["created_by"].as_str()), (Some(4), Some("active"), Some(owner.as_str())));
+
+        let (status, listed) = call(&h, TestRequest::get().uri("/api/games/catalog?chain_id=4")).await;
+        assert_eq!((status, listed["games"].as_array().map(Vec::len)), (200, Some(1)));
+        let (status, other_chain) = call(&h, TestRequest::get().uri("/api/games/catalog?chain_id=5")).await;
+        assert_eq!((status, other_chain["games"].as_array().map(Vec::len)), (200, Some(0)));
+        let (status, one) = call(&h, TestRequest::get().uri(&format!("/api/games/catalog/{id}"))).await;
+        assert_eq!((status, one["name"].as_str()), (200, Some("Skyline")));
+
+        let mut update = body(&keys, "update", 4, &id, "Skyline II", "", now);
+        update["name"] = json!("Skyline II");
+        let (status, renamed) = call(&h, TestRequest::post().uri(&format!("/api/games/catalog/{id}/update")).set_json(update)).await;
+        assert_eq!((status, renamed["name"].as_str(), renamed["game_id"].as_str()), (200, Some("Skyline II"), Some(id.as_str())));
+        let mut disable = body(&keys, "status", 4, &id, "", "disabled", now);
+        disable["status"] = json!("disabled");
+        let (status, disabled) = call(&h, TestRequest::post().uri(&format!("/api/games/catalog/{id}/status")).set_json(disable)).await;
+        assert_eq!((status, disabled["status"].as_str()), (200, Some("disabled")));
+
+        let (status, history) = call(&h, TestRequest::get().uri(&format!("/api/games/catalog/{id}/history"))).await;
+        assert_eq!(status, 200);
+        let actions: Vec<_> = history["history"].as_array().unwrap().iter().map(|e| e["action"].as_str().unwrap()).collect();
+        assert_eq!(actions, ["register", "update", "status"]);
+    }
+
+    #[actix_web::test]
+    async fn the_routes_refuse_a_stranger_a_session_in_place_of_a_proof_and_bad_ids() {
+        let h = harness(Options::default());
+        let owner_keys = QuantumKeyPair::generate();
+        h.chain.owners.lock().unwrap().insert(4, QuantumKeyPair::address_from_public_key(&owner_keys.public_key));
+        let stranger = QuantumKeyPair::generate();
+        let now = h.service.now();
+
+        let mut forged = body(&stranger, "register", 4, "", "Hostile", "", now);
+        forged["chain_id"] = json!(4);
+        forged["name"] = json!("Hostile");
+        let (status, refused) = call(&h, TestRequest::post().uri("/api/games/catalog").set_json(forged)).await;
+        assert_eq!((status, refused["code"].as_str()), (403, Some("forbidden")));
+
+        // No proof at all, with or without a session header: a malformed request, never an accepted one.
+        let (status, _) = call(
+            &h,
+            TestRequest::post()
+                .uri("/api/games/catalog")
+                .insert_header(("X-Wallet-Session", "ab".repeat(32)))
+                .set_json(json!({"chain_id": 4, "name": "No proof", "nonce": "ab".repeat(8)})),
+        )
+        .await;
+        assert_eq!(status, 400);
+        let mut unknown = body(&owner_keys, "register", 99, "", "Nowhere", "", now);
+        unknown["chain_id"] = json!(99);
+        unknown["name"] = json!("Nowhere");
+        let (status, missing) = call(&h, TestRequest::post().uri("/api/games/catalog").set_json(unknown)).await;
+        assert_eq!((status, missing["code"].as_str()), (404, Some("not_found")));
+        for uri in ["/api/games/catalog/not-an-id", &format!("/api/games/catalog/{}", "00".repeat(16))] {
+            let (status, _) = call(&h, TestRequest::get().uri(uri)).await;
+            assert_eq!(status, 404, "{uri}");
+        }
+        assert!(h.service.catalog_games(None).unwrap().is_empty());
     }
 }

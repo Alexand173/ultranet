@@ -206,6 +206,30 @@ service. Run `audit` and a backup daily. A backup is only a backup once it has b
 drifts below the balance it is promised against. When `owed + the 1,000-unit reserve` nears the wallet's
 balance, rewards stop (safely: wins are recorded as `pool_low`), so top the wallet up before then.
 
+**The game catalog (any AppChain owner registers games on their chain).** Nothing here knows a game by name: a
+game is a row with a platform-generated, immutable `game_id` (32 hex), the real L1 `chain_id`, and a label that
+is never an identity and need not be unique. One chain may hold many games (at most
+`ServiceConfig::catalog_max_games_per_chain`, 20, a spam limit and not a price). A newly registered game is
+`record_only`: it moves no money until a verified scheme, an approved reward policy and its own funded pool exist.
+
+```text
+POST /api/games/catalog                       {chain_id, name, description?, nonce, timestamp, public_key, signature}
+GET  /api/games/catalog[?chain_id=N]          GET /api/games/catalog/{game_id}      GET .../{game_id}/history
+POST /api/games/catalog/{game_id}/update      {name, description?, nonce, timestamp, public_key, signature}
+POST /api/games/catalog/{game_id}/status      {status: "active"|"disabled", nonce, timestamp, public_key, signature}
+```
+
+**Who may change a game: the chain's current L1 owner, read from the ledger on every action.** The owner signs a
+digest (layout in the header of `src/games/catalog.rs`) with the wallet key; the service derives the address from
+the public key and refuses unless it is the owner the ledger names *now*. A chain handed to a new owner moves
+control of its games with it; the game's id, records and audit history stay. A player's wallet session is not an
+owner proof and is not accepted. Each accepted request is stored by digest with a UNIQUE constraint in the same
+transaction as the change, so a replay creates nothing; the nonce lets two separate requests with the same fields
+both succeed. Every change is in `.../history` with the signer and the owner the ledger showed at that moment.
+Edge limits: POST on these routes 5 / hour per client (each is a signature check), GET 120 / minute. The schema
+step to version 6 is additive and transactional; to go back, restore the backup taken before the upgrade (an older
+binary refuses a newer database rather than misreading it).
+
 **Wallet sign-in.** `GAMES_REQUIRE_PLAYER_AUTH` (default `true`) makes the routes that act for a player
 (`/grid/answers`, `/chess/results`, `/withdraw`) require a session proving the player controls the wallet whose
 address is in the body; a mismatching session is refused even when the setting is off. The flow, with the
