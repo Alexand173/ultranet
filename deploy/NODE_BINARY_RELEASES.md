@@ -8,11 +8,44 @@ person can tell what is running and how to roll back.
 
 Backups are kept beside the binary as `UltraNet.bak-<UTC timestamp>`.
 
-## 2026-11-24T18:39Z — A2 release artefact built from the published commit (built, not deployed)
+## 2026-11-24T19:22Z — A2 artefact promoted to production (promoted)
 
 | | |
 |---|---|
-| Status | **built and recorded only.** Nothing was installed, promoted, uploaded or restarted. Production still runs its previous binary, untouched by this entry |
+| Status | **installed and running.** One restart, no other service touched |
+| Promoted artefact | `099bb28d5c08d7108b53b1731f795a52d0e47cf026cbe0eff892a81f8479c6aa`, 25,762,784 B, built from `33b4eac` (entry below) |
+| Replaced | `69aeddd94bccc863951b7126befec83c45f21a57db126bd2305d5d9cf6b7e441`, 25,750,552 B |
+| Backup | `/opt/ultranet/target/release/UltraNet.bak-20261124T191836Z`, sha256 `69aeddd9…e441` — roll back by copying it back and running `systemctl restart ultranet` |
+| Target | `ultranet.service`, `/etc/systemd/system/ultranet.service`, `ExecStart=/opt/ultranet/target/release/UltraNet` |
+| Procedure | local sha re-verified → timestamped backup → `scp` to `/tmp/UltraNet.20261124T191836Z` → upload hash verified against the record → `install` to `.UltraNet.new` in the same directory → hash re-verified → `mv` (atomic, same filesystem) → `systemctl restart ultranet` **once** at 19:22:15Z |
+| Running process | `MainPID 649818`, `/proc/649818/exe` sha256 `099bb28d…c6aa`, `ActiveState=active`, `NRestarts=0` (a manual restart does not count as an automatic one) |
+| Listeners | `127.0.0.1:8081`, `0.0.0.0:9000` |
+| Startup | Groth16 setup 19:22:15 → blockchain ready 19:22:25 → REST API and P2P up 19:22:26 |
+
+### What changed in what it answers
+
+| Check | Before | After |
+|---|---|---|
+| `/api/appchain/overview` `proof_scheme` | `SHA3-256 server state commitment v1` | `owner-signed state root (a signature, not a state proof)` |
+| `anchor_availability` | — | `retired` |
+| per-chain `proof_scheme` | pre-C3 string | `owner-signed state root (a signature, not a state proof)` on #1, #2, #3 |
+
+### Unchanged, verified either side of the restart
+
+| Check | Result |
+|---|---|
+| Ledger terms | version 5, register 10,000, anchor 1,000, transfer 1,000, gas 100,000/1, activation height 10 — **identical** |
+| Chains | #1 UltraGrid `7d2cd1cc…` (1 anchor), #2 Registry `d4fca721…` (0), #3 Ultra Chess `7d2cd1cc…` (0) — id/name/owner/anchor set **identical** |
+| Balances | sovereign, `7d2cd1cc…`, `d4fca721…`, faucet `fe0b9a92…` — **identical** |
+| Chain length | 16 before, 16 after; mempool 0 |
+| Other services | `ultranet-records` PID 641137, `ultranet-dashboard` 584525, `ultranet-faucet` 137719, `caddy` 117984 — **all unchanged, none restarted**; all `NRestarts=0` |
+| L1 transactions | none submitted; no registration, anchor or ownership transfer |
+
+## 2026-11-24T18:39Z — A2 release artefact built from the published commit (built, then promoted at 19:22Z)
+
+| | |
+|---|---|
+| Status | built and recorded at 18:39Z; **promoted at 19:22Z** — see the entry above. Nothing was installed, uploaded or restarted in this step |
 | Source | `33b4eacd93f6ac2419ea23cb17717c6ab82df4e4` (the 14-commit range `7368b23..33b4eac` published to `origin/main`), clean tree (0 entries in `git status --porcelain`) |
 | Artefact | `target/release/UltraNet`, 25,762,784 B |
 | sha256 | `099bb28d5c08d7108b53b1731f795a52d0e47cf026cbe0eff892a81f8479c6aa` |
@@ -40,7 +73,7 @@ from the commit that CI validated and that `origin/main` points at, rather than 
 | Hash, three independent tools | `sha256sum`, `openssl dgst -sha256` and Python `hashlib` all return `099bb28d…c6aa` |
 | Size | 25,762,784 B, file written 2026-11-24T18:39:39Z (the build window above) |
 | Cargo says the tree is fully built | re-running the same command prints `Finished` in 0.28s with **no** `Compiling` line — the artefact is current for `33b4eac`, not stale |
-| Recompiled, not copied | the build log contains one `Compiling UltraNet v3.0.0` unit at 18:39; the five-commit-old binary is not reused |
+| Recompiled, not copied | the build log contains exactly one `Compiling` unit for the crate at 18:39, and no dependency rebuilds; the five-commit-old binary is not reused |
 | Dependencies | `Cargo.lock`, `Cargo.toml` and `rust-toolchain.toml` are byte-identical between `b9bfb29` and `33b4eac` (`git diff --stat` empty), so cached dependency objects are the same locked set |
 | Production untouched | no `systemctl` call, no upload, no file replaced; this entry exists only in the repository |
 
