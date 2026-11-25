@@ -12,7 +12,8 @@ or a live response. Publication itself is a separate gate (D-4 §8) and has not 
 |---|---|
 | Envelope version | **5** (`src/appchain/ledger.rs:29`) |
 | Digest | SHA3-256 over the preimage in §4 |
-| Machine-readable | [`vectors.json`](./vectors.json) (three pinned digests, generated from `ledger.rs:820-822`) |
+| Machine-readable | [`contract.schema.json`](./contract.schema.json) (request, error envelope, read models) |
+| Vectors | [`vectors.json`](./vectors.json) (three pinned digests, generated from `ledger.rs:820-822`) |
 | Networks | L1 chain id **0**; AppChains are L1 objects, not separate networks |
 | Fees | register 10,000 · anchor 1,000 · transfer 1,000 base units (`ledger.rs:39-45`) |
 
@@ -160,8 +161,18 @@ after a handover.
 
 ## 7. Error model
 
-Every JSON route answers with the same envelope (`json_error_config`, `src/api.rs`): `{success:false,
-message}` with `data: null`.
+Every JSON route answers with the same shape — `success: false` plus `message` — but **`data` is
+inconsistent**: some producers send `"data": null`, others omit the key. Both were observed on the
+running node on 2026-11-25:
+
+| Request | Response |
+|---|---|
+| `POST /api/appchain/tx` with an incomplete body | `400 {"data":null,"message":"Malformed request: Json deserialize error: missing field \`sender_public_key\`…"}` |
+| `POST /api/appchain/create` without a credential | `401 {"success":false,"message":"Administrator bearer token required","data":null}` |
+| `GET /api/appchain/ledger/999` | `404 {"message":"AppChain #999 is not registered","success":false}` — no `data` key |
+
+A client must therefore treat `data` as optional on errors and read `success`/`message`. Do not write a
+decoder that requires `data`, and do not write one that assumes its absence.
 
 | Status | When |
 |---|---|
@@ -214,3 +225,29 @@ key. `POST /api/appchain/{id}/state` does not exist and never has.
 
 A worked end-to-end example — register, discover by chain id, anchor, hand over — is
 `tests/appchain_e2e_lifecycle_test.rs`.
+
+## 12. Machine-readable form
+
+| Artefact | What it is |
+|---|---|
+| [`contract.schema.json`](./contract.schema.json) | JSON Schema (2020-12) for the request, the error envelope, and every read model. Strict where the node is strict (`additionalProperties: false` on the request and inside each operation), permissive on responses so a node may add fields without breaking a conforming client |
+| [`vectors.json`](./vectors.json) | The three pinned digests and their inputs |
+| [`validate_contract.py`](./validate_contract.py) | Offline validator: recomputes all three digests from §4 in Python (a second implementation of what the node does in Rust), validates the vectors, requests and captured responses against the schema, and asserts the schema rejects what the node rejects |
+
+```
+python3 docs/appchain/v5/validate_contract.py
+```
+
+Current result: 18/18 checks pass — three digests reproduced, five response shapes accepted, seven
+malformed requests rejected.
+
+**Version support.** This contract describes envelope **version 5**, and it is the only AppChain envelope
+version the node accepts: `validate_envelope` refuses anything else (`ledger.rs:118-124`) and a non-5
+version fails earlier still with `Unsupported transaction version!` (`lib.rs:2352-2362`). Versions 1–3 and
+6 are **not implemented in this tree**; version 4 exists only for sovereign supply-correction transactions,
+which are not AppChain traffic. A client must read `terms.version` rather than assume, and a future
+envelope is a new document, not an additive change to this one.
+
+**Publication.** Prepared, not published. Publishing means placing this directory where a third party can
+fetch it (repository path or a documentation page) and announcing the version; that is a separate owner
+decision (D-4 §8) and has not been taken.

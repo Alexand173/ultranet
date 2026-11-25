@@ -1,0 +1,285 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ultranetwork.cc/schemas/appchain/v5/contract.schema.json",
+  "title": "UltraNet AppChain protocol, version 5",
+  "description": "Machine-readable form of docs/appchain/v5/CONTRACT.md. It describes the JSON the node accepts and returns today; where the node is lenient or strict, the schema follows the node, not the prose. Validate with docs/appchain/v5/validate_contract.py.",
+  "oneOf": [
+    { "$ref": "#/$defs/SubmitRequest" },
+    { "$ref": "#/$defs/SubmitSuccess" },
+    { "$ref": "#/$defs/ErrorResponse" },
+    { "$ref": "#/$defs/LedgerResponse" },
+    { "$ref": "#/$defs/ChainResponse" },
+    { "$ref": "#/$defs/AnchorsResponse" },
+    { "$ref": "#/$defs/ListResponse" },
+    { "$ref": "#/$defs/OverviewResponse" },
+    { "$ref": "#/$defs/VectorsFile" }
+  ],
+  "$defs": {
+    "Hex64": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "A 64-character lowercase hex address or hash."
+    },
+    "ByteArray": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 0, "maximum": 255 },
+      "minItems": 1,
+      "description": "Byte fields travel as arrays of integers, never as hex strings (pinned by tests/appchain_wire_format_test.rs). The schema deliberately does not fix the length: a Dilithium-5 public key and signature have fixed sizes, but a client that gets them wrong is refused by signature verification, not by the JSON layer.",
+      "examples": [[1, 2, 3]]
+    },
+    "Nullifier": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 0, "maximum": 255 },
+      "minItems": 32,
+      "maxItems": 32,
+      "description": "Exactly 32 bytes."
+    },
+    "U64": { "type": "integer", "minimum": 0 },
+    "ChainId": { "type": "integer", "minimum": 1, "description": "1-based, assigned by the node in registration order, never reused." },
+    "RegisterOp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["register"],
+      "properties": {
+        "register": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9 _-]+$", "description": "Labels are not unique and confer no authority; no leading or trailing space." }
+          }
+        }
+      }
+    },
+    "AnchorOp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["anchor"],
+      "properties": {
+        "anchor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["chain_id", "state_root"],
+          "properties": {
+            "chain_id": { "$ref": "#/$defs/ChainId" },
+            "state_root": { "$ref": "#/$defs/Hex64" }
+          }
+        }
+      }
+    },
+    "TransferOwnerOp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transfer_owner"],
+      "properties": {
+        "transfer_owner": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["chain_id", "new_owner"],
+          "properties": {
+            "chain_id": { "$ref": "#/$defs/ChainId" },
+            "new_owner": { "$ref": "#/$defs/Hex64", "description": "ASCII hex in the signing preimage, unlike anchor's raw state root. Must differ from the current owner." }
+          }
+        }
+      }
+    },
+    "Operation": {
+      "description": "Externally tagged: exactly one key. Unknown keys inside the operation are rejected at both levels.",
+      "oneOf": [
+        { "$ref": "#/$defs/RegisterOp" },
+        { "$ref": "#/$defs/AnchorOp" },
+        { "$ref": "#/$defs/TransferOwnerOp" }
+      ]
+    },
+    "SubmitRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sender", "sender_public_key", "nonce", "timestamp", "nullifier", "fee", "signature", "version", "operation"],
+      "description": "POST /api/appchain/tx. Nine fields, all required, no unknowns. The signature is the authorisation: the route takes no credential and the node holds no owner key.",
+      "properties": {
+        "sender": { "$ref": "#/$defs/Hex64", "description": "Must equal hex(SHA3-256(sender_public_key))." },
+        "sender_public_key": { "$ref": "#/$defs/ByteArray" },
+        "nonce": { "$ref": "#/$defs/U64" },
+        "timestamp": { "$ref": "#/$defs/U64", "description": "Seconds. Refused if more than 60 s in the future or more than 3600 s old." },
+        "nullifier": { "$ref": "#/$defs/Nullifier" },
+        "fee": { "$ref": "#/$defs/U64", "description": "At least the operation's floor (register 10000, anchor 1000, transfer 1000 base units). A higher fee is accepted." },
+        "signature": { "$ref": "#/$defs/ByteArray" },
+        "version": { "const": 5 },
+        "operation": { "$ref": "#/$defs/Operation" }
+      }
+    },
+    "SubmitSuccess": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["success", "message", "data"],
+      "description": "200 means accepted, not confirmed. status is always 'pending'; confirmation is read from /api/appchain/ledger/{id}/anchors after a block lands. An identical resubmission of an already-confirmed transaction returns this same shape.",
+      "properties": {
+        "success": { "const": true },
+        "message": { "type": "string" },
+        "data": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["hash", "status"],
+          "properties": {
+            "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "status": { "const": "pending" }
+          }
+        }
+      }
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["success", "message"],
+      "description": "One shape for every JSON error: 400 malformed/unknown field/rejected transaction, 401 missing credential, 404 unknown chain on /ledger/{id}, 410 retired write route, 413 body too large, 500 unreadable ledger. 'data' is optional because the node is inconsistent: a deserialization rejection and a 401 send data:null, the ledger's 404 omits the key entirely (observed on the running node, 2026-11-25). A client must tolerate both.",
+      "properties": {
+        "success": { "const": false },
+        "message": { "type": "string" },
+        "data": { "type": ["object", "null"] }
+      }
+    },
+    "Terms": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["version", "register_fee_base_units", "anchor_fee_base_units", "transfer_fee_base_units", "gas_limit", "gas_price", "recipient", "activation_height"],
+      "properties": {
+        "version": { "const": 5 },
+        "register_fee_base_units": { "type": "integer" },
+        "anchor_fee_base_units": { "type": "integer" },
+        "transfer_fee_base_units": { "type": "integer" },
+        "gas_limit": { "type": "integer" },
+        "gas_price": { "type": "integer" },
+        "recipient": { "const": "appchain" },
+        "activation_height": { "type": ["integer", "null"], "description": "Operator-set per network; null means AppChains are disabled." }
+      }
+    },
+    "LedgerChain": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "name", "owner", "anchor_count", "registered_tx", "registered_block"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ChainId" },
+        "name": { "type": "string" },
+        "owner": { "$ref": "#/$defs/Hex64" },
+        "anchor_count": { "type": "integer" },
+        "registered_tx": { "type": "string" },
+        "registered_block": { "type": "integer" },
+        "latest_state_root": { "type": ["string", "null"] },
+        "latest_anchor_block": { "type": ["integer", "null"] }
+      }
+    },
+    "LedgerResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["success", "terms", "chains"],
+      "properties": {
+        "success": { "const": true },
+        "terms": { "$ref": "#/$defs/Terms" },
+        "chains": { "type": "array", "items": { "$ref": "#/$defs/LedgerChain" } }
+      }
+    },
+    "ChainResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["success", "chain"],
+      "properties": {
+        "success": { "const": true },
+        "chain": { "$ref": "#/$defs/LedgerChain" }
+      }
+    },
+    "Anchor": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["chain_id", "sequence", "state_root", "block_index", "tx_hash"],
+      "properties": {
+        "chain_id": { "$ref": "#/$defs/ChainId" },
+        "sequence": { "type": "integer", "minimum": 1, "description": "Assigned by consensus, not by the client." },
+        "state_root": { "$ref": "#/$defs/Hex64" },
+        "block_index": { "type": "integer" },
+        "block_timestamp": { "type": "integer" },
+        "tx_hash": { "type": "string" }
+      }
+    },
+    "AnchorsResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["success", "chain_id", "from", "anchors"],
+      "description": "An unknown chain returns 200 with an empty array; 'from' is an anchor sequence, not an offset or a timestamp.",
+      "properties": {
+        "success": { "const": true },
+        "chain_id": { "type": "integer" },
+        "from": { "type": "integer" },
+        "anchors": { "type": "array", "items": { "$ref": "#/$defs/Anchor" } }
+      }
+    },
+    "OverviewChain": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "name", "owner", "anchor_count", "proof_scheme", "source"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ChainId" },
+        "name": { "type": "string" },
+        "owner": { "$ref": "#/$defs/Hex64" },
+        "account_address": { "type": "string" },
+        "genesis_root": { "type": "string" },
+        "anchor_fee": { "type": "string" },
+        "balance": { "type": "string" },
+        "anchor_spend": { "type": "string" },
+        "anchor_count": { "type": "integer" },
+        "latest_anchor_at": { "type": ["integer", "null"] },
+        "latest_state_root": { "type": ["string", "null"] },
+        "anchor_availability": { "type": "string" },
+        "proof_scheme": { "type": "string" },
+        "source": { "type": "string", "enum": ["ledger", "registry"] },
+        "registered_tx": { "type": "string" },
+        "registered_block": { "type": "integer" }
+      }
+    },
+    "OverviewResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["success", "chains", "totals", "anchor_availability", "proof_scheme", "updated_at"],
+      "description": "proof_scheme is informational: a ledger chain reports 'owner-signed state root (a signature, not a state proof)'. It is not a claim that the node proves state, and the node holds no key that could.",
+      "properties": {
+        "success": { "const": true },
+        "chains": { "type": "array", "items": { "$ref": "#/$defs/OverviewChain" } },
+        "totals": { "type": "object", "additionalProperties": true },
+        "anchor_availability": { "const": "retired" },
+        "proof_scheme": { "type": "string" },
+        "updated_at": { "type": "integer" }
+      }
+    },
+    "ListResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["success", "chains"],
+      "properties": {
+        "success": { "const": true },
+        "chains": { "type": "array", "items": { "$ref": "#/$defs/OverviewChain" } }
+      }
+    },
+    "Vector": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["operation", "tag", "inputs", "digest"],
+      "properties": {
+        "operation": { "type": "string", "enum": ["register", "anchor", "transfer_owner"] },
+        "tag": { "type": "string", "enum": ["AppChainRegister", "AppChainAnchor", "AppChainTransferOwner"] },
+        "inputs": { "type": "object", "additionalProperties": true },
+        "digest": { "$ref": "#/$defs/Hex64" }
+      }
+    },
+    "VectorsFile": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["envelope_version", "domain", "digest", "preimage_order", "vectors"],
+      "properties": {
+        "envelope_version": { "const": 5 },
+        "domain": { "const": "UltraNet/appchain-envelope/v5" },
+        "digest": { "const": "SHA3-256" },
+        "preimage_order": { "type": "array", "items": { "type": "string" }, "minItems": 14 },
+        "vectors": { "type": "array", "minItems": 3, "items": { "$ref": "#/$defs/Vector" } }
+      }
+    }
+  }
+}
