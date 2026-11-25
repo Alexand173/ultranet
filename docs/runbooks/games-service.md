@@ -206,6 +206,22 @@ service. Run `audit` and a backup daily. A backup is only a backup once it has b
 drifts below the balance it is promised against. When `owed + the 1,000-unit reserve` nears the wallet's
 balance, rewards stop (safely: wins are recorded as `pool_low`), so top the wallet up before then.
 
+**Wallet sign-in.** `GAMES_REQUIRE_PLAYER_AUTH` (default `true`) makes the routes that act for a player
+(`/grid/answers`, `/chess/results`, `/withdraw`) require a session proving the player controls the wallet whose
+address is in the body; a mismatching session is refused even when the setting is off. The flow, with the
+exact digest the wallet signs, is in the header of `src/games/auth.rs`:
+
+```text
+POST /api/games/auth/challenge {"address":"<64 hex>","purpose":"play"}      -> challenge_id, expires_at, digest
+POST /api/games/auth/verify    {"challenge_id","public_key","signature"}    -> token, address, expires_at
+POST /api/games/auth/logout    (header X-Wallet-Session: <token>)           -> signed_out
+```
+
+A challenge lives 120 s, can be used once and tolerates 5 failed tries; a session lasts 1 hour, a wallet keeps at
+most 5, and only the token's hash is stored. Every failure of `verify` is the same `auth_failed`. A session proves
+one wallet and grants no ownership of any chain or game. Edge limits to add beside the service's own: POST
+`/api/games/auth/challenge` 10 / minute and POST `/api/games/auth/verify` 20 / minute per client.
+
 **Chain days.** The service closes yesterday and asks the Records Service to anchor it, every ten minutes
 until it is on the ledger, so normally you watch rather than run anything: `journalctl -u ultranet-games -f` and
 `GET /api/appchain/ledger/1/anchors`. The request cannot succeed for a chain the anchor signer does

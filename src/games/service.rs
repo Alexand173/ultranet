@@ -12,6 +12,7 @@
 //!    decides with the chain in front of them.
 
 use super::{
+    auth::{self, AuthConfig, AuthError},
     anchor::Anchorer,
     chain::{ChainError, GamesChain},
     registry::RegistryError,
@@ -66,6 +67,11 @@ pub struct ServiceConfig {
     pub catch_up_days: u32,
     /// An anchor submitted but not seen on the ledger after this long is submitted again.
     pub anchor_resubmit_after_seconds: u64,
+    /// Wallet sign-in limits and lifetimes (see `auth.rs`).
+    pub auth: AuthConfig,
+    /// Require a wallet session for the routes that act for a player (answers, results, withdrawals). An
+    /// address in a request body is not proof of anything; with this on, it must match the session's.
+    pub require_player_auth: bool,
 }
 
 impl ServiceConfig {
@@ -79,6 +85,10 @@ impl ServiceConfig {
             anchor_retry_seconds: 600,
             catch_up_days: 7,
             anchor_resubmit_after_seconds: 3_600,
+            auth: AuthConfig::default(),
+            // The library default is open so existing in-process callers keep working; the service's own
+            // configuration (`GamesConfig`) turns this on unless an operator says otherwise.
+            require_player_auth: false,
         }
     }
 }
@@ -127,6 +137,14 @@ pub enum GamesError {
     AnchorFailed(String),
     #[error("the peer could not be authenticated")]
     PeerUnauthenticated,
+    #[error("sign in with your wallet first")]
+    AuthRequired,
+    #[error("the sign-in could not be verified")]
+    AuthFailed,
+    #[error("that session belongs to a different wallet")]
+    SessionMismatch,
+    #[error("too many sign-in requests; try again shortly")]
+    AuthRateLimited,
     #[error("{0}")]
     NotFound(String),
     #[error("internal error: {0}")]
@@ -158,6 +176,10 @@ impl GamesError {
             GamesError::AnchorFailed(_) => "anchor_failed",
             GamesError::PeerUnauthenticated => "peer_unauthenticated",
             GamesError::NotFound(_) => "not_found",
+            GamesError::AuthRequired => "auth_required",
+            GamesError::AuthFailed => "auth_failed",
+            GamesError::SessionMismatch => "session_mismatch",
+            GamesError::AuthRateLimited => "auth_rate_limited",
             GamesError::Internal(_) => "internal_error",
         }
     }
@@ -168,8 +190,11 @@ impl GamesError {
             | GamesError::DateMismatch { .. }
             | GamesError::AnswerRefused(_) => 400,
             GamesError::Conflict | GamesError::ResultConflict => 409,
-            GamesError::InvalidKey | GamesError::PeerUnauthenticated => 401,
-            GamesError::GameSuspended | GamesError::Forbidden(_) => 403,
+            GamesError::InvalidKey
+            | GamesError::PeerUnauthenticated
+            | GamesError::AuthRequired
+            | GamesError::AuthFailed => 401,
+            GamesError::GameSuspended | GamesError::Forbidden(_) | GamesError::SessionMismatch => 403,
             GamesError::AnchorFailed(_) => 502,
             GamesError::NotFound(_) => 404,
             GamesError::BelowMinimum { .. }
@@ -177,13 +202,25 @@ impl GamesError {
             | GamesError::GameLimit
             | GamesError::PlayerLimit
             | GamesError::OwnerLimit
-            | GamesError::RegistrationLimit => 429,
+            | GamesError::RegistrationLimit
+            | GamesError::AuthRateLimited => 429,
             GamesError::Disabled
             | GamesError::PayoutsPaused
             | GamesError::ChainUnavailable
             | GamesError::AnchoringDisabled
             | GamesError::ReconciliationRequired(_) => 503,
             GamesError::Internal(_) => 500,
+        }
+    }
+}
+
+impl From<AuthError> for GamesError {
+    fn from(error: AuthError) -> Self {
+        match error {
+            AuthError::Store(error) => error.into(),
+            AuthError::RateLimited => GamesError::AuthRateLimited,
+            AuthError::Rejected => GamesError::AuthFailed,
+            AuthError::Invalid(message) => GamesError::Invalid(message),
         }
     }
 }
@@ -370,6 +407,26 @@ pub struct DailyReport {
     pub errors: Vec<(String, String, String)>,
 }
 
+/// What a wallet needs in order to sign in: the challenge and the digest it must sign.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChallengeView {
+    pub challenge_id: String,
+    pub address: String,
+    pub purpose: String,
+    pub issued_at: u64,
+    pub expires_at: u64,
+    /// The 32 bytes to sign, hex. A wallet recomputes it from the fields above and signs its own result.
+    pub digest: String,
+}
+
+/// A verified sign-in. The token is shown once; only its hash is kept.
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionView {
+    pub token: String,
+    pub address: String,
+    pub expires_at: u64,
+}
+
 pub struct GamesService {
     store: GamesStore,
     policy: Policy,
@@ -467,6 +524,93 @@ impl GamesService {
 
     pub fn today(&self) -> String {
         date_of(self.now())
+    }
+
+    /// Issue a one-time sign-in challenge for `address`.
+    pub fn auth_challenge(&self, address: &str, purpose: &str) -> Result<ChallengeView, GamesError> {
+        let address = self.normalize_address(address)?;
+        let mut id = [0u8; 32];
+        OsRng.fill_bytes(&mut id);
+        let challenge = self.store.issue_challenge(
+            &hex::encode(id),
+            &address,
+            purpose,
+            self.now(),
+            &self.config.auth,
+        )?;
+        let digest = challenge.digest()?;
+        Ok(ChallengeView {
+            challenge_id: challenge.id,
+            address: challenge.address,
+            purpose: challenge.purpose,
+            issued_at: challenge.issued_at,
+            expires_at: challenge.expires_at,
+            digest: hex::encode(digest),
+        })
+    }
+
+    /// Check the wallet's signature over a challenge and open a session bound to that wallet.
+    pub fn auth_verify(
+        &self,
+        challenge_id: &str,
+        public_key_hex: &str,
+        signature_hex: &str,
+    ) -> Result<SessionView, GamesError> {
+        let now = self.now();
+        let challenge = self
+            .store
+            .begin_verification(challenge_id, now, &self.config.auth)?;
+        auth::verify_signature(&challenge, public_key_hex, signature_hex)?;
+        let mut token = [0u8; 32];
+        OsRng.fill_bytes(&mut token);
+        let token = hex::encode(token);
+        let session = self.store.finish_verification(
+            &challenge,
+            &auth::token_hash(&token),
+            now,
+            &self.config.auth,
+        )?;
+        Ok(SessionView {
+            token,
+            address: session.address,
+            expires_at: session.expires_at,
+        })
+    }
+
+    /// End the session behind `token`. Always succeeds from the caller's side: whether it existed is not told.
+    pub fn auth_logout(&self, token: &str) -> Result<(), GamesError> {
+        if auth::is_address(token) {
+            self.store.revoke_session(&auth::token_hash(token), self.now())?;
+        }
+        Ok(())
+    }
+
+    /// The wallet a session token proves, if it is live.
+    pub fn session_address(&self, token: &str) -> Result<Option<String>, GamesError> {
+        if !auth::is_address(token) {
+            return Ok(None);
+        }
+        Ok(self
+            .store
+            .session_for(&auth::token_hash(token), self.now())?
+            .filter(|session| session.purpose == auth::PURPOSE_PLAY)
+            .map(|session| session.address))
+    }
+
+    /// Whether a request that acts for `claimed_address` may proceed. A token, when one is sent, must be a
+    /// live session for exactly that wallet: a wrong session is refused even where sign-in is optional,
+    /// never ignored. With no token, sign-in is required when `require_player_auth` is on.
+    pub fn require_player(&self, token: Option<&str>, claimed_address: &str) -> Result<(), GamesError> {
+        let claimed = self.normalize_address(claimed_address)?;
+        match token {
+            Some(token) => match self.session_address(token)? {
+                Some(address) if address == claimed => Ok(()),
+                Some(_) => Err(GamesError::SessionMismatch),
+                None => Err(GamesError::AuthRequired),
+            },
+            None if self.config.require_player_auth => Err(GamesError::AuthRequired),
+            None => Ok(()),
+        }
     }
 
     fn normalize_address(&self, address: &str) -> Result<String, GamesError> {

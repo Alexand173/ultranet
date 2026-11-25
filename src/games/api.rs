@@ -4,6 +4,9 @@
 //! ```text
 //! GET  /api/games/status                  the rules in force, and whether results and payouts are open
 //! GET  /api/games/grid/day?date=          the seed inputs of a Grid day, so a phone can check its own copy
+//! POST /api/games/auth/challenge          {address, purpose}  a one-time challenge for a wallet to sign
+//! POST /api/games/auth/verify             {challenge_id, public_key, signature}  a session for that wallet
+//! POST /api/games/auth/logout             (X-Wallet-Session)  end the session
 //! POST /api/games/grid/answers            {address, date, level, answer:[{cell,turns}]}
 //! POST /api/games/chess/results           {address, game_id, mode, result, plies, app?}
 //! GET  /api/games/wallet/{address}        the balance, today's counts and recent wins
@@ -48,6 +51,9 @@ pub fn configure_routes(config: &mut web::ServiceConfig) {
         .app_data(json_config())
         .route("/api/games/status", web::get().to(status))
         .route("/api/games/grid/day", web::get().to(grid_day))
+        .route("/api/games/auth/challenge", web::post().to(auth_challenge))
+        .route("/api/games/auth/verify", web::post().to(auth_verify))
+        .route("/api/games/auth/logout", web::post().to(auth_logout))
         .route("/api/games/grid/answers", web::post().to(grid_answer))
         .route("/api/games/chess/results", web::post().to(chess_result))
         .route("/api/games/wallet/{address}", web::get().to(wallet))
@@ -194,6 +200,9 @@ async fn grid_answer(
     body: web::Json<GridAnswerRequest>,
 ) -> HttpResponse {
     let client = trusted_client_identity(&request);
+    if let Err(error) = service.require_player(session_token(&request).as_deref(), &body.address) {
+        return error_response(&error);
+    }
     respond(
         service
             .submit_grid_answer(body.into_inner(), client.as_deref())
@@ -207,6 +216,9 @@ async fn chess_result(
     body: web::Json<ChessResultRequest>,
 ) -> HttpResponse {
     let client = trusted_client_identity(&request);
+    if let Err(error) = service.require_player(session_token(&request).as_deref(), &body.address) {
+        return error_response(&error);
+    }
     respond(
         service
             .submit_chess_result(body.into_inner(), client.as_deref())
@@ -226,9 +238,60 @@ struct WithdrawRequest {
 
 async fn withdraw(
     service: web::Data<GamesService>,
+    request: HttpRequest,
     body: web::Json<WithdrawRequest>,
 ) -> HttpResponse {
+    if let Err(error) = service.require_player(session_token(&request).as_deref(), &body.address) {
+        return error_response(&error);
+    }
     respond(service.withdraw(&body.address))
+}
+
+/// The wallet session a request carries, if any. It travels in its own header because the reverse proxy
+/// strips `Authorization` from the games routes.
+fn session_token(request: &HttpRequest) -> Option<String> {
+    request
+        .headers()
+        .get("X-Wallet-Session")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChallengeRequest {
+    address: String,
+    purpose: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VerifyRequest {
+    challenge_id: String,
+    public_key: String,
+    signature: String,
+}
+
+async fn auth_challenge(
+    service: web::Data<GamesService>,
+    body: web::Json<ChallengeRequest>,
+) -> HttpResponse {
+    respond(service.auth_challenge(&body.address, &body.purpose))
+}
+
+async fn auth_verify(
+    service: web::Data<GamesService>,
+    body: web::Json<VerifyRequest>,
+) -> HttpResponse {
+    respond(service.auth_verify(&body.challenge_id, &body.public_key, &body.signature))
+}
+
+async fn auth_logout(service: web::Data<GamesService>, request: HttpRequest) -> HttpResponse {
+    let Some(token) = session_token(&request) else {
+        return error_response(&GamesError::AuthRequired);
+    };
+    respond(service.auth_logout(&token).map(|()| json!({ "signed_out": true })))
 }
 
 async fn payout(service: web::Data<GamesService>, id: web::Path<String>) -> HttpResponse {

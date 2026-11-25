@@ -240,6 +240,9 @@ impl GamesConfig {
             "GAMES_MAX_SUBMISSION_ATTEMPTS",
             service.max_submission_attempts,
         )?;
+        // Fail closed: a player's address in a request is not proof that they control the wallet, so the
+        // routes that act for a player need a wallet session unless an operator explicitly turns that off.
+        service.require_player_auth = boolean("GAMES_REQUIRE_PLAYER_AUTH", true)?;
         service.anchor_empty_days = boolean("GAMES_ANCHOR_EMPTY_DAYS", service.anchor_empty_days)?;
         service.anchor_retry_seconds =
             number("GAMES_ANCHOR_RETRY_SECONDS", service.anchor_retry_seconds)?;
@@ -448,6 +451,15 @@ mod tests {
         let worst = (MAX_REWARD_UNITS * MAX_REWARDED_PER_ADDRESS_PER_DAY as u64) * 2;
         assert_eq!(worst, 20_000);
         assert!(worst <= MAX_PAYOUT_DAILY_CAP_UNITS);
+    }
+
+    #[test]
+    fn player_sign_in_is_required_unless_an_operator_turns_it_off_explicitly() {
+        assert!(config(&[]).unwrap().service.require_player_auth, "fail closed by default");
+        assert!(!config(&[("GAMES_REQUIRE_PLAYER_AUTH", "false")]).unwrap().service.require_player_auth);
+        assert!(config(&[("GAMES_REQUIRE_PLAYER_AUTH", "true")]).unwrap().service.require_player_auth);
+        // A misspelt value is refused, never read as "off".
+        assert!(config(&[("GAMES_REQUIRE_PLAYER_AUTH", "maybe")]).unwrap_err().contains("GAMES_REQUIRE_PLAYER_AUTH"));
     }
 
     #[test]

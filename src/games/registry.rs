@@ -1831,7 +1831,7 @@ mod tests {
             let connection = store.lock().unwrap();
             connection
                 .execute_batch(
-                    "DROP TABLE registry_anchor_attempts; DROP TABLE peer_anchor_roots; DROP TABLE peer_anchor_days;
+                    "DROP TABLE auth_sessions; DROP TABLE auth_challenges; DROP TABLE registry_anchor_attempts; DROP TABLE peer_anchor_roots; DROP TABLE peer_anchor_days;
                      DROP TABLE registry_days; DROP TABLE registry_results; DROP TABLE registry_games;
                      UPDATE meta SET value = '1' WHERE key = 'schema_version';",
                 )

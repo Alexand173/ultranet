@@ -2339,7 +2339,7 @@ mod tests {
         }
         let error = read_only_error(&path);
         assert!(error.contains("schema 3"), "{error}");
-        assert!(error.contains("needs schema 4"), "{error}");
+        assert!(error.contains("needs schema 5"), "{error}");
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
@@ -2353,7 +2353,7 @@ mod tests {
         }
         let error = read_only_error(&path);
         assert!(error.contains("unknown"), "{error}");
-        assert!(error.contains("needs schema 4"), "{error}");
+        assert!(error.contains("needs schema 5"), "{error}");
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 

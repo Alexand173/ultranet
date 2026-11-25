@@ -382,6 +382,8 @@ struct Options {
     peer_secret: Option<Vec<u8>>,
     /// Use this clock for both services instead of a fresh one.
     clock: Option<Arc<AtomicU64>>,
+    /// Require a wallet session on the routes that act for a player.
+    require_player_auth: bool,
 }
 
 impl Default for Options {
@@ -400,6 +402,7 @@ impl Default for Options {
             games_anchorer: None,
             peer_secret: None,
             clock: None,
+            require_player_auth: false,
         }
     }
 }
@@ -417,6 +420,7 @@ fn harness(options: Options) -> Harness {
     let payout_address = signer.address().to_string();
     let mut config = ServiceConfig::new(payout_address.clone());
     config.anchor_games = options.anchor_games;
+    config.require_player_auth = options.require_player_auth;
     let tick = clock.clone();
     let records_anchorer = Arc::new(FakeAnchorer::default());
     let mut records_config = RecordsConfig::new();
@@ -5546,5 +5550,454 @@ mod v1_api {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let body: Value = read_body_json(response).await;
         assert_eq!(body["error"]["code"], json!("not_found"));
+    }
+}
+
+// --- wallet sign-in ----------------------------------------------------------------------------
+
+mod wallet_auth {
+    use super::*;
+    use crate::games::auth::{self, AuthConfig, AuthError, PURPOSE_PLAY};
+    use crate::games::service::SessionView;
+
+    fn wallet() -> (QuantumKeyPair, String) {
+        let keys = QuantumKeyPair::generate();
+        let address = QuantumKeyPair::address_from_public_key(&keys.public_key);
+        (keys, address)
+    }
+
+    /// What a real wallet does: recompute the digest from the challenge's own fields (never trusting the
+    /// server's `digest`), sign it locally, and send the public key and signature.
+    fn signed(h: &Harness, keys: &QuantumKeyPair, address: &str) -> (String, String, String) {
+        let challenge = h.service.auth_challenge(address, PURPOSE_PLAY).unwrap();
+        let mine = auth::challenge_digest(
+            &challenge.purpose,
+            &challenge.address,
+            &challenge.challenge_id,
+            challenge.issued_at,
+            challenge.expires_at,
+        )
+        .unwrap();
+        assert_eq!(challenge.digest, hex::encode(mine), "the digest the server shows is the documented one");
+        (
+            challenge.challenge_id,
+            hex::encode(&keys.public_key),
+            hex::encode(keys.sign(&mine)),
+        )
+    }
+
+    fn sign_in(h: &Harness, keys: &QuantumKeyPair, address: &str) -> SessionView {
+        let (id, public_key, signature) = signed(h, keys, address);
+        h.service.auth_verify(&id, &public_key, &signature).unwrap()
+    }
+
+    fn refused(result: Result<SessionView, GamesError>) -> bool {
+        matches!(result, Err(GamesError::AuthFailed))
+    }
+
+    #[test]
+    fn a_wallet_that_signs_its_challenge_gets_a_session_for_its_own_address_and_no_other() {
+        let h = harness(Options::default());
+        let (keys, address) = wallet();
+        let session = sign_in(&h, &keys, &address);
+        assert_eq!(session.address, address);
+        assert_eq!(session.token.len(), 64);
+        assert_eq!(h.service.session_address(&session.token).unwrap(), Some(address.clone()));
+        // Only a hash of the token is kept: the token itself is not in the database.
+        let stored = h.service.store().session_for(&auth::token_hash(&session.token), h.service.now()).unwrap();
+        assert_eq!(stored.map(|s| s.address), Some(address));
+        // A token nobody was given is nothing.
+        assert_eq!(h.service.session_address(&"00".repeat(32)).unwrap(), None);
+    }
+
+    #[test]
+    fn a_challenge_is_spent_by_its_first_use_and_cannot_be_replayed() {
+        let h = harness(Options::default());
+        let (keys, address) = wallet();
+        let (id, public_key, signature) = signed(&h, &keys, &address);
+        h.service.auth_verify(&id, &public_key, &signature).unwrap();
+        assert!(refused(h.service.auth_verify(&id, &public_key, &signature)), "the identical request, again");
+        h.advance(5);
+        assert!(refused(h.service.auth_verify(&id, &public_key, &signature)), "and a little later");
+    }
+
+    #[test]
+    fn a_signature_from_a_different_wallet_is_refused_and_does_not_burn_the_real_one() {
+        let h = harness(Options::default());
+        let (alice, alice_address) = wallet();
+        let (mallory, mallory_address) = wallet();
+        assert_ne!(alice_address, mallory_address);
+        let challenge = h.service.auth_challenge(&alice_address, PURPOSE_PLAY).unwrap();
+        let digest = hex::decode(&challenge.digest).unwrap();
+        // Mallory signs the *correct* digest of Alice's challenge and presents her own key. The signature is
+        // perfectly valid for her key; it is refused only because her key is not Alice's address.
+        let her_signature = hex::encode(mallory.sign(&digest));
+        let her_key = hex::encode(&mallory.public_key);
+        assert!(
+            crate::QuantumKeyPair::verify(&mallory.public_key, &digest, &hex::decode(&her_signature).unwrap()),
+            "the forged attempt is a genuinely valid signature by the wrong wallet"
+        );
+        assert!(refused(h.service.auth_verify(&challenge.challenge_id, &her_key, &her_signature)));
+        // Alice's key with Mallory's signature: the signature does not hold.
+        assert!(refused(h.service.auth_verify(&challenge.challenge_id, &hex::encode(&alice.public_key), &her_signature)));
+        // Alice's own proof still works: two failed tries are within the allowance.
+        let session = h
+            .service
+            .auth_verify(
+                &challenge.challenge_id,
+                &hex::encode(&alice.public_key),
+                &hex::encode(alice.sign(&digest)),
+            )
+            .unwrap();
+        assert_eq!(session.address, alice_address, "the session is Alice's, never Mallory's");
+    }
+
+    #[test]
+    fn a_signature_over_anything_but_this_challenge_is_refused() {
+        let h = harness(Options::default());
+        let (keys, address) = wallet();
+        let (id, public_key, _) = signed(&h, &keys, &address);
+        // The digest of a different challenge, a transaction-looking blob, and an owner proof.
+        let other = h.service.auth_challenge(&address, PURPOSE_PLAY).unwrap();
+        for message in [
+            hex::decode(other.digest).unwrap(),
+            b"UltraNet/appchain-envelope/v5".to_vec(),
+            crate::games::ownership::proof_digest("register", "game-one", "Game One", 1_800_000_000).to_vec(),
+        ] {
+            assert!(refused(h.service.auth_verify(&id, &public_key, &hex::encode(keys.sign(&message)))));
+        }
+    }
+
+    #[test]
+    fn an_expired_challenge_is_refused_even_with_a_valid_signature() {
+        let h = harness(Options::default());
+        let (keys, address) = wallet();
+        let (id, public_key, signature) = signed(&h, &keys, &address);
+        h.advance(AuthConfig::default().challenge_ttl_seconds + 1);
+        assert!(refused(h.service.auth_verify(&id, &public_key, &signature)));
+    }
+
+    #[test]
+    fn malformed_input_is_refused_in_the_same_words_as_a_wrong_signature() {
+        let h = harness(Options::default());
+        let (keys, address) = wallet();
+        let (id, public_key, signature) = signed(&h, &keys, &address);
+        let huge = "ab".repeat(20_000);
+        for (challenge, key, sig) in [
+            ("not-hex".to_string(), public_key.clone(), signature.clone()),
+            ("00".repeat(32), public_key.clone(), signature.clone()), // unknown id
+            (id.clone(), "zz".to_string(), signature.clone()),
+            (id.clone(), public_key.clone(), "".to_string()),
+            (id.clone(), huge.clone(), signature.clone()),
+            (id.clone(), public_key.clone(), huge),
+            (id.to_uppercase(), public_key.clone(), signature.clone()),
+        ] {
+            assert!(refused(h.service.auth_verify(&challenge, &key, &sig)), "{challenge:.8} {key:.8} {sig:.8}");
+        }
+        // Issuing is checked for shape too, and says what is wrong with the request.
+        assert!(matches!(h.service.auth_challenge("abc", PURPOSE_PLAY), Err(GamesError::Invalid(_))));
+        assert!(matches!(h.service.auth_challenge(&address, "withdraw"), Err(GamesError::Invalid(_))));
+        assert!(matches!(h.service.auth_challenge(&address, ""), Err(GamesError::Invalid(_))));
+    }
+
+    #[test]
+    fn a_challenge_dies_after_too_many_failed_tries() {
+        let h = harness(Options::default());
+        let (keys, address) = wallet();
+        let (id, public_key, signature) = signed(&h, &keys, &address);
+        let wrong = hex::encode(keys.sign(b"not the digest"));
+        for _ in 0..AuthConfig::default().max_attempts {
+            assert!(refused(h.service.auth_verify(&id, &public_key, &wrong)));
+        }
+        assert!(refused(h.service.auth_verify(&id, &public_key, &signature)), "even the right signature is too late");
+    }
+
+    #[test]
+    fn concurrent_verifications_of_one_challenge_make_exactly_one_session() {
+        let h = harness(Options::default());
+        let (keys, address) = wallet();
+        let (id, public_key, signature) = signed(&h, &keys, &address);
+        let results: Vec<Result<SessionView, GamesError>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| scope.spawn(|| h.service.auth_verify(&id, &public_key, &signature)))
+                .collect();
+            handles.into_iter().map(|handle| handle.join().unwrap()).collect()
+        });
+        let winners: Vec<_> = results.iter().filter(|r| r.is_ok()).collect();
+        assert_eq!(winners.len(), 1, "one request wins the challenge: {:?}", results.iter().map(|r| r.is_ok()).collect::<Vec<_>>());
+        assert!(results.iter().filter(|r| r.is_err()).all(|r| matches!(r, Err(GamesError::AuthFailed))));
+    }
+
+    #[test]
+    fn issuing_challenges_is_limited_per_address_and_for_the_whole_service() {
+        let h = harness(Options::default());
+        let (_, busy) = wallet();
+        let limit = AuthConfig::default().challenges_per_address_per_window;
+        for _ in 0..limit {
+            h.service.auth_challenge(&busy, PURPOSE_PLAY).unwrap();
+        }
+        assert!(matches!(h.service.auth_challenge(&busy, PURPOSE_PLAY), Err(GamesError::AuthRateLimited)));
+        let (_, other) = wallet();
+        h.service.auth_challenge(&other, PURPOSE_PLAY).expect("another wallet is not held up by the first");
+        // After the window the address may ask again.
+        h.advance(AuthConfig::default().window_seconds + 1);
+        h.service.auth_challenge(&busy, PURPOSE_PLAY).unwrap();
+
+        // The service-wide limit, with a small ceiling so the test stays small.
+        let store = h.service.store();
+        let tight = AuthConfig { challenges_per_minute: 3, ..AuthConfig::default() };
+        let now = h.service.now();
+        let mut refused_overall = false;
+        for n in 0..6u8 {
+            let id = hex::encode([n.wrapping_add(100); 32]);
+            let address = hex::encode([n.wrapping_add(1); 32]);
+            if matches!(store.issue_challenge(&id, &address, PURPOSE_PLAY, now, &tight), Err(AuthError::RateLimited)) {
+                refused_overall = true;
+            }
+        }
+        assert!(refused_overall, "the overall ceiling holds whoever asks");
+    }
+
+    #[test]
+    fn sessions_expire_are_revoked_on_logout_and_are_capped_per_wallet() {
+        let h = harness(Options::default());
+        let (keys, address) = wallet();
+        let first = sign_in(&h, &keys, &address);
+        h.service.auth_logout(&first.token).unwrap();
+        assert_eq!(h.service.session_address(&first.token).unwrap(), None, "logout ends it");
+        h.service.auth_logout(&first.token).unwrap(); // saying it twice is harmless
+        h.service.auth_logout("garbage").unwrap(); // and so is nonsense, which is not told apart
+
+        let expiring = sign_in(&h, &keys, &address);
+        h.advance(AuthConfig::default().session_ttl_seconds + 1);
+        assert_eq!(h.service.session_address(&expiring.token).unwrap(), None, "expiry ends it");
+
+        // Beyond the cap the oldest go first.
+        let cap = AuthConfig::default().max_sessions_per_address as usize;
+        let tokens: Vec<String> = (0..cap + 1)
+            .map(|_| {
+                h.advance(1);
+                sign_in(&h, &keys, &address).token
+            })
+            .collect();
+        assert_eq!(h.service.session_address(&tokens[0]).unwrap(), None, "the oldest was revoked");
+        for token in &tokens[1..] {
+            assert_eq!(h.service.session_address(token).unwrap(), Some(address.clone()));
+        }
+        // An operator can end every session of a wallet at once.
+        assert_eq!(h.service.store().revoke_sessions_for(&address, h.service.now()).unwrap() as usize, cap);
+        assert_eq!(h.service.session_address(&tokens[cap]).unwrap(), None);
+    }
+
+    #[test]
+    fn a_session_proves_one_wallet_and_nothing_about_owning_a_chain() {
+        // Wallet B signs in. It can act for B, and a request for A is refused, whoever owns what on the ledger.
+        let h = harness(Options::default());
+        let (b_keys, b) = wallet();
+        let (_, a) = wallet();
+        let session = sign_in(&h, &b_keys, &b);
+        h.service.require_player(Some(&session.token), &b).unwrap();
+        assert!(matches!(h.service.require_player(Some(&session.token), &a), Err(GamesError::SessionMismatch)));
+        // The session carries an address and a purpose and nothing else: there is no owner field to forge.
+        let carried = h.service.store().session_for(&auth::token_hash(&session.token), h.service.now()).unwrap().unwrap();
+        assert_eq!((carried.address, carried.purpose), (b, PURPOSE_PLAY.to_string()));
+    }
+
+    #[test]
+    fn sign_in_state_survives_a_restart() {
+        let path = std::env::temp_dir().join(format!("games-auth-restart-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let (keys, address) = wallet();
+        let config = AuthConfig::default();
+        let now = 1_800_000_000;
+        let token_hash;
+        let spent_id = "ab".repeat(32);
+        {
+            let store = GamesStore::open(&path).unwrap();
+            let challenge = store.issue_challenge(&spent_id, &address, PURPOSE_PLAY, now, &config).unwrap();
+            let digest = challenge.digest().unwrap();
+            let signature = hex::encode(keys.sign(&digest));
+            assert!(auth::verify_signature(&challenge, &hex::encode(&keys.public_key), &signature).is_ok());
+            token_hash = auth::token_hash("a-token");
+            store.finish_verification(&challenge, &token_hash, now, &config).unwrap();
+        }
+        let reopened = GamesStore::open(&path).unwrap();
+        assert!(reopened.session_for(&token_hash, now + 1).unwrap().is_some(), "the session is still there");
+        assert!(
+            matches!(reopened.begin_verification(&spent_id, now + 1, &config), Err(AuthError::Rejected)),
+            "and a spent challenge is still spent"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+mod wallet_auth_http {
+    use super::*;
+    use crate::games::api;
+    use crate::games::auth::PURPOSE_PLAY;
+    use actix_web::{
+        test::{call_service, init_service, read_body_json, TestRequest},
+        web, App,
+    };
+    use serde_json::{json, Value};
+
+    async fn call(h: &Harness, request: actix_web::test::TestRequest) -> (u16, Value) {
+        let app = init_service(
+            App::new()
+                .app_data(web::Data::from(h.service.clone()))
+                .configure(api::configure_routes),
+        )
+        .await;
+        let response = call_service(&app, request.to_request()).await;
+        let status = response.status().as_u16();
+        (status, read_body_json(response).await)
+    }
+
+    async fn sign_in_over_http(h: &Harness, keys: &QuantumKeyPair) -> (String, String) {
+        let address = QuantumKeyPair::address_from_public_key(&keys.public_key);
+        let (status, challenge) = call(
+            h,
+            TestRequest::post()
+                .uri("/api/games/auth/challenge")
+                .set_json(json!({"address": address, "purpose": PURPOSE_PLAY})),
+        )
+        .await;
+        assert_eq!(status, 200, "{challenge}");
+        let digest = hex::decode(challenge["digest"].as_str().unwrap()).unwrap();
+        let (status, session) = call(
+            h,
+            TestRequest::post().uri("/api/games/auth/verify").set_json(json!({
+                "challenge_id": challenge["challenge_id"],
+                "public_key": hex::encode(&keys.public_key),
+                "signature": hex::encode(keys.sign(&digest)),
+            })),
+        )
+        .await;
+        assert_eq!(status, 200, "{session}");
+        (address, session["token"].as_str().unwrap().to_string())
+    }
+
+    fn answer(address: &str, today: &str, level: u8) -> Value {
+        json!({"address": address, "date": today, "level": level, "answer": []})
+    }
+
+    #[actix_web::test]
+    async fn with_sign_in_required_a_bare_address_proves_nothing() {
+        let h = harness(Options { require_player_auth: true, ..Options::default() });
+        let today = h.service.today();
+        let someone = "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e";
+        for (uri, body) in [
+            ("/api/games/grid/answers", answer(someone, &today, 0)),
+            ("/api/games/chess/results", json!({"address": someone, "game_id": "g-0123456789abcdef", "mode": "classic", "result": "player_win", "plies": 40})),
+            ("/api/games/withdraw", json!({"address": someone})),
+        ] {
+            let (status, body) = call(&h, TestRequest::post().uri(uri).set_json(body)).await;
+            assert_eq!((status, body["code"].as_str()), (401, Some("auth_required")), "{uri}");
+        }
+        // A token that is not a live session is the same refusal.
+        let (status, body) = call(
+            &h,
+            TestRequest::post()
+                .uri("/api/games/withdraw")
+                .insert_header(("X-Wallet-Session", "00".repeat(32)))
+                .set_json(json!({"address": someone})),
+        )
+        .await;
+        assert_eq!((status, body["code"].as_str()), (401, Some("auth_required")));
+    }
+
+    #[actix_web::test]
+    async fn a_signed_in_player_plays_and_withdraws_only_as_themselves_and_owns_nothing() {
+        let h = harness(Options { require_player_auth: true, ..Options::default() });
+        let b_keys = QuantumKeyPair::generate();
+        let (b, token) = sign_in_over_http(&h, &b_keys).await;
+        let today = h.service.today();
+
+        // B's session cannot act for A.
+        let a = "3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c";
+        let (status, body) = call(
+            &h,
+            TestRequest::post()
+                .uri("/api/games/grid/answers")
+                .insert_header(("X-Wallet-Session", token.clone()))
+                .set_json(answer(a, &today, 0)),
+        )
+        .await;
+        assert_eq!((status, body["code"].as_str()), (403, Some("session_mismatch")));
+        let (status, body) = call(
+            &h,
+            TestRequest::post()
+                .uri("/api/games/withdraw")
+                .insert_header(("X-Wallet-Session", token.clone()))
+                .set_json(json!({"address": a})),
+        )
+        .await;
+        assert_eq!((status, body["code"].as_str()), (403, Some("session_mismatch")));
+
+        // For B it passes the gate and reaches the game, which judges the (empty) answer on its own merits.
+        let (status, body) = call(
+            &h,
+            TestRequest::post()
+                .uri("/api/games/grid/answers")
+                .insert_header(("X-Wallet-Session", token.clone()))
+                .set_json(answer(&b, &today, 0)),
+        )
+        .await;
+        assert_ne!(status, 401, "{body}");
+        assert_ne!(status, 403, "{body}");
+
+        // After sign-out the same token is nothing.
+        let (status, body) = call(
+            &h,
+            TestRequest::post().uri("/api/games/auth/logout").insert_header(("X-Wallet-Session", token.clone())),
+        )
+        .await;
+        assert_eq!((status, body["signed_out"].as_bool()), (200, Some(true)));
+        let (status, body) = call(
+            &h,
+            TestRequest::post()
+                .uri("/api/games/withdraw")
+                .insert_header(("X-Wallet-Session", token))
+                .set_json(json!({"address": b})),
+        )
+        .await;
+        assert_eq!((status, body["code"].as_str()), (401, Some("auth_required")));
+    }
+
+    #[actix_web::test]
+    async fn a_wrong_session_is_refused_even_where_sign_in_is_optional() {
+        // The library default is open, so an old client with no session still works...
+        let h = harness(Options::default());
+        let today = h.service.today();
+        let someone = "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e";
+        let (status, body) = call(&h, TestRequest::post().uri("/api/games/withdraw").set_json(json!({"address": someone}))).await;
+        assert_ne!(status, 401, "{body}");
+        // ...but a session that is for somebody else is never silently ignored.
+        let keys = QuantumKeyPair::generate();
+        let (_, token) = sign_in_over_http(&h, &keys).await;
+        let (status, body) = call(
+            &h,
+            TestRequest::post()
+                .uri("/api/games/grid/answers")
+                .insert_header(("X-Wallet-Session", token))
+                .set_json(answer(someone, &today, 0)),
+        )
+        .await;
+        assert_eq!((status, body["code"].as_str()), (403, Some("session_mismatch")));
+    }
+
+    #[actix_web::test]
+    async fn the_sign_in_routes_answer_a_bad_request_without_saying_what_was_wrong() {
+        let h = harness(Options::default());
+        let (status, body) = call(
+            &h,
+            TestRequest::post().uri("/api/games/auth/verify").set_json(json!({
+                "challenge_id": "00".repeat(32), "public_key": "ab", "signature": "cd"
+            })),
+        )
+        .await;
+        assert_eq!((status, body["code"].as_str()), (401, Some("auth_failed")));
+        let (status, body) = call(&h, TestRequest::post().uri("/api/games/auth/logout")).await;
+        assert_eq!((status, body["code"].as_str()), (401, Some("auth_required")));
     }
 }
