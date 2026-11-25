@@ -165,6 +165,8 @@ pub enum PoolError {
     Frozen,
     #[error("a result with that id is already credited to someone else or for another amount")]
     Conflict,
+    #[error("this result's reward was given back and can never be credited again")]
+    Released,
     #[error("{0}")]
     State(String),
 }
@@ -183,7 +185,12 @@ pub struct PoolView {
     pub reserved: u64,
     pub paid: u64,
     pub withdrawn: u64,
-    /// `funded - reserved - paid - withdrawn`: the only money a new reward or withdrawal may use.
+    /// Network fees held for payouts not yet confirmed. Paid by the game's pool, never by the platform.
+    pub fees_reserved: u64,
+    /// Network fees of confirmed payouts.
+    pub fees_paid: u64,
+    /// `funded - reserved - paid - withdrawn - fees_reserved - fees_paid`: the only money a new reward or
+    /// withdrawal may use.
     pub available: u64,
 }
 
@@ -276,7 +283,7 @@ fn day_start(now: u64) -> u64 {
     now - now % UTC_DAY_SECONDS
 }
 
-fn ledger(tx: &Transaction<'_>, game_id: &str, now: u64, kind: &str, amount: u64, reference: &str) -> Result<(), PoolError> {
+pub(super) fn ledger(tx: &Transaction<'_>, game_id: &str, now: u64, kind: &str, amount: u64, reference: &str) -> Result<(), PoolError> {
     tx.execute(
         "INSERT INTO game_pool_ledger (game_id, at, kind, amount_units, reference) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![game_id, to_i64(now)?, kind, to_i64(amount)?, reference],
@@ -284,7 +291,7 @@ fn ledger(tx: &Transaction<'_>, game_id: &str, now: u64, kind: &str, amount: u64
     Ok(())
 }
 
-fn read_pool(tx: &Transaction<'_>, game_id: &str) -> Result<PoolView, PoolError> {
+pub(super) fn read_pool(tx: &Transaction<'_>, game_id: &str) -> Result<PoolView, PoolError> {
     let row = tx
         .query_row(
             "SELECT funded, reserved, paid, withdrawn FROM game_pools WHERE game_id = ?1",
@@ -296,17 +303,32 @@ fn read_pool(tx: &Transaction<'_>, game_id: &str) -> Result<PoolView, PoolError>
         Some(row) => (to_u64(row.0)?, to_u64(row.1)?, to_u64(row.2)?, to_u64(row.3)?),
         None => (0, 0, 0, 0),
     };
+    let (fees_reserved, fees_paid) = fee_totals(tx, game_id)?;
     Ok(PoolView {
         game_id: game_id.to_string(),
         funded,
         reserved,
         paid,
         withdrawn,
-        available: funded.saturating_sub(reserved + paid + withdrawn),
+        fees_reserved,
+        fees_paid,
+        available: funded.saturating_sub(reserved + paid + withdrawn + fees_reserved + fees_paid),
     })
 }
 
-fn require_game(tx: &Transaction<'_>, game_id: &str) -> Result<(String, String, Option<String>), PoolError> {
+/// What a game's payouts hold or have spent on network fees: (held for open payouts, paid by confirmed ones).
+fn fee_totals(tx: &Transaction<'_>, game_id: &str) -> Result<(u64, u64), PoolError> {
+    let row: (i64, i64) = tx.query_row(
+        "SELECT COALESCE(SUM(CASE WHEN state IN ('queued','signed','submitted') THEN fee_reserved ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN state = 'confirmed' THEN COALESCE(fee_paid, 0) ELSE 0 END), 0)
+         FROM game_pool_payouts WHERE game_id = ?1",
+        params![game_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    Ok((to_u64(row.0)?, to_u64(row.1)?))
+}
+
+pub(super) fn require_game(tx: &Transaction<'_>, game_id: &str) -> Result<(String, String, Option<String>), PoolError> {
     tx.query_row(
         "SELECT status, validation_scheme, adapter_ref FROM platform_games WHERE game_id = ?1",
         params![game_id],
@@ -345,7 +367,7 @@ fn policy_from(row: PolicySql) -> Result<PolicyRow, StoreError> {
     })
 }
 
-fn credit_from(row: (String, String, String, String, i64, i64, Vec<u8>, Vec<u8>, String, i64)) -> Result<Credit, StoreError> {
+pub(super) fn credit_from(row: (String, String, String, String, i64, i64, Vec<u8>, Vec<u8>, String, i64)) -> Result<Credit, StoreError> {
     Ok(Credit {
         credit_id: row.0,
         game_id: row.1,
@@ -360,9 +382,9 @@ fn credit_from(row: (String, String, String, String, i64, i64, Vec<u8>, Vec<u8>,
     })
 }
 
-const CREDIT_COLUMNS: &str = "credit_id, game_id, result_id, player, amount_units, policy_version, policy_hash, module_hash, state, created_at";
+pub(super) const CREDIT_COLUMNS: &str = "credit_id, game_id, result_id, player, amount_units, policy_version, policy_hash, module_hash, state, created_at";
 
-fn read_credit(row: &rusqlite::Row<'_>) -> rusqlite::Result<(String, String, String, String, i64, i64, Vec<u8>, Vec<u8>, String, i64)> {
+pub(super) fn read_credit(row: &rusqlite::Row<'_>) -> rusqlite::Result<(String, String, String, String, i64, i64, Vec<u8>, Vec<u8>, String, i64)> {
     Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?))
 }
 
@@ -393,6 +415,81 @@ fn audit(tx: &Transaction<'_>, game_id: &str, now: u64, record: &AuditRecord<'_>
         other => PoolError::Catalog(other),
     })
 }
+
+/// Every check and every write of a reservation, inside the caller's transaction. Returns the credit and whether it
+/// was created now (`false`: the same result had already been credited and this is that credit).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn reserve_in(
+    tx: &Transaction<'_>,
+    game_id: &str,
+    result_id: &str,
+    player: &str,
+    credit_id: &str,
+    validated: &ValidatedResult,
+    now: u64,
+) -> Result<(Credit, bool), PoolError> {
+        if frozen_in(tx)? {
+            return Err(PoolError::Frozen);
+        }
+        let (status, scheme, adapter_ref) = require_game(tx, game_id)?;
+        let module_hex = hex::encode(validated.module_hash);
+        if status != catalog::STATUS_ACTIVE || scheme != SCHEME_VERIFIED_ADAPTER || adapter_ref.as_deref() != Some(module_hex.as_str()) {
+            return Err(PoolError::NotVerified);
+        }
+        let Some(outcome) = outcome_name(validated.output.outcome) else {
+            return Err(PoolError::NotEligible);
+        };
+        // A result already credited is answered with its credit, and takes nothing a second time.
+        let existing = tx
+            .query_row(&format!("SELECT {CREDIT_COLUMNS} FROM game_pool_credits WHERE game_id = ?1 AND result_id = ?2"), params![game_id, result_id], read_credit)
+            .optional()?;
+        if let Some(row) = existing {
+            let credit = credit_from(row)?;
+            if credit.player != player || credit.module_hash != module_hex {
+                return Err(PoolError::Conflict);
+            }
+            if credit.state == "released" {
+                // Credited once and given back: that result can never be rewarded, and saying so is not success.
+                return Err(PoolError::Released);
+            }
+            return Ok((credit, false));
+        }
+        let policy = active_policy_in(tx, game_id, now)?.ok_or(PoolError::NoActivePolicy)?;
+        if !policy.eligible_outcomes.split(',').any(|name| name == outcome) {
+            return Err(PoolError::NotEligible);
+        }
+        let today = to_i64(day_start(now))?;
+        let by_player: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM game_pool_credits WHERE game_id = ?1 AND player = ?2 AND created_at >= ?3 AND state != 'released'",
+            params![game_id, player, today],
+            |row| row.get(0),
+        )?;
+        let by_game: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM game_pool_credits WHERE game_id = ?1 AND created_at >= ?2 AND state != 'released'",
+            params![game_id, today],
+            |row| row.get(0),
+        )?;
+        if to_u64(by_player)? >= u64::from(policy.per_player_per_day) || to_u64(by_game)? >= policy.per_game_per_day {
+            return Err(PoolError::LimitReached);
+        }
+        let pool = read_pool(tx, game_id)?;
+        if pool.available < policy.reward_units {
+            return Err(PoolError::InsufficientFunds { available: pool.available, needed: policy.reward_units });
+        }
+        let policy_hash = hex::decode(&policy.policy_hash).map_err(|_| PoolError::State("stored policy hash is malformed".into()))?;
+        tx.execute(
+            "INSERT INTO game_pool_credits (credit_id, game_id, result_id, player, amount_units, policy_version, policy_hash, module_hash, state, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'reserved', ?9, ?9)",
+            params![credit_id, game_id, result_id, player, to_i64(policy.reward_units)?, i64::from(policy.version), policy_hash, validated.module_hash.as_slice(), to_i64(now)?],
+        )?;
+        tx.execute("INSERT OR IGNORE INTO game_pools (game_id) VALUES (?1)", params![game_id])?;
+        tx.execute("UPDATE game_pools SET reserved = reserved + ?2 WHERE game_id = ?1", params![game_id, to_i64(policy.reward_units)?])?;
+        ledger(tx, game_id, now, "reserve", policy.reward_units, credit_id)?;
+        let row = tx.query_row(&format!("SELECT {CREDIT_COLUMNS} FROM game_pool_credits WHERE credit_id = ?1"), params![credit_id], read_credit)?;
+        let credit = credit_from(row)?;
+        Ok((credit, true))
+    }
+
 
 impl GamesStore {
     /// Credit a game's pool with a verified L1 transfer. One transaction hash funds one game once.
@@ -437,7 +534,24 @@ impl GamesStore {
     /// Everything the pools hold and have not paid out or returned: what the payout wallet must cover.
     pub fn pool_unspent_total(&self) -> Result<u64, PoolError> {
         let guard = self.lock()?;
-        let total: i64 = guard.query_row("SELECT COALESCE(SUM(funded - paid - withdrawn), 0) FROM game_pools", [], |row| row.get(0))?;
+        // What the payout wallet must still hold for the pools: everything deposited, less what has actually left it.
+        // A queued withdrawal and a fee held for an unconfirmed payout have NOT left the wallet yet, so they are still
+        // owed; only confirmed rewards, confirmed withdrawals and confirmed fees are subtracted.
+        let deposited_unpaid: i64 = guard.query_row("SELECT COALESCE(SUM(funded - paid), 0) FROM game_pools", [], |row| row.get(0))?;
+        let withdrawn_out: i64 = guard.query_row("SELECT COALESCE(SUM(amount_units), 0) FROM game_pool_withdrawals WHERE state = 'paid'", [], |row| row.get(0))?;
+        let fees_out: i64 = guard.query_row("SELECT COALESCE(SUM(fee_paid), 0) FROM game_pool_payouts WHERE state = 'confirmed' AND kind = 'reward'", [], |row| row.get(0))?;
+        Ok(to_u64(deposited_unpaid.saturating_sub(withdrawn_out).saturating_sub(fees_out).max(0))?)
+    }
+
+    /// What signed or submitted pool payouts may already have taken out of the wallet: the node can confirm a
+    /// transfer before this service has noticed and settled it, and the wallet balance drops at once.
+    pub fn pool_in_flight_total(&self) -> Result<u64, PoolError> {
+        let guard = self.lock()?;
+        let total: i64 = guard.query_row(
+            "SELECT COALESCE(SUM(COALESCE(sent_units, 0) + COALESCE(fee_units, 0)), 0) FROM game_pool_payouts WHERE state IN ('signed','submitted')",
+            [],
+            |row| row.get(0),
+        )?;
         Ok(to_u64(total)?)
     }
 
@@ -473,61 +587,7 @@ impl GamesStore {
     ) -> Result<Credit, PoolError> {
         let mut guard = self.lock()?;
         let tx = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if frozen_in(&tx)? {
-            return Err(PoolError::Frozen);
-        }
-        let (status, scheme, adapter_ref) = require_game(&tx, game_id)?;
-        let module_hex = hex::encode(validated.module_hash);
-        if status != catalog::STATUS_ACTIVE || scheme != SCHEME_VERIFIED_ADAPTER || adapter_ref.as_deref() != Some(module_hex.as_str()) {
-            return Err(PoolError::NotVerified);
-        }
-        let Some(outcome) = outcome_name(validated.output.outcome) else {
-            return Err(PoolError::NotEligible);
-        };
-        // A result already credited is answered with its credit, and takes nothing a second time.
-        let existing = tx
-            .query_row(&format!("SELECT {CREDIT_COLUMNS} FROM game_pool_credits WHERE game_id = ?1 AND result_id = ?2"), params![game_id, result_id], read_credit)
-            .optional()?;
-        if let Some(row) = existing {
-            let credit = credit_from(row)?;
-            if credit.player != player || credit.module_hash != module_hex {
-                return Err(PoolError::Conflict);
-            }
-            return Ok(credit);
-        }
-        let policy = active_policy_in(&tx, game_id, now)?.ok_or(PoolError::NoActivePolicy)?;
-        if !policy.eligible_outcomes.split(',').any(|name| name == outcome) {
-            return Err(PoolError::NotEligible);
-        }
-        let today = to_i64(day_start(now))?;
-        let by_player: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM game_pool_credits WHERE game_id = ?1 AND player = ?2 AND created_at >= ?3 AND state != 'released'",
-            params![game_id, player, today],
-            |row| row.get(0),
-        )?;
-        let by_game: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM game_pool_credits WHERE game_id = ?1 AND created_at >= ?2 AND state != 'released'",
-            params![game_id, today],
-            |row| row.get(0),
-        )?;
-        if to_u64(by_player)? >= u64::from(policy.per_player_per_day) || to_u64(by_game)? >= policy.per_game_per_day {
-            return Err(PoolError::LimitReached);
-        }
-        let pool = read_pool(&tx, game_id)?;
-        if pool.available < policy.reward_units {
-            return Err(PoolError::InsufficientFunds { available: pool.available, needed: policy.reward_units });
-        }
-        let policy_hash = hex::decode(&policy.policy_hash).map_err(|_| PoolError::State("stored policy hash is malformed".into()))?;
-        tx.execute(
-            "INSERT INTO game_pool_credits (credit_id, game_id, result_id, player, amount_units, policy_version, policy_hash, module_hash, state, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'reserved', ?9, ?9)",
-            params![credit_id, game_id, result_id, player, to_i64(policy.reward_units)?, i64::from(policy.version), policy_hash, validated.module_hash.as_slice(), to_i64(now)?],
-        )?;
-        tx.execute("INSERT OR IGNORE INTO game_pools (game_id) VALUES (?1)", params![game_id])?;
-        tx.execute("UPDATE game_pools SET reserved = reserved + ?2 WHERE game_id = ?1", params![game_id, to_i64(policy.reward_units)?])?;
-        ledger(&tx, game_id, now, "reserve", policy.reward_units, credit_id)?;
-        let row = tx.query_row(&format!("SELECT {CREDIT_COLUMNS} FROM game_pool_credits WHERE credit_id = ?1"), params![credit_id], read_credit)?;
-        let credit = credit_from(row)?;
+        let (credit, _) = reserve_in(&tx, game_id, result_id, player, credit_id, validated, now)?;
         tx.commit()?;
         Ok(credit)
     }
@@ -544,6 +604,17 @@ impl GamesStore {
         let credit = credit_from(row)?;
         if credit.state != "reserved" {
             return Err(PoolError::State(format!("that credit is already {}", credit.state)));
+        }
+        // A credit with a payout is settled by that payout and nothing else: `paid` only when the ledger confirms
+        // the transfer, and never `released` while a signed or submitted transfer could still land. The check is in
+        // the same IMMEDIATE transaction as the change, so it cannot race the worker.
+        let backed: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM game_pool_payouts WHERE kind = 'reward' AND ref_id = ?1",
+            params![credit_id],
+            |row| row.get(0),
+        )?;
+        if backed > 0 {
+            return Err(PoolError::State("that credit has a payout; only the payout worker can settle it".into()));
         }
         let (new_state, column, kind) = if paid { ("paid", "paid", "pay") } else { ("released", "", "release") };
         tx.execute("UPDATE game_pool_credits SET state = ?2, updated_at = ?3 WHERE credit_id = ?1", params![credit_id, new_state, to_i64(now)?])?;
@@ -615,6 +686,21 @@ impl GamesStore {
                 if held != derived {
                     issues.push(format!("{game_id}: {what} is {held} but its records add up to {derived}"));
                 }
+            }
+        }
+        // The CHECK on the pool row cannot see network fees, so the invariant that includes them is checked here.
+        let mut over = guard.prepare("SELECT game_id, funded, reserved, paid, withdrawn FROM game_pools")?;
+        let pools = over
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        for (game_id, funded, reserved, paid, withdrawn) in pools {
+            let fees: i64 = guard.query_row(
+                "SELECT COALESCE(SUM(CASE WHEN state IN ('queued','signed','submitted') THEN fee_reserved WHEN state = 'confirmed' THEN COALESCE(fee_paid, 0) ELSE 0 END), 0) FROM game_pool_payouts WHERE game_id = ?1",
+                params![game_id],
+                |row| row.get(0),
+            )?;
+            if reserved + paid + withdrawn + fees > funded {
+                issues.push(format!("{game_id}: commitments {} exceed the funded {funded}", reserved + paid + withdrawn + fees));
             }
         }
         // A credit or deposit for a game with no pool row is a record the books do not carry.
@@ -768,6 +854,7 @@ impl From<PoolError> for GamesError {
             PoolError::AlreadyClaimed => GamesError::Conflict,
             PoolError::Frozen => GamesError::PayoutsPaused,
             PoolError::Conflict => GamesError::ResultConflict,
+            PoolError::Released => GamesError::Forbidden("this result's reward was given back and will not be credited".into()),
             PoolError::State(message) => GamesError::Invalid(message),
         }
     }
@@ -953,7 +1040,10 @@ impl GamesService {
         let owed_legacy = self.store().legacy_owed_total()?;
         let owed_pools = self.store().pool_unspent_total()?;
         let owed = owed_legacy.saturating_add(owed_pools);
-        if balance < owed {
+        // A transfer in flight may already be out of the wallet but not yet settled in the books; counting it as
+        // still held keeps a confirmed-but-unnoticed payout from looking like a shortfall.
+        let holdings = balance.saturating_add(self.store().pool_in_flight_total()?);
+        if holdings < owed {
             let reason = format!("the payout wallet holds {balance} but {owed} is owed across the pools and the older balances");
             self.store().pools_set_frozen(true, Some(&reason))?;
             return Err(GamesError::PayoutsPaused);

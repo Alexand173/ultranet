@@ -431,6 +431,87 @@ pub struct DailyReport {
     pub errors: Vec<(String, String, String)>,
 }
 
+/// A persisted day as the owner needs to see it before signing its anchor. Every value is read from the
+/// `days` table; nothing is computed here, and reading creates no row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DayView {
+    pub day: String,
+    pub game: String,
+    pub chain_id: u32,
+    /// `open` (roots not fixed), `closed` (roots fixed, not yet submitted), `anchored` (submitted, not yet
+    /// seen on the ledger) or `confirmed` (seen on the ledger).
+    pub state: &'static str,
+    /// An anchor attempt for this day failed and none has been seen on the ledger. The day is retried; the
+    /// message stays in the operator's log, not here.
+    pub anchor_failed: bool,
+    pub anchor_tx: Option<String>,
+    pub day_root: Option<String>,
+    /// The root of the anchor that seeded this day, or 32 zero bytes if there was none.
+    pub prev_root: Option<String>,
+    pub prev_anchor_seq: Option<u64>,
+    pub commitment: Option<String>,
+    pub results_root: Option<String>,
+}
+
+impl DayView {
+    /// Turn one stored row into what an owner is shown. Pure, so every way a row can be damaged is
+    /// testable: a day that is not open must carry both roots, an open one neither, and every root is
+    /// exactly 32 bytes. A damaged row is an internal error, never a partial answer to sign from.
+    pub(super) fn from_row(chain_id: u32, row: DayRow) -> Result<DayView, GamesError> {
+        let root = |value: &Option<Vec<u8>>, what: &str| -> Result<Option<String>, GamesError> {
+            match value {
+                None => Ok(None),
+                Some(bytes) if bytes.len() == 32 => Ok(Some(hex::encode(bytes))),
+                Some(_) => Err(GamesError::Internal(format!("stored {what} is malformed"))),
+            }
+        };
+        let state = match row.state.as_str() {
+            "open" => "open",
+            "closing" => "closed",
+            "anchored" => "anchored",
+            "confirmed" => "confirmed",
+            other => {
+                return Err(GamesError::Internal(format!(
+                    "stored day state {other:?} is unknown"
+                )))
+            }
+        };
+        let day_root = root(&row.day_root, "day root")?;
+        let results_root = root(&row.results_root, "results root")?;
+        let prev_root = root(&row.prev_root, "previous root")?;
+        let commitment = root(&row.commitment, "commitment")?;
+        let closed = state != "open";
+        if closed && (day_root.is_none() || results_root.is_none()) {
+            return Err(GamesError::Internal(
+                "stored day is past open but its roots are missing".into(),
+            ));
+        }
+        if !closed && (day_root.is_some() || results_root.is_some()) {
+            return Err(GamesError::Internal(
+                "stored open day already carries a root".into(),
+            ));
+        }
+        if closed && row.game == GAME_GRID && commitment.is_none() {
+            return Err(GamesError::Internal(
+                "stored grid commitment is missing".into(),
+            ));
+        }
+        Ok(DayView {
+            day: row.day,
+            game: row.game,
+            chain_id,
+            state,
+            anchor_failed: row.last_error.is_some() && state != "confirmed",
+            anchor_tx: row.anchor_tx,
+            day_root,
+            prev_root,
+            prev_anchor_seq: row.prev_anchor_sequence,
+            commitment,
+            results_root,
+        })
+    }
+}
+
 /// A signed administrative request: the owner's public key and signature over the digest of the action.
 /// A player's wallet session is not accepted in its place.
 #[derive(Debug, Clone)]
@@ -559,6 +640,23 @@ impl GamesService {
 
     pub fn today(&self) -> String {
         date_of(self.now())
+    }
+
+    /// One persisted day, for inspection. Read-only: it never opens a day, closes one or asks the ledger.
+    pub fn day_view(&self, game: &str, date: &str) -> Result<DayView, GamesError> {
+        let policy = self
+            .policy
+            .game(game)
+            .ok_or_else(|| GamesError::NotFound("unknown game".into()))?;
+        if date_start(date).is_none() {
+            return Err(GamesError::Invalid("date must be YYYY-MM-DD".into()));
+        }
+        let row = self
+            .store
+            .day_row(date, game)?
+            .ok_or_else(|| GamesError::NotFound("no such day is recorded".into()))?;
+
+        DayView::from_row(policy.chain_id, row)
     }
 
     // --- the game catalog ------------------------------------------------------------------
@@ -696,6 +794,22 @@ impl GamesService {
         &self.chain
     }
 
+    pub(super) fn payout_lock(&self) -> &tokio::sync::Mutex<()> {
+        &self.payout_lock
+    }
+
+    pub(super) fn signer(&self) -> Option<&Arc<FaucetSigner>> {
+        self.signer.as_ref()
+    }
+
+    pub(super) fn node(&self) -> &Arc<dyn NodeApi> {
+        &self.node
+    }
+
+    pub(super) fn service_config(&self) -> &ServiceConfig {
+        &self.config
+    }
+
     pub(super) fn payout_address(&self) -> &str {
         &self.config.payout_address
     }
@@ -797,6 +911,24 @@ impl GamesService {
         }
     }
 
+    /// Startup check: both games' AppChains exist on the ledger. A chain the node says is not registered
+    /// is `Invalid` (definitive); a node that cannot be read is `ChainUnavailable` (try again).
+    pub async fn verify_game_chains(&self) -> Result<(), GamesError> {
+        for game in [&self.policy.grid, &self.policy.chess] {
+            match self.chain.appchain_registered(game.chain_id).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err(GamesError::Invalid(format!(
+                        "{} is configured for AppChain #{}, which is not registered on the ledger",
+                        game.game, game.chain_id
+                    )))
+                }
+                Err(_) => return Err(GamesError::ChainUnavailable),
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn normalize_address(&self, address: &str) -> Result<String, GamesError> {
         let address = address.trim().to_ascii_lowercase();
         let address = address.strip_prefix("0x").unwrap_or(&address).to_string();
@@ -840,9 +972,11 @@ impl GamesService {
             return Ok(0);
         }
         match self.node.account(&self.config.payout_address).await {
-            Ok(account) => account
-                .balance_base_units()
-                .ok_or(GamesError::ChainUnavailable),
+            Ok(account) => {
+                let balance = account.balance_base_units().ok_or(GamesError::ChainUnavailable)?;
+                // What the per-game pools are owed is not available to promise a Grid or Chess reward.
+                Ok(balance.saturating_sub(self.store.pool_unspent_total()?))
+            }
             Err(_) => Err(GamesError::ChainUnavailable),
         }
     }
@@ -1321,7 +1455,9 @@ impl GamesService {
             .checked_add(fee)
             .and_then(|sum| sum.checked_add(self.policy.payout_reserve_units))
             .ok_or_else(|| GamesError::Internal("payout arithmetic overflowed".into()))?;
-        if balance < required {
+        // What the per-game pools are owed is not the older path's to spend.
+        let spendable = balance.saturating_sub(self.store.pool_unspent_total()?);
+        if spendable < required {
             // The pool is short. Keep the payout queued and the player's balance intact; stop paying so
             // an operator tops the wallet up, and nothing is lost in the meantime.
             self.store.record_attempt(
@@ -1458,6 +1594,11 @@ impl GamesService {
                 Ok(true) => {}
                 Ok(false) => {}
                 Err(error) => tracing::warn!(error = %error, "games payout step failed"),
+            }
+            // The per-game pool path, separate from the one above and sharing only the signer's lock.
+            match self.process_pool_payout_once().await {
+                Ok(_) => {}
+                Err(error) => tracing::warn!(error = %error, "pool payout step failed"),
             }
             let now = self.now();
             if now.saturating_sub(last_daily) >= 600 {

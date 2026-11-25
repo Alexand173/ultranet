@@ -20,7 +20,7 @@ api.example.com {
     # `Authorization` is NOT stripped on the Records Service's routes: it carries a game's API key
     # (Bearer) on result submission, and removing it would answer every submission with 401. Bodies there
     # may reach ~15 KB (a signed registration carries a post-quantum public key and signature), so the
-    # cap is the service's own 32 KB. The Games Reward Service has no login and takes no Authorization.
+    # cap is the service's own 32 KB. The Games Reward Service reads the player session from `X-Wallet-Session`, not Authorization.
     @records path /api/games/g /api/games/g/* /api/games/registry/* /api/records /api/records/* /api/apps /api/apps/*
     handle @records {
         request_body {

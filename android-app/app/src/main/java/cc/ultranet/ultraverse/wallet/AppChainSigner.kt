@@ -1,5 +1,6 @@
 package cc.ultranet.ultraverse.wallet
 
+import cc.ultranet.ultraverse.data.AppChainTerms
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -102,6 +103,46 @@ internal object AppChainSigner {
     private val ADDRESS_PATTERN = Regex("^[0-9a-f]{64}$")
     private val STATE_ROOT_PATTERN = Regex("^[0-9a-fA-F]{64}$")
     private val secureRandom = SecureRandom()
+
+    /**
+     * The most a node may ask, as a multiple of this build's own price for the operation. The terms are
+     * read from the node the wallet is pointed at, so a node cannot be allowed to name a fee that drains
+     * the wallet; anything above this is refused rather than signed.
+     */
+    const val MAX_FEE_MULTIPLE = 100L
+
+    /**
+     * The fee the node's own terms ask for [operation]. The wallet signs this, not a compiled-in
+     * constant, so the amount shown on the review screen (read from the same terms) is the amount that is
+     * signed. A node that publishes no transfer fee leaves the built-in one; an unusable value is refused.
+     */
+    fun feeFor(operation: AppChainOperation, terms: AppChainTerms): Long {
+        val builtIn = requiredFee(operation)
+        val published = when (operation) {
+            is AppChainOperation.Register -> terms.registerFeeBaseUnits
+            is AppChainOperation.Anchor -> terms.anchorFeeBaseUnits
+            is AppChainOperation.TransferOwner -> terms.transferFeeBaseUnits ?: builtIn
+        }
+        require(published in 1..builtIn * MAX_FEE_MULTIPLE) {
+            "The node asks $published base units for this transaction; this wallet will not sign a fee " +
+                "outside 1 to ${builtIn * MAX_FEE_MULTIPLE}. Check the node you are connected to."
+        }
+        return published
+    }
+
+    /**
+     * The fee the owner reviewed must be the fee that is signed. The review screen and the signer read
+     * the node's terms at different moments, so if they differ the wallet signs nothing and says why.
+     * A null review (the screen could not show a fee) leaves nothing to compare.
+     */
+    fun requireFeeUnchanged(reviewedFeeBaseUnits: Long?, liveFeeBaseUnits: Long) {
+        if (reviewedFeeBaseUnits != null) {
+            check(reviewedFeeBaseUnits == liveFeeBaseUnits) {
+                "The network fee changed from $reviewedFeeBaseUnits to $liveFeeBaseUnits base units since " +
+                    "you reviewed this transaction. Nothing was signed; review it again."
+            }
+        }
+    }
 
     fun requiredFee(operation: AppChainOperation): Long = when (operation) {
         is AppChainOperation.Register -> REGISTER_FEE_BASE_UNITS
@@ -207,6 +248,7 @@ internal object AppChainSigner {
         timestamp: Long,
         operation: AppChainOperation,
         version: Int = TX_VERSION,
+        feeBaseUnits: Long = requiredFee(operation),
     ): SignedAppChainTransaction {
         require(seed.size == WALLET_SEED_BYTES) { "The local wallet seed has an unexpected size." }
         require(ADDRESS_PATTERN.matches(sender)) { "The sender must be a 64-character lowercase hexadecimal address." }
@@ -238,14 +280,14 @@ internal object AppChainSigner {
         val nullifier = ByteArray(32).also(secureRandom::nextBytes)
         var digest: ByteArray? = null
         try {
-            digest = buildDigest(sender, requiredFee(operation), nonce, timestamp, nullifier, operation, version)
+            digest = buildDigest(sender, feeBaseUnits, nonce, timestamp, nullifier, operation, version)
             val signature = NativeDilithium.sign(seed, digest).also {
                 require(it.size == DILITHIUM_SIGNATURE_BYTES) { "Dilithium-5 returned an incompatible signature size." }
             }
             return SignedAppChainTransaction(
                 sender = sender,
                 senderPublicKey = publicKey,
-                fee = requiredFee(operation),
+                fee = feeBaseUnits,
                 nonce = nonce,
                 timestamp = timestamp,
                 nullifier = nullifier,

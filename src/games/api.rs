@@ -7,6 +7,7 @@
 //! POST /api/games/auth/challenge          {address, purpose}  a one-time challenge for a wallet to sign
 //! POST /api/games/auth/verify             {challenge_id, public_key, signature}  a session for that wallet
 //! POST /api/games/auth/logout             (X-Wallet-Session)  end the session
+//! GET  /api/games/days/{game}/{date}      a persisted day: state, roots and previous-anchor link (read-only)
 //! POST /api/games/grid/answers            {address, date, level, answer:[{cell,turns}]}
 //! POST /api/games/chess/results           {address, game_id, mode, result, plies, app?}
 //! GET  /api/games/wallet/{address}        the balance, today's counts and recent wins
@@ -52,6 +53,7 @@ pub fn configure_routes(config: &mut web::ServiceConfig) {
         .app_data(json_config())
         .route("/api/games/status", web::get().to(status))
         .route("/api/games/grid/day", web::get().to(grid_day))
+        .route("/api/games/days/{game}/{date}", web::get().to(day_view))
         .route("/api/games/catalog", web::post().to(catalog_register))
         .route("/api/games/catalog", web::get().to(catalog_list))
         .route("/api/games/catalog/{game_id}", web::get().to(catalog_game))
@@ -199,6 +201,13 @@ async fn grid_day(service: web::Data<GamesService>, query: web::Query<DayQuery>)
             "closes_at": closes_at,
         })
     }))
+}
+
+/// One persisted day: its state and roots, exactly as stored, so an owner can inspect them before signing
+/// the anchor. Read-only; an unknown day is a 404 and nothing is written.
+async fn day_view(service: web::Data<GamesService>, path: web::Path<(String, String)>) -> HttpResponse {
+    let (game, date) = path.into_inner();
+    respond(service.day_view(&game, &date))
 }
 
 async fn grid_answer(

@@ -406,22 +406,33 @@ internal class WalletController(
      * Registers an AppChain as an L1 transaction signed by this wallet. Registration is permanent,
      * costs the registration fee, and makes the signing address the chain's owner.
      */
-    suspend fun registerAppChain(name: String): AppChainOutcome =
-        signAppChain(AppChainOperation.Register(name.trim()))
+    suspend fun registerAppChain(name: String, reviewedFeeBaseUnits: Long? = null): AppChainOutcome =
+        signAppChain(AppChainOperation.Register(name.trim()), reviewedFeeBaseUnits)
 
     /**
      * Anchors a state root for a chain this wallet owns. The game server submits the same transaction
      * on a schedule; this path exists for a manual anchor and for verifying the flow end to end.
      */
-    suspend fun anchorAppChain(chainId: Int, stateRootHex: String): AppChainOutcome =
-        signAppChain(AppChainOperation.Anchor(chainId, stateRootHex.trim().lowercase()))
+    suspend fun anchorAppChain(
+        chainId: Int,
+        stateRootHex: String,
+        reviewedFeeBaseUnits: Long? = null,
+    ): AppChainOutcome =
+        signAppChain(AppChainOperation.Anchor(chainId, stateRootHex.trim().lowercase()), reviewedFeeBaseUnits)
 
     /**
      * Hands an AppChain to another address. Signed by the current owner and irreversible: the old
      * owner loses the right to anchor immediately, so the screen has to say so plainly.
      */
-    suspend fun transferAppChainOwnership(chainId: Int, newOwnerHex: String): AppChainOutcome =
-        signAppChain(AppChainOperation.TransferOwner(chainId, newOwnerHex.trim().lowercase()))
+    suspend fun transferAppChainOwnership(
+        chainId: Int,
+        newOwnerHex: String,
+        reviewedFeeBaseUnits: Long? = null,
+    ): AppChainOutcome =
+        signAppChain(
+            AppChainOperation.TransferOwner(chainId, newOwnerHex.trim().lowercase()),
+            reviewedFeeBaseUnits,
+        )
 
     /**
      * The one place an AppChain transaction is signed and submitted.
@@ -433,7 +444,10 @@ internal class WalletController(
      * be reconciled against the account's nonce before another signature is offered, and a submission
      * already on the wire is never duplicated by a second tap.
      */
-    private suspend fun signAppChain(operation: AppChainOperation): AppChainOutcome {
+    private suspend fun signAppChain(
+        operation: AppChainOperation,
+        reviewedFeeBaseUnits: Long?,
+    ): AppChainOutcome {
         if (appChainSubmissionInFlight) {
             return AppChainOutcome.Rejected("This AppChain transaction is already being submitted.")
         }
@@ -446,18 +460,19 @@ internal class WalletController(
             }
             val account = state.account
                 ?: throw IllegalStateException("Refresh the account before signing an AppChain transaction.")
-            val fee = AppChainSigner.requiredFee(operation)
+            // The node advertises the envelope version it accepts and what it charges. Sign those rather
+            // than literals: a signature over a version the node does not accept can never be included, and
+            // a fee other than the one shown on the review screen is not the fee the owner agreed to.
+            val terms = withContext(Dispatchers.IO) { appChainApi.appChainLedger().terms }
+            val version = AppChainSigner.requireSupportedVersion(terms.version)
+            val fee = AppChainSigner.feeFor(operation, terms)
+            AppChainSigner.requireFeeUnchanged(reviewedFeeBaseUnits, fee)
             if (account.balanceBaseUnits < fee) {
                 throw IllegalStateException(
                     "This transaction costs ${ultraLabel(fee)} \$ULTRA and the wallet holds " +
                         "${ultraLabel(account.balanceBaseUnits)} \$ULTRA.",
                 )
             }
-            // The node advertises the envelope version it accepts. Send that one rather than a literal,
-            // and refuse loudly when this build cannot produce it: a signature over a version the node
-            // does not accept can never be included, and the wallet has no way to explain why.
-            val terms = withContext(Dispatchers.IO) { appChainApi.appChainLedger().terms }
-            val version = AppChainSigner.requireSupportedVersion(terms.version)
             val generation = operationGeneration
             val seed = activeSeed?.copyOf() ?: throw IllegalStateException("The wallet is locked.")
             val signed = try {
@@ -469,6 +484,7 @@ internal class WalletController(
                         timestamp = System.currentTimeMillis() / 1000L,
                         operation = operation,
                         version = version,
+                        feeBaseUnits = fee,
                     )
                 }
             } finally {

@@ -17,7 +17,7 @@ use thiserror::Error;
 /// The schema this build writes. 1 was the games and payouts tables; 2 adds the game registry; 3 adds the
 /// durable accounting of peer anchors (`peer_usage.rs`); 4 adds the registry's anchor attempts
 /// (`registry_anchor.rs`), so the registry day is anchored under the same fail-closed rules.
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 pub const UTC_DAY_SECONDS: u64 = 86_400;
 
 #[derive(Debug, Error)]
@@ -1142,46 +1142,25 @@ fn migrate(connection: &Connection) -> Result<(), StoreError> {
         )
         .optional()?
         .and_then(|value| value.parse().ok());
+    // Every schema step, in order. An older database runs the steps it lacks; a new one runs them all. Each step
+    // is its own transaction and adds tables only, so a database is plainly at one version or the next.
+    let steps: [(i64, fn(&Connection) -> Result<(), StoreError>); 7] = [
+        (2, upgrade_to_registry),
+        (3, upgrade_to_peer_usage),
+        (4, upgrade_to_registry_anchors),
+        (5, upgrade_to_auth),
+        (6, upgrade_to_catalog),
+        (7, upgrade_to_pools),
+        (8, upgrade_to_pool_payouts),
+    ];
     match version {
         Some(SCHEMA_VERSION) => return Ok(()),
-        // A database from before the registry: add its tables and nothing else. Every existing table
-        // and row is left exactly as it was.
-        Some(1) => {
-            upgrade_to_registry(connection)?;
-            upgrade_to_peer_usage(connection)?;
-            upgrade_to_registry_anchors(connection)?;
-            upgrade_to_auth(connection)?;
-            upgrade_to_catalog(connection)?;
-            return upgrade_to_pools(connection);
+        Some(found) if (1..SCHEMA_VERSION).contains(&found) => {
+            for (_, step) in steps.iter().filter(|(to, _)| *to > found) {
+                step(connection)?;
+            }
+            return Ok(());
         }
-        // A database from before the peer-anchor accounting: add its two tables and nothing else.
-        Some(2) => {
-            upgrade_to_peer_usage(connection)?;
-            upgrade_to_registry_anchors(connection)?;
-            upgrade_to_auth(connection)?;
-            upgrade_to_catalog(connection)?;
-            return upgrade_to_pools(connection);
-        }
-        // A database from before the registry's anchor attempts: add that table and nothing else.
-        Some(3) => {
-            upgrade_to_registry_anchors(connection)?;
-            upgrade_to_auth(connection)?;
-            upgrade_to_catalog(connection)?;
-            return upgrade_to_pools(connection);
-        }
-        // A database from before wallet sign-in: add its two tables and nothing else.
-        Some(4) => {
-            upgrade_to_auth(connection)?;
-            upgrade_to_catalog(connection)?;
-            return upgrade_to_pools(connection);
-        }
-        // A database from before the game catalog: add its two tables and nothing else.
-        Some(5) => {
-            upgrade_to_catalog(connection)?;
-            return upgrade_to_pools(connection);
-        }
-        // A database from before reward pools: add its tables and nothing else.
-        Some(6) => return upgrade_to_pools(connection),
         Some(other) => {
             return Err(StoreError::Malformed(format!(
                 "database schema {other} is not understood by this build (expects {SCHEMA_VERSION})"
@@ -1268,12 +1247,10 @@ fn migrate(connection: &Connection) -> Result<(), StoreError> {
         "INSERT INTO meta (key, value) VALUES ('schema_version', '1')",
         [],
     )?;
-    upgrade_to_registry(connection)?;
-    upgrade_to_peer_usage(connection)?;
-    upgrade_to_registry_anchors(connection)?;
-    upgrade_to_auth(connection)?;
-    upgrade_to_catalog(connection)?;
-    upgrade_to_pools(connection)
+    for (_, step) in steps.iter() {
+        step(connection)?;
+    }
+    Ok(())
 }
 
 /// Schema 1 to 2, inside one transaction so a crash leaves a database that is plainly 1 or plainly 2.
@@ -1304,6 +1281,11 @@ fn upgrade_to_catalog(connection: &Connection) -> Result<(), StoreError> {
 /// Schema 6 to 7, likewise: plainly 6 or plainly 7, never in between. Adds only the reward-pool tables.
 fn upgrade_to_pools(connection: &Connection) -> Result<(), StoreError> {
     upgrade_step(connection, super::pools::POOLS_SCHEMA, 7)
+}
+
+/// Schema 7 to 8, likewise: plainly 7 or plainly 8, never in between. Adds only the pool payout table.
+fn upgrade_to_pool_payouts(connection: &Connection) -> Result<(), StoreError> {
+    upgrade_step(connection, super::pool_payouts::POOL_PAYOUTS_SCHEMA, 8)
 }
 
 fn upgrade_step(connection: &Connection, schema: &str, to_version: i64) -> Result<(), StoreError> {
@@ -1344,7 +1326,7 @@ mod tests {
     /// chess paying. Whether chess pays by default is a *rule*, proved in `rules.rs` and `config.rs`;
     /// these tests are about what the store does once money exists.
     fn paying() -> Policy {
-        Policy::standard().with_chess_paying()
+        Policy::standard(crate::games::rules::TEST_CHESS_CHAIN_ID).with_chess_paying()
     }
 
     fn grid_win(address: &str, level: u32) -> WinInput {
@@ -1456,7 +1438,7 @@ mod tests {
     fn an_address_that_is_not_on_the_chain_is_recorded_with_a_reason() {
         let store = store();
         let r = store
-            .record_win_unlimited(&grid_win(A, 0), &Policy::standard(), false, NOW)
+            .record_win_unlimited(&grid_win(A, 0), &Policy::standard(crate::games::rules::TEST_CHESS_CHAIN_ID), false, NOW)
             .unwrap();
         assert_eq!(r.win.outcome, Outcome::Recorded);
         assert_eq!(r.win.reason, Some(RecordedReason::NotOnChain));
@@ -1488,7 +1470,7 @@ mod tests {
     #[test]
     fn the_per_client_limit_counts_across_addresses() {
         let store = store();
-        let mut policy = Policy::standard();
+        let mut policy = Policy::standard(crate::games::rules::TEST_CHESS_CHAIN_ID);
         policy.rewarded_per_client_per_day = 2;
         let digest = Some([9u8; 32]);
         let win = |address: &str, level| WinInput {
@@ -1520,7 +1502,7 @@ mod tests {
     #[test]
     fn the_games_and_global_ceilings_stop_payment_not_recording() {
         let store = store();
-        let mut policy = Policy::standard();
+        let mut policy = Policy::standard(crate::games::rules::TEST_CHESS_CHAIN_ID);
         policy.grid.rewarded_per_day = 2;
         let addresses: Vec<String> = (0..4).map(|i| format!("{:064x}", i + 1)).collect();
         let outcomes: Vec<Option<RecordedReason>> = addresses
@@ -1543,7 +1525,7 @@ mod tests {
             ]
         );
 
-        let mut policy = Policy::standard();
+        let mut policy = Policy::standard(crate::games::rules::TEST_CHESS_CHAIN_ID);
         policy.rewarded_global_per_day = 1;
         let store = self::store();
         let first = store
@@ -1836,7 +1818,7 @@ mod tests {
     fn the_database_refuses_to_over_reserve() {
         let store = store();
         store
-            .record_win_unlimited(&grid_win(A, 0), &Policy::standard(), true, NOW)
+            .record_win_unlimited(&grid_win(A, 0), &Policy::standard(crate::games::rules::TEST_CHESS_CHAIN_ID), true, NOW)
             .unwrap();
         // The schema itself rejects paid + reserved > credited, independent of the service code.
         let result = store.lock().unwrap().execute(

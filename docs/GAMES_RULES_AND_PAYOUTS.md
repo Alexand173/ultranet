@@ -1,6 +1,6 @@
 # Games rules and payout rules — review
 
-**Date:** 2026-11-16 · **Covers:** UltraGrid (AppChain #1) and Ultra Chess (AppChain #2, not registered yet)
+**Date:** 2026-11-16 · **Covers:** UltraGrid (AppChain #1) and Ultra Chess (AppChain #3, registered; #2 is the Records Registry)
 **Code:** `src/games/` (rules, store, service, API), `src/bin/ultranet-games.rs`, the Android screens under
 `ui/grid`, `ui/chess`, `ui/games`.
 **Money authority:** [`ECONOMIC_ARCHITECTURE_V2.md`](./ECONOMIC_ARCHITECTURE_V2.md) §5. This document applies
@@ -24,7 +24,7 @@ numbers bound which loss, and which risks no number bounds.
 | Recorded wins per address per day | unlimited (up to 10 levels) | unlimited |
 | What a win must be | connected within `par + max(2, par/4)` turns | a player win, 10 to 600 plies, a game id never seen before |
 | What the day anchors | the puzzle set **and** every accepted win | every accepted win |
-| Anchored to | AppChain #1 (live) | AppChain #2 (**register it first**) |
+| Anchored to | AppChain #1 (live) | AppChain #3 (registered; set `GAMES_CHESS_CHAIN_ID=3`, which is required) |
 | Marked in every receipt | `verified = true` | `verified = false`, and the app says so |
 
 Most one address can earn in a day, as shipped: `3 × 10 =` **30 units = 0.00003 `$ULTRA`**. With chess
@@ -192,7 +192,7 @@ development was read-only GETs to the public API. Before opening:
 3. **Hand over chain #1** to the server key (`runbooks/appchain-owner-key.md`), verify the owner on the ledger,
    and keep an encrypted offline copy of the key file and the passphrase **separately**. After the handover
    that file *is* the chain.
-4. **Register chain #2** for chess (0.01) and add `chess` to `GAMES_ANCHOR_GAMES`.
+4. **Ultra Chess is AppChain #3** (already registered). Set `GAMES_CHESS_CHAIN_ID=3` (required, no default) and add `chess` to `GAMES_ANCHOR_GAMES`.
 5. **Install** per the runbook: binary, unit, credentials, the reverse-proxy route, the Cloudflare limits,
    backups, and the monitoring in §7.
 6. **Run `audit` and `check-config`**, then one real withdrawal of the smallest amount end to end with your
@@ -205,7 +205,7 @@ development was read-only GETs to the public API. Before opening:
 
 | # | Decision | Recommendation |
 |---|---|---|
-| P1 | **Does chess pay?** | **Decided 2026-11-16: no — and the decision is enforced in the code, not in a config file.** `Policy::standard()` has `chess.pays = false`; only an explicit `GAMES_CHESS_PAYS=true` turns it on, so a missing line cannot start it and a malformed one is refused rather than read as "on". It stays off because the server can prove nothing about a chess result (R1): every unit it paid would be collectable by a program without a human playing. Wins are still recorded and anchored, so chain #2 is useful the day a server-side opponent exists |
+| P1 | **Does chess pay?** | **Decided 2026-11-16: no — and the decision is enforced in the code, not in a config file.** `Policy::standard()` has `chess.pays = false`; only an explicit `GAMES_CHESS_PAYS=true` turns it on, so a missing line cannot start it and a malformed one is refused rather than read as "on". It stays off because the server can prove nothing about a chess result (R1): every unit it paid would be collectable by a program without a human playing. Wins are still recorded and anchored, so chain #3 is useful the day a server-side opponent exists |
 | P2 | **Ratify V2 R4 / R4b** | Both are unsigned (☐) in the V2 sheet. The service follows them; sign them or change them there first |
 | P3 | **Rewarded wins: per game or in total?** V2 says "per address per day" without saying which | Built *per game* (a day's worst case 330 units). *In total* would be 3 wins across both games: say if you want it. **While chess pays nothing this cannot bite** — the ceiling is 30 units a day either way — so it only needs answering the day chess is switched on |
 | P4 | **Pool** | 0.1 `$ULTRA` (decided). It is the binding limit, not the ceilings; plan the top-up (R6) |

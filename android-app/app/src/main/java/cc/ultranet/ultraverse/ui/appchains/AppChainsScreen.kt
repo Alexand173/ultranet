@@ -76,9 +76,10 @@ internal fun AppChainsScreen(
     walletAddress: String?,
     walletUnlocked: Boolean,
     onOpenWallet: () -> Unit,
-    onRegister: suspend (String) -> AppChainOutcome,
-    onAnchor: suspend (Int, String) -> AppChainOutcome,
-    onTransfer: suspend (Int, String) -> AppChainOutcome,
+    // The last argument is the fee the owner was shown; the wallet signs nothing if the node's fee differs.
+    onRegister: suspend (String, Long?) -> AppChainOutcome,
+    onAnchor: suspend (Int, String, Long?) -> AppChainOutcome,
+    onTransfer: suspend (Int, String, Long?) -> AppChainOutcome,
     // A submission whose fate the node has not told us. Shown, reconciled, and never silently retried.
     unresolvedAppChain: UnresolvedAppChainTransaction?,
     onReconcileAppChain: suspend () -> AppChainReconciliation?,
@@ -312,9 +313,11 @@ internal fun AppChainsScreen(
             onDismiss = { pendingSignature = null },
             onSign = {
                 val outcome = when (request) {
-                    is SignatureRequest.Register -> onRegister(request.name)
-                    is SignatureRequest.Anchor -> onAnchor(request.approval.chain.id, request.approval.rootHex)
-                    is SignatureRequest.Transfer -> onTransfer(request.chain.id, request.newOwner)
+                    is SignatureRequest.Register -> onRegister(request.name, request.feeBaseUnits)
+                    is SignatureRequest.Anchor ->
+                        onAnchor(request.approval.chain.id, request.approval.rootHex, request.approval.feeBaseUnits)
+                    is SignatureRequest.Transfer ->
+                        onTransfer(request.chain.id, request.newOwner, request.feeBaseUnits)
                 }
                 pendingSignature = null
                 when (outcome) {

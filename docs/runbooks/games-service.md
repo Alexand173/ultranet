@@ -114,7 +114,7 @@ duty (`records-service.md` §2.3).
 ### 2.4 Configure and verify, before anything is started
 
 ```bash
-sudoedit /etc/ultranet-games/games.env      # set GAMES_PAYOUT_ADDRESS; GAMES_RECORDS_URL and GAMES_ANCHOR_GAMES to have days anchored
+sudoedit /etc/ultranet-games/games.env      # set GAMES_PAYOUT_ADDRESS and GAMES_CHESS_CHAIN_ID (both required; chess is AppChain #3, never the Registry's #2); GAMES_RECORDS_URL and GAMES_ANCHOR_GAMES to have days anchored
 sudo systemctl daemon-reload
 sudo systemctl start ultranet-games
 journalctl -u ultranet-games -n 40 --no-pager
@@ -156,7 +156,7 @@ login**, so put these limits at the edge (the Records Service's own limits are i
 |---|---|---|
 | `/api/games/grid/answers`, `/api/games/chess/results` | POST | 30 / minute |
 | `/api/games/withdraw` | POST | 6 / minute |
-| `/api/games/wallet/*`, `/api/games/payouts/*`, `/api/games/status`, `/api/games/grid/day` | GET | 120 / minute |
+| `/api/games/wallet/*`, `/api/games/payouts/*`, `/api/games/status`, `/api/games/grid/day`, `/api/games/days/*` | GET | 120 / minute |
 
 The Caddyfile edit in this repository was **not machine-validated** (Caddy is not installed where it was
 written): run `caddy validate` on the host before reloading.
@@ -231,9 +231,9 @@ step to version 6 is additive and transactional; to go back, restore the backup 
 binary refuses a newer database rather than misreading it).
 
 **Reward pools and reward policies (catalog games).** Each catalog game has its own pool, funded only by the owner
-of its AppChain; UltraNet funds no game. This is built and tested at the service and database level
-(`src/games/pools.rs`); **there are no HTTP routes and no operator CLI for it yet, and the payout worker does not
-read it**, so nothing here moves money today.
+of its AppChain; UltraNet funds no game. Accounting is in `src/games/pools.rs` and payouts in
+`src/games/pool_payouts.rs`. **There are still no HTTP routes and no operator CLI for it, and no game has a verified
+adapter, so nothing here moves money today.**
 
 - **Deposit model.** The owner makes an ordinary L1 transfer to the payout address and sends an owner-signed
   claim naming the transaction and the game. The ledger must show a confirmed transfer from that owner to the
@@ -241,8 +241,15 @@ read it**, so nothing here moves money today.
   transfer funds one game once, never twice and never two games.
 - **Isolation.** The on-chain funds sit under the one payout key; separation is the pool ledger
   (`funded`, `reserved`, `paid`, `withdrawn`, with `reserved + paid + withdrawn <= funded` enforced by the
-  database). A solvency check compares everything owed (all pools plus the older Grid and Chess balances) with the
-  payout wallet's real balance and freezes reservations if the wallet holds less. This is platform custody; the
+  database). Because one wallet holds every pool, solvency is enforced automatically, not by convention:
+  owed = the older Grid/Chess balances plus every pool's unspent money (funded minus paid, minus paid
+  withdrawals and confirmed fees; queued withdrawals and fees in flight still count); held = the wallet's
+  balance plus what signed or submitted payouts may already have taken out of it. Enforcement points: (1) the
+  pool worker checks this at the start of every cycle and freezes all pool payouts if held < owed; (2) the older
+  path (`pool_units` and `sign_and_submit`) only spends the balance above what the pools are owed; (3) a pool
+  payout is signed only if the wallet covers its amount, fee and the reserve. Pool *reservation* itself does not
+  read the wallet; it is caught at (1) and (3) before any money moves. Pool payouts stay disabled in production:
+  there are no HTTP routes or operator CLI for them, and no game is yet approved to earn.
   guarantee is the ledger, not a separate key per game.
 - **What may earn.** Only a result verified by the game's approved adapter (a platform decision; every game starts
   `record_only`) with an outcome the active policy pays for, within its limits and the pool's unreserved balance.
@@ -254,6 +261,18 @@ read it**, so nothing here moves money today.
   (`promised_reward`) unless one is active and covered.
 - **Withdrawal.** The owner may take back unreserved funds; the amount leaves the pool's accounting at once and one
   transfer to the chain's *current* owner is queued for the payout worker (not yet built).
+- **Paying (the pool payout worker).** A credit and its payout are created together in one transaction, with the
+  network fee held from the same pool; if the pool cannot hold both, neither exists. The worker signs a transfer
+  that pays the winner the full reward, stores the exact signed bytes *before* sending them, and after a lost reply
+  or a restart sends those same bytes again; a payout is never signed twice. The pool's `reserved` becomes `paid`
+  only when the node reports the transfer confirmed. The network fee is the game's, not the platform's. A queued
+  owner withdrawal is paid, net of its own fee, to whoever the ledger names as the chain's owner at signing time.
+  A pool problem (a node that rejects a signed payout or answers about another transaction, a wallet holding less
+  than a payout needs, a reward no longer matching its policy) **freezes the pool path only**: the older Grid and
+  Chess payouts are not paused, and the worker and new reservations stop until an operator clears it
+  (`pools_set_frozen(false)`). The two paths share the payout key and take turns under one lock.
+- **Not built:** operator resolution of a payout that stays in doubt (it stays frozen), routes and an operator CLI,
+  and Grid and Chess still use their own older path.
 - **Reward money is not AppChain fees.** Registration, anchor and transfer fees are not read or changed here.
 
 **Wallet sign-in.** `GAMES_REQUIRE_PLAYER_AUTH` (default `true`) makes the routes that act for a player
@@ -271,6 +290,14 @@ A challenge lives 120 s, can be used once and tolerates 5 failed tries; a sessio
 most 5, and only the token's hash is stored. Every failure of `verify` is the same `auth_failed`. A session proves
 one wallet and grants no ownership of any chain or game. Edge limits to add beside the service's own: POST
 `/api/games/auth/challenge` 10 / minute and POST `/api/games/auth/verify` 20 / minute per client.
+
+**Inspecting a day before its owner signs the anchor.** `GET /api/games/days/{game}/{date}` (`grid` or `chess`,
+`YYYY-MM-DD`) returns what is persisted for that day and nothing else: `state` (`open`, `closed`, `anchored`,
+`confirmed`), `anchor_failed` (an attempt failed and no anchor has been seen; the message stays in the journal),
+`anchor_tx`, `day_root`, `results_root`, `commitment`, and `prev_root` / `prev_anchor_seq` (the anchor that
+seeded the day; 32 zero bytes and no sequence if there was none). It is read-only: an unknown day is a 404 and
+nothing is written. A damaged row is a 500 rather than a partial answer. `ultranet-games serve` also refuses to
+start if the ledger does not list the Grid and chess chains.
 
 **Chain days.** The service closes yesterday and asks the Records Service to anchor it, every ten minutes
 until it is on the ledger, so normally you watch rather than run anything: `journalctl -u ultranet-games -f` and

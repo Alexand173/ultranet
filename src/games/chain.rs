@@ -118,6 +118,10 @@ pub trait GamesChain: Send + Sync {
     /// The current L1 owner of `chain_id`, or `None` if it is not registered. Read live, never cached: game
     /// administration follows this address.
     async fn chain_owner(&self, chain_id: u32) -> Result<Option<String>, ChainError>;
+
+    /// Whether `chain_id` is registered on the ledger. `Ok(false)` only when the node answers that it
+    /// is not; a node that cannot be read is an error, never "not registered".
+    async fn appchain_registered(&self, chain_id: u32) -> Result<bool, ChainError>;
 }
 
 const PAGE: u64 = 50;
@@ -181,6 +185,16 @@ impl HttpChain {
             .await?
             .ok_or(ChainError::Invalid)?;
         parse_anchors(&body)
+    }
+}
+
+/// A 2xx answer for `GET /api/appchain/ledger/{id}` means the chain exists only if it says it is that
+/// chain. Anything else (a different id, no id) is an answer this code cannot trust: an error, never a
+/// quiet `false` that would be reported as "not registered".
+pub fn registered_chain_matches(body: &Value, chain_id: u32) -> Result<bool, ChainError> {
+    match body["chain"]["id"].as_u64() {
+        Some(id) if id == u64::from(chain_id) => Ok(true),
+        _ => Err(ChainError::Invalid),
     }
 }
 
@@ -347,6 +361,13 @@ impl GamesChain for HttpChain {
         match self.get(&format!("/api/appchain/ledger/{chain_id}")).await? {
             None => Ok(None),
             Some(body) => chain_owner_from_body(&body, chain_id).map(Some),
+        }
+    }
+
+    async fn appchain_registered(&self, chain_id: u32) -> Result<bool, ChainError> {
+        match self.get(&format!("/api/appchain/ledger/{chain_id}")).await? {
+            None => Ok(false),
+            Some(body) => registered_chain_matches(&body, chain_id),
         }
     }
 
@@ -566,5 +587,16 @@ mod tests {
         ] {
             assert_eq!(parse_anchors(&bad), Err(ChainError::Invalid), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_ledger_answer_registers_a_chain_only_when_it_names_that_chain() {
+        use serde_json::json;
+        assert_eq!(registered_chain_matches(&json!({"chain": {"id": 3, "name": "x"}}), 3).unwrap(), true);
+        // Another chain's record, an empty record, or no chain at all is not evidence either way.
+        assert!(registered_chain_matches(&json!({"chain": {"id": 2}}), 3).is_err());
+        assert!(registered_chain_matches(&json!({"chain": {}}), 3).is_err());
+        assert!(registered_chain_matches(&json!({"success": true}), 3).is_err());
+        assert!(registered_chain_matches(&json!({"chain": {"id": "3"}}), 3).is_err());
     }
 }

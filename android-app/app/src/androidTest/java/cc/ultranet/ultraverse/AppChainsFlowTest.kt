@@ -88,12 +88,12 @@ class AppChainsFlowTest {
 
         showScreen(
             walletAddress = ownerAddress,
-            onRegister = { name ->
+            onRegister = { name, _ ->
                 signatures.incrementAndGet()
                 signedName = name
                 AppChainOutcome.Accepted(txHash, chainId = null)
             },
-            onAnchor = { _, _ -> AppChainOutcome.Rejected("anchor is not exercised here") },
+            onAnchor = { _, _, _ -> AppChainOutcome.Rejected("anchor is not exercised here") },
         )
 
         awaitTag("appchain-register")
@@ -134,8 +134,8 @@ class AppChainsFlowTest {
 
         showScreen(
             walletAddress = ownerAddress,
-            onRegister = { AppChainOutcome.Rejected("registration is not exercised here") },
-            onAnchor = { chainId, requestedRoot ->
+            onRegister = { _, _ -> AppChainOutcome.Rejected("registration is not exercised here") },
+            onAnchor = { chainId, requestedRoot, _ ->
                 signatures.incrementAndGet()
                 signedChainId = chainId
                 signedRoot = requestedRoot
@@ -176,8 +176,8 @@ class AppChainsFlowTest {
 
         showScreen(
             walletAddress = ownerAddress,
-            onRegister = { AppChainOutcome.Rejected("registration is not exercised here") },
-            onAnchor = { _, _ ->
+            onRegister = { _, _ -> AppChainOutcome.Rejected("registration is not exercised here") },
+            onAnchor = { _, _, _ ->
                 signatures.incrementAndGet()
                 AppChainOutcome.Accepted(txHash, chainId = 2)
             },
@@ -208,9 +208,9 @@ class AppChainsFlowTest {
 
         showScreen(
             walletAddress = ownerAddress,
-            onRegister = { AppChainOutcome.Rejected("registration is not exercised here") },
-            onAnchor = { _, _ -> AppChainOutcome.Rejected("anchor is not exercised here") },
-            onTransfer = { chainId, newOwner ->
+            onRegister = { _, _ -> AppChainOutcome.Rejected("registration is not exercised here") },
+            onAnchor = { _, _, _ -> AppChainOutcome.Rejected("anchor is not exercised here") },
+            onTransfer = { chainId, newOwner, _ ->
                 signatures.incrementAndGet()
                 signedChainId = chainId
                 signedRecipient = newOwner
@@ -258,9 +258,9 @@ class AppChainsFlowTest {
 
         showScreen(
             walletAddress = ownerAddress,
-            onRegister = { AppChainOutcome.Rejected("registration is not exercised here") },
-            onAnchor = { _, _ -> AppChainOutcome.Rejected("anchor is not exercised here") },
-            onTransfer = { _, _ ->
+            onRegister = { _, _ -> AppChainOutcome.Rejected("registration is not exercised here") },
+            onAnchor = { _, _, _ -> AppChainOutcome.Rejected("anchor is not exercised here") },
+            onTransfer = { _, _, _ ->
                 signatures.incrementAndGet()
                 AppChainOutcome.Accepted(txHash, chainId = 1)
             },
@@ -282,9 +282,9 @@ class AppChainsFlowTest {
 
     private fun showScreen(
         walletAddress: String?,
-        onRegister: suspend (String) -> AppChainOutcome,
-        onAnchor: suspend (Int, String) -> AppChainOutcome,
-        onTransfer: suspend (Int, String) -> AppChainOutcome = { _, _ ->
+        onRegister: suspend (String, Long?) -> AppChainOutcome,
+        onAnchor: suspend (Int, String, Long?) -> AppChainOutcome,
+        onTransfer: suspend (Int, String, Long?) -> AppChainOutcome = { _, _, _ ->
             AppChainOutcome.Rejected("transfer is not exercised in this case")
         },
     ) {

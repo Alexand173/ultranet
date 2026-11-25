@@ -42,6 +42,13 @@ const A: &str = "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388
 const B: &str = "3b8ef38ada262f3290bbab6a89b9ae436921f13a8900493af925dde29487ee3c";
 const DAY: &str = "2026-11-16";
 
+/// The current production arrangement, named once so a fixture that stands for it cannot drift: UltraGrid
+/// is #1, the Records Registry #2, Ultra Chess #3. These are today's deployment values, not rules of the
+/// system: nothing outside these fixtures may assume them.
+const GRID_CHAIN: u32 = 1;
+const REGISTRY_CHAIN_ID: u32 = 2;
+const CHESS_CHAIN: u32 = crate::games::rules::TEST_CHESS_CHAIN_ID;
+
 // --- fakes -----------------------------------------------------------------------------------
 
 #[derive(Default)]
@@ -63,6 +70,8 @@ struct FakeChain {
     hide_pending: AtomicBool,
     /// Report this as the account nonce instead of the number of owner transactions.
     nonce_override: Mutex<Option<u64>>,
+    /// The chains the ledger knows. `None` (the default) means every chain is registered.
+    registered: Mutex<Option<HashSet<u32>>>,
     /// Who owns each AppChain on the ledger right now. A chain not listed is not registered.
     owners: Mutex<HashMap<u32, String>>,
     /// L1 transfers by hash, as the ledger would show them.
@@ -97,6 +106,18 @@ impl GamesChain for FakeChain {
             return Err(ChainError::Unavailable);
         }
         Ok(self.owners.lock().unwrap().get(&chain_id).cloned())
+    }
+
+    async fn appchain_registered(&self, chain_id: u32) -> Result<bool, ChainError> {
+        if self.down.load(Ordering::SeqCst) {
+            return Err(ChainError::Unavailable);
+        }
+        Ok(self
+            .registered
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map_or(true, |chains| chains.contains(&chain_id)))
     }
 
     async fn owner_appchain_activity(
@@ -411,11 +432,11 @@ impl Default for Options {
             // machinery, which only runs when something is credited, so the harness turns chess on
             // explicitly — `chess_is_record_only_by_default_and_still_records_and_anchors` is the
             // test that guards the default itself.
-            policy: Policy::standard().with_chess_paying(),
+            policy: Policy::standard(crate::games::rules::TEST_CHESS_CHAIN_ID).with_chess_paying(),
             pool_balance: 100_000,
             anchor_games: vec![GAME_GRID.to_string()],
             with_signer: true,
-            registry_chain: Some(3),
+            registry_chain: Some(REGISTRY_CHAIN_ID),
             caps: RegistryCaps::standard(),
             games_anchorer: None,
             peer_secret: None,
@@ -444,8 +465,20 @@ fn harness(options: Options) -> Harness {
     let mut records_config = RecordsConfig::new();
     // Stated, not inherited: the production default is an empty list, because the service's key owns only
     // its registry chain. These tests exercise the peer path, so they name the chains they allow.
-    records_config.peer_anchor_chains = vec![1, 2];
+    records_config.peer_anchor_chains = vec![GRID_CHAIN, CHESS_CHAIN];
     records_config.registry_chain_id = options.registry_chain;
+    // A collision between these chains is a fixture error that would make tests pass for the wrong
+    // reason, so every harness refuses it up front.
+    if let Some(registry) = options.registry_chain {
+        assert!(
+            !records_config.peer_anchor_chains.contains(&registry),
+            "the Registry's chain must not be one a peer may anchor"
+        );
+        assert_ne!(options.policy.chess.chain_id, registry, "chess must not use the Registry's chain");
+        assert_ne!(options.policy.grid.chain_id, registry, "grid must not use the Registry's chain");
+    }
+    assert_eq!(options.policy.grid.chain_id, GRID_CHAIN);
+    assert_eq!(options.policy.chess.chain_id, CHESS_CHAIN);
     records_config.owner_address = Some(A.to_string());
     let records_tick = clock.clone();
     let records = Arc::new(RecordsService::new(
@@ -887,7 +920,7 @@ async fn chess_is_record_only_by_default_and_still_records_and_anchors() {
     // No environment line, no opt-in: exactly what an installation gets today. The win must still be
     // recorded and still reach the day's anchor, and the player must be told why nothing was paid.
     let h = harness(Options {
-        policy: Policy::standard(),
+        policy: Policy::standard(crate::games::rules::TEST_CHESS_CHAIN_ID),
         anchor_games: vec![GAME_CHESS.to_string()],
         ..Options::default()
     });
@@ -918,7 +951,11 @@ async fn chess_is_record_only_by_default_and_still_records_and_anchors() {
         1,
         "the recorded win still reaches the day's anchor"
     );
-    assert_eq!(calls[0].0, 2, "on chess's own chain");
+    assert_eq!(
+        calls[0].0,
+        crate::games::rules::TEST_CHESS_CHAIN_ID,
+        "on chess's own chain, never the Registry's"
+    );
 }
 
 // --- withdrawals and payouts -----------------------------------------------------------------
@@ -1437,7 +1474,7 @@ async fn heartbeats_can_be_switched_off() {
     let tick = clock.clone();
     h.service = Arc::new(GamesService::new(
         GamesStore::open(Path::new(":memory:")).unwrap(),
-        Policy::standard(),
+        Policy::standard(crate::games::rules::TEST_CHESS_CHAIN_ID),
         config,
         chain,
         node,
@@ -1479,8 +1516,8 @@ async fn only_the_configured_games_are_anchored_and_chess_uses_its_own_chain() {
     let calls = both.anchorer.calls.lock().unwrap().clone();
     let chess_call = calls
         .iter()
-        .find(|(chain, _)| *chain == 2)
-        .expect("chess anchored on chain 2");
+        .find(|(chain, _)| *chain == crate::games::rules::TEST_CHESS_CHAIN_ID)
+        .expect("chess anchored on its own chain");
     let result = roots::ChessResult {
         address: roots::address_bytes(A).unwrap(),
         game_id_hash: roots::chess_game_id_hash(GAME_ID_1),
@@ -1519,7 +1556,7 @@ async fn a_finished_days_root_is_fixed_even_if_a_late_win_somehow_appears() {
                 verified: true,
                 client_digest: None,
             },
-            &Policy::standard(),
+            &Policy::standard(crate::games::rules::TEST_CHESS_CHAIN_ID),
             true,
             h.service.now(),
         )
@@ -1716,7 +1753,7 @@ async fn when_the_pool_cannot_be_read_a_win_is_not_recorded_and_can_be_sent_agai
 #[tokio::test]
 async fn a_game_that_does_not_pay_does_not_need_the_pool() {
     let h = harness(Options {
-        policy: Policy::standard(),
+        policy: Policy::standard(crate::games::rules::TEST_CHESS_CHAIN_ID),
         pool_balance: 0,
         ..Options::default()
     });
@@ -1778,7 +1815,7 @@ async fn a_payout_somehow_addressed_to_the_wallet_is_released_without_pausing_an
         client_digest: None,
     };
     // Chess paying, so the forged row really does carry a balance the payout can be made against.
-    let paying = Policy::standard().with_chess_paying();
+    let paying = Policy::standard(crate::games::rules::TEST_CHESS_CHAIN_ID).with_chess_paying();
     h.service
         .store()
         .record_win_unlimited(&input, &paying, true, h.service.now())
@@ -1842,13 +1879,13 @@ mod registry_service {
         }
     }
 
-    fn chain_three_calls(h: &Harness) -> Vec<[u8; 32]> {
+    fn registry_chain_calls(h: &Harness) -> Vec<[u8; 32]> {
         h.records_anchorer
             .calls
             .lock()
             .unwrap()
             .iter()
-            .filter(|(chain, _)| *chain == 3)
+            .filter(|(chain, _)| *chain == REGISTRY_CHAIN_ID)
             .map(|(_, root)| *root)
             .collect()
     }
@@ -2109,7 +2146,7 @@ mod registry_service {
 
         // Today is never closed early.
         h.records.run_daily().await.unwrap();
-        assert!(chain_three_calls(&h).is_empty());
+        assert!(registry_chain_calls(&h).is_empty());
         assert!(h.records.registry_day_view(DAY).is_err());
 
         h.next_day();
@@ -2123,7 +2160,7 @@ mod registry_service {
             vec!["snake", "tetris"],
             "the sandbox is not anchored"
         );
-        let calls = chain_three_calls(&h);
+        let calls = registry_chain_calls(&h);
         assert_eq!(calls.len(), 1);
         assert_eq!(
             hex::encode(calls[0]),
@@ -2131,18 +2168,18 @@ mod registry_service {
             "the anchored root is the one the day publishes"
         );
         assert_eq!(view.state, "anchored");
-        assert_eq!(view.chain_id, Some(3));
+        assert_eq!(view.chain_id, Some(REGISTRY_CHAIN_ID));
 
         // Straight away again: pending, so no second anchor. Then it lands, and the day is confirmed.
         h.records.run_daily().await.unwrap();
-        assert_eq!(chain_three_calls(&h).len(), 1);
-        h.chain.add_anchor(3, 1, calls[0], h.service.now());
+        assert_eq!(registry_chain_calls(&h).len(), 1);
+        h.chain.add_anchor(REGISTRY_CHAIN_ID, 1, calls[0], h.service.now());
         let report = h.records.run_daily().await.unwrap();
         assert!(report
             .confirmed
             .contains(&("registry".to_string(), DAY.to_string())));
         assert_eq!(h.records.registry_day_view(DAY).unwrap().state, "confirmed");
-        assert_eq!(chain_three_calls(&h).len(), 1);
+        assert_eq!(registry_chain_calls(&h).len(), 1);
     }
 
     #[tokio::test]
@@ -2155,22 +2192,22 @@ mod registry_service {
         h.next_day();
         h.records_anchorer.fail.store(true, Ordering::SeqCst);
         h.records.run_daily().await.unwrap();
-        assert_eq!(chain_three_calls(&h).len(), 1);
+        assert_eq!(registry_chain_calls(&h).len(), 1);
         let day = h.records.store().registry_day(DAY).unwrap().unwrap();
         assert!(day.last_error.is_some());
         // Too soon to retry; and when it is time, the root is found on the ledger and nothing is resubmitted.
         h.advance(60);
         h.records.run_daily().await.unwrap();
         assert_eq!(
-            chain_three_calls(&h).len(),
+            registry_chain_calls(&h).len(),
             1,
             "no retry before the interval"
         );
-        h.chain.add_anchor(3, 1, day.day_root, h.service.now());
+        h.chain.add_anchor(REGISTRY_CHAIN_ID, 1, day.day_root, h.service.now());
         h.advance(601);
         h.records.run_daily().await.unwrap();
         assert_eq!(h.records.registry_day_view(DAY).unwrap().state, "confirmed");
-        assert_eq!(chain_three_calls(&h).len(), 1);
+        assert_eq!(registry_chain_calls(&h).len(), 1);
     }
 
     #[tokio::test]
@@ -2210,7 +2247,7 @@ mod registry_service {
         h.next_day();
         h.records.run_daily().await.unwrap();
         assert!(
-            chain_three_calls(&h).is_empty(),
+            registry_chain_calls(&h).is_empty(),
             "nothing registered happened, so there is nothing to anchor"
         );
     }
@@ -2867,7 +2904,7 @@ mod http {
         .await;
         assert_eq!(status, 200, "{day}");
         assert_eq!(day["games"][0]["id"], "tetris");
-        assert_eq!(day["chain_id"], 3);
+        assert_eq!(day["chain_id"], REGISTRY_CHAIN_ID);
         let (status, proof) = json_of(
             call_service(
                 &app,
@@ -3743,7 +3780,7 @@ mod split {
     async fn a_peer_may_have_a_game_day_anchored_but_never_the_registry_or_the_l1() {
         let h = harness(Options::default());
         let root = [7u8; 32];
-        for chain in [0u32, 3, 9] {
+        for chain in [0u32, REGISTRY_CHAIN_ID, 9] {
             let error = h.records.anchor_for_peer(chain, root).await.unwrap_err();
             assert_eq!(error.code(), "forbidden", "chain {chain}");
             assert_eq!(error.status(), 403);
@@ -3766,8 +3803,8 @@ mod split {
         h.records.anchor_for_peer(1, [9u8; 32]).await.unwrap();
         assert_eq!(h.records_anchorer.calls.lock().unwrap().len(), 2);
         // On the ledger already (an earlier life of this service): answered from the ledger, not signed.
-        h.chain.add_anchor(2, 1, [5u8; 32], h.records.now());
-        let reply = h.records.anchor_for_peer(2, [5u8; 32]).await.unwrap();
+        h.chain.add_anchor(CHESS_CHAIN, 1, [5u8; 32], h.records.now());
+        let reply = h.records.anchor_for_peer(CHESS_CHAIN, [5u8; 32]).await.unwrap();
         assert_eq!(reply.state, "confirmed");
         assert_eq!(h.records_anchorer.calls.lock().unwrap().len(), 2, "nothing new was signed");
     }
@@ -3864,7 +3901,7 @@ mod split {
         let stale = internal(&body, SECRET, now - 120).to_request();
         assert_eq!(status(call_service(&app, stale).await).await.0, 401);
         let mut tampered = internal(&body, SECRET, now);
-        tampered = tampered.set_payload(json!({"chain_id": 2, "root": "ab".repeat(32)}).to_string());
+        tampered = tampered.set_payload(json!({"chain_id": CHESS_CHAIN, "root": "ab".repeat(32)}).to_string());
         assert_eq!(status(call_service(&app, tampered.to_request()).await).await.0, 401);
         assert!(h.records_anchorer.calls.lock().unwrap().is_empty());
 
@@ -3879,7 +3916,7 @@ mod split {
         assert_eq!(h.records_anchorer.calls.lock().unwrap().len(), 1);
 
         // Authenticated but out of scope, or malformed: a 403 or a 400, still nothing signed.
-        let scope = json!({"chain_id": 3, "root": "ab".repeat(32)});
+        let scope = json!({"chain_id": REGISTRY_CHAIN_ID, "root": "ab".repeat(32)});
         assert_eq!(status(call_service(&app, internal(&scope, SECRET, now).to_request()).await).await, (StatusCode::FORBIDDEN, "forbidden".into()));
         for bad in [json!({"chain_id": 1, "root": "zz"}), json!({"chain_id": 1}), json!({"chain_id": 1, "root": "ab".repeat(32), "extra": 1})] {
             assert_eq!(status(call_service(&app, internal(&bad, SECRET, now).to_request()).await).await.0, 400, "{bad}");
@@ -3975,7 +4012,7 @@ mod split {
         let root: [u8; 32] = h.records_anchorer.calls.lock().unwrap()[0].1;
         h.chain.add_anchor(1, 1, root, h.records.now());
         let mut restarted_config = RecordsConfig::new();
-        restarted_config.peer_anchor_chains = vec![1, 2];
+        restarted_config.peer_anchor_chains = vec![GRID_CHAIN, CHESS_CHAIN];
         let restarted = Arc::new(RecordsService::new(
             GamesStore::open(Path::new(":memory:")).unwrap(),
             RegistryCaps::standard(),
@@ -4178,7 +4215,7 @@ mod split {
             RegistryCaps::standard(),
             {
                 let mut config = RecordsConfig::new();
-                config.peer_anchor_chains = vec![1, 2];
+                config.peer_anchor_chains = vec![GRID_CHAIN, CHESS_CHAIN];
                 config.owner_address = Some(A.to_string());
                 config.registry_chain_id = registry_chain;
                 config
@@ -4590,9 +4627,9 @@ mod split {
         let records = {
             let clock = clock.clone();
             let mut config = RecordsConfig::new();
-            config.peer_anchor_chains = vec![1, 2];
+            config.peer_anchor_chains = vec![GRID_CHAIN, CHESS_CHAIN];
             config.owner_address = Some(A.to_string());
-            config.registry_chain_id = Some(3);
+            config.registry_chain_id = Some(REGISTRY_CHAIN_ID);
             Arc::new(RecordsService::new(
                 GamesStore::open(&path).unwrap(),
                 RegistryCaps::standard(),
@@ -4630,7 +4667,7 @@ mod split {
 
     // --- the registry's own daily anchor, under the same fail-closed rules ---------------------------
 
-    const REGISTRY_CHAIN: u32 = 3;
+    const REGISTRY_CHAIN: u32 = super::REGISTRY_CHAIN_ID;
 
     /// A registered game with one result on DAY, with the clock moved to the next day so DAY can be closed.
     fn registry_day_ready(records: &RecordsService, clock: &Arc<AtomicU64>) {
@@ -5323,7 +5360,7 @@ mod v1_api {
         let body: Value = read_body_json(response).await;
         assert_eq!(body["success"], json!(true));
         assert_eq!(body["schema_version"], json!(1));
-        assert_eq!(body["served_chain_ids"], json!([3]));
+        assert_eq!(body["served_chain_ids"], json!([REGISTRY_CHAIN_ID]));
         assert_eq!(body["request_id"], json!(id));
         assert!(body["as_of"].as_str().unwrap().ends_with('Z'));
         assert_eq!(body["service"]["accepting"], json!(true));
@@ -5376,13 +5413,13 @@ mod v1_api {
         let response = call_service(
             &app,
             TestRequest::get()
-                .uri("/api/records/v1/chains/3/status")
+                .uri(&format!("/api/records/v1/chains/{REGISTRY_CHAIN_ID}/status"))
                 .to_request(),
         )
         .await;
         assert_eq!(response.status(), StatusCode::OK);
         let body: Value = read_body_json(response).await;
-        assert_eq!(body["chain_id"], json!(3));
+        assert_eq!(body["chain_id"], json!(REGISTRY_CHAIN_ID));
         assert_eq!(body["window"]["days_total"], json!(0));
         assert_eq!(body["commitment"]["days_anchored"], json!(0));
         assert_eq!(
@@ -5447,7 +5484,7 @@ mod v1_api {
         let response = call_service(
             &app,
             TestRequest::get()
-                .uri("/api/records/v1/chains/3/days?limit=2")
+                .uri(&format!("/api/records/v1/chains/{REGISTRY_CHAIN_ID}/days?limit=2"))
                 .to_request(),
         )
         .await;
@@ -5462,7 +5499,7 @@ mod v1_api {
         let response = call_service(
             &app,
             TestRequest::get()
-                .uri("/api/records/v1/chains/3/days?limit=2&before=2026-11-14")
+                .uri(&format!("/api/records/v1/chains/{REGISTRY_CHAIN_ID}/days?limit=2&before=2026-11-14"))
                 .to_request(),
         )
         .await;
@@ -5473,7 +5510,7 @@ mod v1_api {
         assert_eq!(body["next_before"], Value::Null);
 
         for query in ["limit=0", "limit=101", "before=16-11-2026"] {
-            let uri = format!("/api/records/v1/chains/3/days?{query}");
+            let uri = format!("/api/records/v1/chains/{REGISTRY_CHAIN_ID}/days?{query}");
             let response = call_service(&app, TestRequest::get().uri(&uri).to_request()).await;
             assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
             let body: Value = read_body_json(response).await;
@@ -5495,7 +5532,7 @@ mod v1_api {
             .set_registry_anchor("2026-11-14", Some(&tx), "confirmed", h.records.now())
             .unwrap();
         let app = app!(h);
-        let uri = "/api/records/v1/chains/3/status";
+        let uri = &format!("/api/records/v1/chains/{REGISTRY_CHAIN_ID}/status");
         let response = call_service(&app, TestRequest::get().uri(uri).to_request()).await;
         let before: Value = read_body_json(response).await;
         let commitment = before["commitment"].clone();
@@ -5533,7 +5570,7 @@ mod v1_api {
         let response = call_service(
             &app,
             TestRequest::get()
-                .uri("/api/records/v1/chains/3/days/2026-11-15")
+                .uri(&format!("/api/records/v1/chains/{REGISTRY_CHAIN_ID}/days/2026-11-15"))
                 .to_request(),
         )
         .await;
@@ -5541,7 +5578,7 @@ mod v1_api {
         let body: Value = read_body_json(response).await;
         assert_eq!(body["date"], json!("2026-11-15"));
         assert_eq!(body["state"], json!("closed"));
-        assert_eq!(body["chain_id"], json!(3));
+        assert_eq!(body["chain_id"], json!(REGISTRY_CHAIN_ID));
         assert_eq!(body["apps"], json!([]));
         assert!(
             body["games"].is_null(),
@@ -5553,7 +5590,7 @@ mod v1_api {
         let response = call_service(
             &app,
             TestRequest::get()
-                .uri("/api/records/v1/chains/3/days/2026-11-16")
+                .uri(&format!("/api/records/v1/chains/{REGISTRY_CHAIN_ID}/days/2026-11-16"))
                 .to_request(),
         )
         .await;
@@ -5561,13 +5598,338 @@ mod v1_api {
         let response = call_service(
             &app,
             TestRequest::get()
-                .uri("/api/records/v1/chains/3/days/2026-11-15/apps/chess/proof")
+                .uri(&format!("/api/records/v1/chains/{REGISTRY_CHAIN_ID}/days/2026-11-15/apps/chess/proof"))
                 .to_request(),
         )
         .await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let body: Value = read_body_json(response).await;
         assert_eq!(body["error"]["code"], json!("not_found"));
+    }
+}
+
+// --- inspecting a persisted day, and refusing to start on the wrong chains ----------------------
+
+mod closed_day {
+    use super::*;
+    use crate::games::service::DayView;
+    use crate::games::store::DayRow;
+
+    const PREV: [u8; 32] = [0x44; 32];
+
+    /// A real Grid day: a win is recorded on DAY, the day passes, and it is closed through the service.
+    async fn closed_grid_day(h: &Harness) {
+        let midnight = date_start(DAY).unwrap();
+        h.chain.add_anchor(1, 4, PREV, midnight - 100);
+        assert_eq!(h.solve(A, 0).await.outcome, Some("rewarded"));
+        h.next_day();
+        h.service.close_and_anchor("grid", DAY).await.unwrap();
+    }
+
+    fn row(state: &str) -> DayRow {
+        DayRow {
+            day: DAY.into(),
+            game: "grid".into(),
+            prev_root: Some(vec![1; 32]),
+            prev_anchor_sequence: Some(7),
+            seed: Some(vec![2; 32]),
+            commitment: Some(vec![3; 32]),
+            results_root: Some(vec![4; 32]),
+            day_root: Some(vec![5; 32]),
+            state: state.into(),
+            ..DayRow::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_closed_day_is_shown_exactly_as_it_was_persisted_and_chained_to_the_earlier_anchor() {
+        let h = harness(Options::default());
+        closed_grid_day(&h).await;
+
+        let view = h.service.day_view("grid", DAY).unwrap();
+        let stored = h.service.store().day_row(DAY, "grid").unwrap().unwrap();
+        assert_eq!((view.day.as_str(), view.game.as_str(), view.chain_id), (DAY, "grid", 1));
+        assert_eq!(view.day_root, stored.day_root.as_ref().map(hex::encode));
+        assert_eq!(view.results_root, stored.results_root.as_ref().map(hex::encode));
+        assert_eq!(view.commitment, stored.commitment.as_ref().map(hex::encode));
+        assert_ne!(view.state, "open");
+        // The root really is the documented function of the persisted parts, not a stored guess.
+        let commitment: [u8; 32] = stored.commitment.clone().unwrap().try_into().unwrap();
+        let results_root: [u8; 32] = stored.results_root.clone().unwrap().try_into().unwrap();
+        assert_eq!(
+            view.day_root.as_deref(),
+            Some(hex::encode(roots::grid_day_root(DAY, &commitment, &results_root)).as_str())
+        );
+        // Previous root and sequence are the anchor that was on the ledger before the day began.
+        assert_eq!(view.prev_root.as_deref(), Some("44".repeat(32).as_str()));
+        assert_eq!(view.prev_anchor_seq, Some(4));
+    }
+
+    #[tokio::test]
+    async fn a_day_with_no_earlier_anchor_shows_the_zero_root_and_no_sequence() {
+        let h = harness(Options::default());
+        assert_eq!(h.solve(A, 0).await.outcome, Some("rewarded"));
+        h.next_day();
+        h.service.close_and_anchor("grid", DAY).await.unwrap();
+        let view = h.service.day_view("grid", DAY).unwrap();
+        assert_eq!(view.prev_root.as_deref(), Some("00".repeat(32).as_str()));
+        assert_eq!(view.prev_anchor_seq, None);
+    }
+
+    #[tokio::test]
+    async fn an_open_day_is_open_and_carries_no_root() {
+        let h = harness(Options::default());
+        // Reading today's puzzles is what opens the day.
+        h.service.grid_day(&h.service.today()).await.unwrap();
+        let view = h.service.day_view("grid", DAY).unwrap();
+        assert_eq!(view.state, "open");
+        assert_eq!((view.day_root, view.results_root), (None, None));
+        assert!(!view.anchor_failed);
+        assert!(view.commitment.is_some(), "the published puzzle commitment is persisted from the start");
+    }
+
+    #[tokio::test]
+    async fn an_unknown_day_or_game_is_not_found_a_bad_date_is_invalid_and_reading_writes_nothing() {
+        let h = harness(Options::default());
+        assert!(matches!(h.service.day_view("grid", "2026-01-01"), Err(GamesError::NotFound(_))));
+        assert!(matches!(h.service.day_view("poker", DAY), Err(GamesError::NotFound(_))));
+        assert!(matches!(h.service.day_view("grid", "not-a-date"), Err(GamesError::Invalid(_))));
+        assert!(matches!(h.service.day_view("grid", "2026-13-40"), Err(GamesError::Invalid(_))));
+        assert!(h.service.store().day_row("2026-01-01", "grid").unwrap().is_none(), "a read must not open a day");
+    }
+
+    #[test]
+    fn a_failed_anchor_is_visible_without_its_message_and_a_confirmed_day_is_not_failed() {
+        let mut failed = row("closing");
+        failed.last_error = Some("secret operator detail".into());
+        let view = DayView::from_row(1, failed).unwrap();
+        assert_eq!(view.state, "closed");
+        assert!(view.anchor_failed);
+        assert!(!serde_json::to_string(&view).unwrap().contains("secret"));
+
+        let mut confirmed = row("confirmed");
+        confirmed.last_error = Some("old".into());
+        confirmed.anchor_tx = Some("ab".repeat(32));
+        let view = DayView::from_row(1, confirmed).unwrap();
+        assert_eq!(view.state, "confirmed");
+        assert!(!view.anchor_failed);
+        assert_eq!(view.anchor_tx.as_deref(), Some("ab".repeat(32).as_str()));
+        assert_eq!(DayView::from_row(1, row("anchored")).unwrap().state, "anchored");
+    }
+
+    #[test]
+    fn a_damaged_row_is_an_internal_error_and_never_a_partial_answer() {
+        let internal = |row: DayRow| matches!(DayView::from_row(1, row), Err(GamesError::Internal(_)));
+        // A root of the wrong length, in each place one can occur.
+        for field in ["day_root", "results_root", "prev_root", "commitment"] {
+            let mut damaged = row("closing");
+            let short = Some(vec![9; 31]);
+            match field {
+                "day_root" => damaged.day_root = short,
+                "results_root" => damaged.results_root = short,
+                "prev_root" => damaged.prev_root = short,
+                _ => damaged.commitment = short,
+            }
+            assert!(internal(damaged), "{field} of 31 bytes must be refused");
+        }
+        // Closed but a root is missing.
+        let mut no_day_root = row("closing");
+        no_day_root.day_root = None;
+        assert!(internal(no_day_root));
+        let mut no_results_root = row("anchored");
+        no_results_root.results_root = None;
+        assert!(internal(no_results_root));
+        // Open but already carrying a root.
+        assert!(internal(row("open")));
+        // A closed Grid day with no commitment, and a state this code does not know.
+        let mut no_commitment = row("closing");
+        no_commitment.commitment = None;
+        assert!(internal(no_commitment));
+        assert!(internal(row("sealed")));
+        // The internal detail is for the log: the client-facing message hides it.
+        let response = crate::games::api::error_response(&GamesError::Internal("stored day root is malformed".into()));
+        assert_eq!(response.status().as_u16(), 500);
+    }
+
+    #[test]
+    fn a_chess_day_has_no_previous_anchor_fields_and_still_shows_its_roots() {
+        let mut chess = row("closing");
+        chess.game = "chess".into();
+        chess.prev_root = None;
+        chess.prev_anchor_sequence = None;
+        chess.commitment = None;
+        let view = DayView::from_row(3, chess).unwrap();
+        assert_eq!((view.chain_id, view.prev_root, view.prev_anchor_seq, view.commitment), (3, None, None, None));
+        assert!(view.day_root.is_some() && view.results_root.is_some());
+    }
+}
+
+mod chain_identity {
+    use super::*;
+
+    #[tokio::test]
+    async fn every_configured_chain_registered_lets_the_service_start() {
+        let h = harness(Options::default());
+        h.service.verify_game_chains().await.unwrap();
+        *h.chain.registered.lock().unwrap() = Some([1, 3].into_iter().collect());
+        h.service.verify_game_chains().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_chess_chain_the_ledger_does_not_know_stops_the_start_and_is_never_replaced() {
+        let h = harness(Options::default());
+        // The ledger today: UltraGrid #1 and the Registry #2, and chess is configured as #3 but is not there.
+        *h.chain.registered.lock().unwrap() = Some([1, 2].into_iter().collect());
+        let error = h.service.verify_game_chains().await.unwrap_err();
+        match error {
+            GamesError::Invalid(message) => {
+                assert!(message.contains("chess") && message.contains("#3"), "{message}");
+            }
+            other => panic!("expected a definite refusal, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_ledger_is_reported_as_unavailable_not_as_a_missing_chain() {
+        let h = harness(Options::default());
+        h.chain.down.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            h.service.verify_game_chains().await,
+            Err(GamesError::ChainUnavailable)
+        ));
+    }
+}
+
+mod closed_day_http {
+    use super::*;
+    use crate::games::api;
+    use actix_web::{
+        http::StatusCode,
+        test::{call_service, init_service, read_body_json, TestRequest},
+        web, App,
+    };
+    use serde_json::Value;
+
+    async fn get(h: &Harness, uri: &str) -> (StatusCode, Value, Option<String>) {
+        let app = init_service(
+            App::new()
+                .app_data(web::Data::from(h.service.clone()))
+                .configure(api::configure_routes),
+        )
+        .await;
+        let response = call_service(&app, TestRequest::get().uri(uri).to_request()).await;
+        let status = response.status();
+        let cache = response
+            .headers()
+            .get("Cache-Control")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        (status, read_body_json(response).await, cache)
+    }
+
+    #[actix_web::test]
+    async fn the_route_returns_a_closed_day_and_only_its_public_fields() {
+        let h = harness(Options::default());
+        let midnight = date_start(DAY).unwrap();
+        h.chain.add_anchor(1, 4, [0x44; 32], midnight - 100);
+        assert_eq!(h.solve(A, 0).await.outcome, Some("rewarded"));
+        h.next_day();
+        h.service.close_and_anchor("grid", DAY).await.unwrap();
+
+        let (status, body, cache) = get(&h, &format!("/api/games/days/grid/{DAY}")).await;
+        assert_eq!(status, 200);
+        assert_eq!(cache.as_deref(), Some("no-store"));
+        assert_eq!(body["success"], true);
+        assert_eq!(body["day"], DAY);
+        assert_eq!(body["game"], "grid");
+        assert_eq!(body["chain_id"], 1);
+        assert_eq!(body["prev_root"], "44".repeat(32));
+        assert_eq!(body["prev_anchor_seq"], 4);
+        let stored = h.service.store().day_row(DAY, "grid").unwrap().unwrap();
+        assert_eq!(body["day_root"], hex::encode(stored.day_root.unwrap()));
+        assert_eq!(body["results_root"], hex::encode(stored.results_root.unwrap()));
+        assert_eq!(body["commitment"], hex::encode(stored.commitment.unwrap()));
+        // Nothing beyond the day itself: no seed, no error text, no operator data.
+        let mut keys: Vec<&str> = body.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "anchor_failed", "anchor_tx", "chain_id", "commitment", "day", "day_root", "game",
+                "prev_anchor_seq", "prev_root", "results_root", "state", "success"
+            ]
+        );
+    }
+
+    #[actix_web::test]
+    async fn an_unknown_day_is_a_404_a_bad_date_a_400_and_neither_writes_a_day() {
+        let h = harness(Options::default());
+        let (status, body, _) = get(&h, "/api/games/days/grid/2026-01-01").await;
+        assert_eq!((status.as_u16(), body["code"].as_str()), (404, Some("not_found")));
+        let (status, body, _) = get(&h, "/api/games/days/poker/2026-11-16").await;
+        assert_eq!((status.as_u16(), body["code"].as_str()), (404, Some("not_found")));
+        let (status, body, _) = get(&h, "/api/games/days/grid/yesterday").await;
+        assert_eq!((status.as_u16(), body["code"].as_str()), (400, Some("invalid_request")));
+        assert!(h.service.store().day_row("2026-01-01", "grid").unwrap().is_none());
+    }
+
+    #[actix_web::test]
+    async fn an_open_day_is_reported_open_over_http() {
+        let h = harness(Options::default());
+        h.service.grid_day(&h.service.today()).await.unwrap();
+        let (status, body, _) = get(&h, &format!("/api/games/days/grid/{DAY}")).await;
+        assert_eq!(status, 200);
+        assert_eq!(body["state"], "open");
+        assert!(body["day_root"].is_null() && body["results_root"].is_null());
+    }
+}
+
+mod chain_collisions {
+    use super::*;
+
+    #[test]
+    fn the_fixture_chains_are_three_different_chains() {
+        let chains = [GRID_CHAIN, REGISTRY_CHAIN_ID, CHESS_CHAIN];
+        assert_eq!(chains.iter().collect::<HashSet<_>>().len(), 3);
+        assert_eq!(chains, [1, 2, 3], "the arrangement these fixtures stand for: Grid, Registry, Chess");
+    }
+
+    #[tokio::test]
+    async fn a_peer_can_have_grid_and_chess_anchored_but_never_the_registry() {
+        let h = harness(Options::default());
+        for chain in [GRID_CHAIN, CHESS_CHAIN] {
+            h.records.anchor_for_peer(chain, [0x11; 32]).await.unwrap_or_else(|e| panic!("chain {chain}: {e}"));
+        }
+        let error = h.records.anchor_for_peer(REGISTRY_CHAIN_ID, [0x22; 32]).await.unwrap_err();
+        assert_eq!(error.code(), "forbidden");
+        assert!(
+            h.records_anchorer.calls.lock().unwrap().iter().all(|(chain, _)| *chain != REGISTRY_CHAIN_ID),
+            "nothing was signed for the Registry's chain on a peer's behalf"
+        );
+    }
+
+    #[tokio::test]
+    async fn even_a_peer_list_that_wrongly_names_the_registry_cannot_reach_it() {
+        // A configuration slip (the Registry id added to the peer list) must not become a path to
+        // anchor the Registry: the service checks the registry id itself, whatever the list says.
+        let mut config = RecordsConfig::new();
+        config.peer_anchor_chains = vec![GRID_CHAIN, REGISTRY_CHAIN_ID, CHESS_CHAIN];
+        config.registry_chain_id = Some(REGISTRY_CHAIN_ID);
+        config.owner_address = Some(A.to_string());
+        let chain = Arc::new(FakeChain::default());
+        let anchorer = Arc::new(FakeAnchorer::default());
+        let records = RecordsService::new(
+            GamesStore::open(Path::new(":memory:")).unwrap(),
+            RegistryCaps::standard(),
+            config,
+            chain,
+            Some(anchorer.clone()),
+            None,
+            Arc::new(|| date_start(DAY).unwrap() + 3_600),
+        );
+        let error = records.anchor_for_peer(REGISTRY_CHAIN_ID, [0x33; 32]).await.unwrap_err();
+        assert_eq!(error.code(), "forbidden");
+        assert!(anchorer.calls.lock().unwrap().is_empty());
     }
 }
 
@@ -6915,5 +7277,441 @@ mod reward_pools {
         h.service.pool_check_solvency().await.unwrap();
         h.service.store().pools_set_frozen(false, None).unwrap();
         assert!(h.service.reserve_reward(&game.game_id, "after", &player(2), &win).is_ok());
+    }
+
+    // --- paying from a pool: the worker against the fake node's failure modes ---------------------
+
+    async fn queued_reward(h: &Harness, chain: u32, funds: u64) -> (CatalogGame, crate::games::pools::Credit, crate::games::pool_payouts::PoolPayout) {
+        let (_, _, game) = ready(h, chain, funds, 100).await;
+        let credit = h.service.reserve_reward_for_payout(&game.game_id, "match-1", &player(1), &verdict(Outcome::Win, ADAPTER)).unwrap();
+        let payout = h.service.store().pool_payouts_for(&game.game_id).unwrap().remove(0);
+        (game, credit, payout)
+    }
+
+    fn confirm_on_node(h: &Harness, payout: &crate::games::pool_payouts::PoolPayout) {
+        let hash = payout.tx_hash.clone().expect("signed");
+        h.node.statuses.lock().unwrap().insert(hash, "confirmed".into());
+    }
+
+    #[tokio::test]
+    async fn a_payout_is_stored_before_it_is_sent_and_settles_only_when_the_ledger_confirms_it() {
+        let h = harness(Options::default());
+        let (game, credit, payout) = queued_reward(&h, 7, 1_000).await;
+        assert_eq!(payout.state, "queued");
+        assert_eq!((h.service.pool(&game.game_id).unwrap().reserved, h.service.pool(&game.game_id).unwrap().fees_reserved), (100, 1));
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let sent = h.service.store().pool_payout(&payout.payout_id).unwrap().unwrap();
+        assert_eq!(sent.state, "submitted");
+        assert_eq!(h.node.submissions.lock().unwrap().len(), 1);
+        assert_eq!(h.node.submissions.lock().unwrap()[0], sent.envelope.clone().unwrap(), "what was sent is what was stored");
+        // Pending changes nothing in the books.
+        let before = h.service.pool(&game.game_id).unwrap();
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        assert_eq!(h.service.pool(&game.game_id).unwrap(), before);
+        // Confirmed: reserved becomes paid, the fee is spent, the credit is paid, and nothing more happens.
+        confirm_on_node(&h, &sent);
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let pool = h.service.pool(&game.game_id).unwrap();
+        assert_eq!((pool.reserved, pool.paid, pool.fees_reserved, pool.fees_paid, pool.available), (0, 100, 0, 1, 899));
+        assert_eq!(h.service.store().pool_credit(&credit.credit_id).unwrap().unwrap().state, "paid");
+        assert!(!h.service.process_pool_payout_once().await.unwrap(), "nothing is left to do");
+        assert_eq!(h.node.submissions.lock().unwrap().len(), 1, "never sent again");
+        assert!(h.service.store().pool_payout_confirm(&payout.payout_id, h.service.now()).is_err(), "a payout settles once");
+        assert!(h.service.store().pool_audit().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_node_gets_the_same_signed_bytes_again_never_a_second_signature() {
+        let h = harness(Options::default());
+        let (game, _, payout) = queued_reward(&h, 7, 1_000).await;
+        *h.node.submit_mode.lock().unwrap() = SubmitMode::Unavailable;
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let signed = h.service.store().pool_payout(&payout.payout_id).unwrap().unwrap();
+        assert_eq!((signed.state.as_str(), signed.attempts), ("signed", 1));
+        let bytes = signed.envelope.clone().unwrap();
+        // Still down, then up: every try is those bytes.
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        *h.node.submit_mode.lock().unwrap() = SubmitMode::Accept;
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let after = h.service.store().pool_payout(&payout.payout_id).unwrap().unwrap();
+        assert_eq!((after.state.as_str(), after.envelope.as_deref(), after.nonce), ("submitted", Some(bytes.as_str()), signed.nonce));
+        assert!(h.node.submissions.lock().unwrap().iter().all(|sent| *sent == bytes), "{} sends, one set of bytes", h.node.submissions.lock().unwrap().len());
+        assert_eq!(h.service.pool(&game.game_id).unwrap().paid, 0, "nothing is paid until it is confirmed");
+    }
+
+    #[tokio::test]
+    async fn a_node_that_rejects_a_signed_payout_freezes_the_pools_and_only_the_pools() {
+        let h = harness(Options::default());
+        let (game, _, payout) = queued_reward(&h, 7, 1_000).await;
+        *h.node.submit_mode.lock().unwrap() = SubmitMode::Reject;
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        assert!(h.service.store().pools_frozen().unwrap().is_some());
+        assert!(h.service.store().state().unwrap().paying, "the older Grid and Chess payouts are not paused by a pool problem");
+        let signed = h.service.store().pool_payout(&payout.payout_id).unwrap().unwrap();
+        assert_eq!(signed.state, "signed", "kept for an operator, never silently re-signed");
+        // Frozen: the worker idles and no new reservation is promised.
+        assert!(!h.service.process_pool_payout_once().await.unwrap());
+        assert!(matches!(h.service.reserve_reward_for_payout(&game.game_id, "m2", &player(2), &verdict(Outcome::Win, ADAPTER)), Err(GamesError::PayoutsPaused)));
+        // An operator clears it; the same bytes go out again.
+        h.service.store().pools_set_frozen(false, None).unwrap();
+        *h.node.submit_mode.lock().unwrap() = SubmitMode::Accept;
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let sent = h.service.store().pool_payout(&payout.payout_id).unwrap().unwrap();
+        assert_eq!((sent.state.as_str(), sent.envelope), ("submitted", signed.envelope));
+    }
+
+    #[tokio::test]
+    async fn a_node_answering_about_a_different_transaction_freezes_the_pools() {
+        let h = harness(Options::default());
+        let (_, _, _) = queued_reward(&h, 7, 1_000).await;
+        h.node.wrong_hash.store(true, Ordering::SeqCst);
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        assert!(h.service.store().pools_frozen().unwrap().unwrap().contains("different hash"));
+    }
+
+    #[tokio::test]
+    async fn a_wallet_that_holds_too_little_freezes_the_pools_before_anything_is_signed() {
+        // The wallet holds 50 against a pool funded with 1,000: caught at the start of the cycle, before any work.
+        let h = harness(Options { pool_balance: 50, ..Options::default() });
+        let (_, _, payout) = queued_reward(&h, 7, 1_000).await;
+        assert!(!h.service.process_pool_payout_once().await.unwrap(), "the cycle stops at the solvency check");
+        let after = h.service.store().pool_payout(&payout.payout_id).unwrap().unwrap();
+        assert_eq!((after.state.as_str(), after.envelope.is_none()), ("queued", true), "nothing was signed or sent");
+        assert!(h.service.store().pools_frozen().unwrap().unwrap().contains("is owed"));
+        assert!(h.node.submissions.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_reward_that_no_longer_matches_its_policy_is_never_signed() {
+        let h = harness(Options::default());
+        let (game, _, payout) = queued_reward(&h, 7, 1_000).await;
+        h.service
+            .store()
+            .lock()
+            .unwrap()
+            .execute("UPDATE game_reward_policies SET policy_hash = zeroblob(32) WHERE game_id = ?1", [&game.game_id])
+            .unwrap();
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        assert!(h.service.store().pools_frozen().unwrap().unwrap().contains("not backed"));
+        assert!(h.service.store().pool_payout(&payout.payout_id).unwrap().unwrap().envelope.is_none());
+        assert!(h.node.submissions.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_reward_that_can_never_be_paid_gives_its_reservation_and_fee_back() {
+        let h = harness(Options::default());
+        let (game, credit, payout) = queued_reward(&h, 7, 1_000).await;
+        // The winner is the payout wallet itself (the service refuses that at intake; this is a damaged row).
+        h.service.store().lock().unwrap().execute("UPDATE game_pool_payouts SET to_address = ?1", [&h.payout_address]).unwrap();
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let pool = h.service.pool(&game.game_id).unwrap();
+        assert_eq!((pool.reserved, pool.fees_reserved, pool.paid, pool.available), (0, 0, 0, 1_000), "the pool is whole again");
+        assert_eq!(h.service.store().pool_credit(&credit.credit_id).unwrap().unwrap().state, "released");
+        assert_eq!(h.service.store().pool_payout(&payout.payout_id).unwrap().unwrap().state, "failed");
+        // And a payout that has used up its attempts before ever being signed does the same.
+        let credit2 = h.service.reserve_reward_for_payout(&game.game_id, "match-2", &player(2), &verdict(Outcome::Win, ADAPTER)).unwrap();
+        let second = h.service.store().pool_payouts_for(&game.game_id).unwrap().into_iter().find(|p| p.ref_id == credit2.credit_id).unwrap();
+        for _ in 0..crate::games::service::ServiceConfig::new(String::new()).max_submission_attempts {
+            h.service.store().pool_payout_record_attempt(&second.payout_id, Some("tried"), h.service.now()).unwrap();
+        }
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        assert_eq!(h.service.store().pool_payout(&second.payout_id).unwrap().unwrap().state, "failed");
+        assert_eq!(h.service.pool(&game.game_id).unwrap().available, 1_000);
+        assert!(h.service.store().pool_audit().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_credit_has_one_payout_however_often_the_queue_is_swept() {
+        let h = harness(Options::default());
+        let (game, _, _) = queued_reward(&h, 7, 1_000).await;
+        // The crash case: a credit with no payout is found and queued, once.
+        h.service.store().pool_reserve(&game.game_id, "orphan", &player(3), &"ee".repeat(16), &verdict(Outcome::Win, ADAPTER), h.service.now()).unwrap();
+        for _ in 0..5 {
+            h.service.store().pool_enqueue_pending(h.service.now()).unwrap();
+        }
+        assert_eq!(h.service.store().pool_payouts_for(&game.game_id).unwrap().len(), 2, "one for each credit, never more");
+        // Replays of a result already credited do not queue another.
+        for _ in 0..3 {
+            h.service.reserve_reward_for_payout(&game.game_id, "match-1", &player(1), &verdict(Outcome::Win, ADAPTER)).unwrap();
+        }
+        assert_eq!(h.service.store().pool_payouts_for(&game.game_id).unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_pool_that_cannot_hold_the_network_fee_creates_neither_credit_nor_payout() {
+        let h = harness(Options::default());
+        // Exactly one reward's worth, with nothing left over for the fee.
+        let (keys, owner, game) = game_on(&h, 7).await;
+        fund(&h, &keys, &owner, &game, 100, 1).await.unwrap();
+        let row = propose(&h, &keys, &game, terms(100)).await.unwrap();
+        h.service.platform_decide_policy(&game.game_id, row.version, true, "ops", "").unwrap();
+        let refused = h.service.reserve_reward_for_payout(&game.game_id, "m1", &player(1), &verdict(Outcome::Win, ADAPTER));
+        assert!(matches!(refused, Err(GamesError::Forbidden(_))), "{refused:?}");
+        assert_eq!(h.service.store().pool_payouts_for(&game.game_id).unwrap().len(), 0);
+        let pool = h.service.pool(&game.game_id).unwrap();
+        assert_eq!((pool.reserved, pool.fees_reserved, pool.available), (0, 0, 100), "the whole commitment rolled back");
+        assert!(h.service.store().pool_audit().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_owner_withdrawal_pays_its_own_fee_and_goes_to_the_owner_the_ledger_names_at_signing() {
+        let h = harness(Options::default());
+        let (keys, owner, game) = ready(&h, 7, 1_000, 100).await;
+        let p = proof(&h, &keys, "pool-withdraw", 7, &game.game_id, "500");
+        h.service.pool_withdraw(&game.game_id, 500, p).await.unwrap();
+        // The chain changes hands before the transfer is signed.
+        let (heir, heir_address) = wallet();
+        let _ = heir;
+        h.chain.owners.lock().unwrap().insert(7, heir_address.clone());
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let payout = h.service.store().pool_payouts_for(&game.game_id).unwrap().remove(0);
+        assert_eq!((payout.kind.as_str(), payout.to_address.as_str()), ("withdrawal", heir_address.as_str()));
+        assert_ne!(payout.to_address, owner);
+        assert_eq!((payout.fee_units, payout.sent_units), (Some(5), Some(495)), "the fee comes out of the 500");
+        confirm_on_node(&h, &payout);
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let pool = h.service.pool(&game.game_id).unwrap();
+        assert_eq!((pool.withdrawn, pool.available, pool.paid), (500, 500, 0), "the pool paid 500 out and keeps its other 500");
+        assert!(h.service.store().pool_audit().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_withdrawal_too_small_to_cover_its_own_fee_stops_for_an_operator() {
+        let h = harness(Options::default());
+        let (keys, _, game) = ready(&h, 7, 1_000, 100).await;
+        let p = proof(&h, &keys, "pool-withdraw", 7, &game.game_id, "1");
+        h.service.pool_withdraw(&game.game_id, 1, p).await.unwrap();
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        assert!(h.service.store().pools_frozen().unwrap().unwrap().contains("too small"));
+        assert!(h.node.submissions.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn two_games_paying_at_once_never_touch_each_others_books() {
+        let h = harness(Options::default());
+        let (_, _, a) = ready(&h, 7, 1_000, 100).await;
+        let (_, _, b) = ready(&h, 8, 500, 100).await;
+        h.service.reserve_reward_for_payout(&a.game_id, "a1", &player(1), &verdict(Outcome::Win, ADAPTER)).unwrap();
+        h.service.reserve_reward_for_payout(&b.game_id, "b1", &player(2), &verdict(Outcome::Win, ADAPTER)).unwrap();
+        for _ in 0..5 {
+            h.service.process_pool_payout_once().await.unwrap();
+            for payout in h.service.store().pool_payouts_for(&a.game_id).unwrap().into_iter().chain(h.service.store().pool_payouts_for(&b.game_id).unwrap()) {
+                if payout.state == "submitted" {
+                    confirm_on_node(&h, &payout);
+                }
+            }
+        }
+        let (pa, pb) = (h.service.pool(&a.game_id).unwrap(), h.service.pool(&b.game_id).unwrap());
+        assert_eq!((pa.paid, pa.fees_paid, pa.available), (100, 1, 899));
+        assert_eq!((pb.paid, pb.fees_paid, pb.available), (100, 1, 399));
+        assert!(h.service.store().pool_audit().unwrap().is_empty());
+    }
+
+    // --- review fixes: settlement, replay, wrong state, shared-wallet solvency ----------------------
+
+    #[tokio::test]
+    async fn a_credit_with_a_payout_cannot_be_settled_or_released_directly() {
+        let h = harness(Options::default());
+        let (game, credit, payout) = queued_reward(&h, 7, 1_000).await;
+        let snapshot = |h: &Harness| {
+            (
+                h.service.pool(&game.game_id).unwrap(),
+                h.service.store().pool_credit(&credit.credit_id).unwrap().unwrap().state,
+                h.service.store().pool_payout(&payout.payout_id).unwrap().unwrap(),
+            )
+        };
+        // Queued, then signed and submitted: in both, neither outcome is allowed, and nothing moves.
+        for stage in 0..2 {
+            let before = snapshot(&h);
+            assert!(matches!(h.service.settle_reward(&credit.credit_id, true), Err(GamesError::Invalid(_))), "paid, stage {stage}");
+            assert!(matches!(h.service.settle_reward(&credit.credit_id, false), Err(GamesError::Invalid(_))), "released, stage {stage}");
+            assert!(h.service.store().pool_settle(&credit.credit_id, true, h.service.now()).is_err());
+            assert!(h.service.store().pool_settle(&credit.credit_id, false, h.service.now()).is_err());
+            assert_eq!(snapshot(&h), before, "credit, pool and payout are exactly as they were (stage {stage})");
+            if stage == 0 {
+                assert!(h.service.process_pool_payout_once().await.unwrap());
+                assert_eq!(h.service.store().pool_payout(&payout.payout_id).unwrap().unwrap().state, "submitted");
+            }
+        }
+        // The worker's own settlement still works, once the node confirms.
+        let sent = h.service.store().pool_payout(&payout.payout_id).unwrap().unwrap();
+        confirm_on_node(&h, &sent);
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let (pool, state, payout_after) = snapshot(&h);
+        assert_eq!((state.as_str(), payout_after.state.as_str(), pool.paid, pool.reserved), ("paid", "confirmed", 100, 0));
+        assert!(matches!(h.service.settle_reward(&credit.credit_id, false), Err(GamesError::Invalid(_))), "and a paid credit stays paid");
+    }
+
+    #[tokio::test]
+    async fn a_credit_without_a_payout_can_still_be_settled_by_the_accounting_api() {
+        // The direct API remains for credits that no payout covers (the Stage 4 accounting tests rely on it).
+        let h = harness(Options::default());
+        let (_, _, game) = ready(&h, 7, 1_000, 100).await;
+        let credit = h.service.reserve_reward(&game.game_id, "plain", &player(1), &verdict(Outcome::Win, ADAPTER)).unwrap();
+        assert!(h.service.settle_reward(&credit.credit_id, true).is_ok());
+    }
+
+    #[tokio::test]
+    async fn the_replay_of_a_released_credit_is_an_explicit_refusal_not_a_success() {
+        let h = harness(Options::default());
+        let (game, credit, _) = queued_reward(&h, 7, 1_000).await;
+        h.service.store().lock().unwrap().execute("UPDATE game_pool_payouts SET to_address = ?1", [&h.payout_address]).unwrap();
+        assert!(h.service.process_pool_payout_once().await.unwrap()); // released
+        assert_eq!(h.service.store().pool_credit(&credit.credit_id).unwrap().unwrap().state, "released");
+        let before = h.service.pool(&game.game_id).unwrap();
+        let replay = h.service.reserve_reward_for_payout(&game.game_id, "match-1", &player(1), &verdict(Outcome::Win, ADAPTER));
+        assert!(matches!(replay, Err(GamesError::Forbidden(_))), "{replay:?}");
+        assert!(matches!(h.service.reserve_reward(&game.game_id, "match-1", &player(1), &verdict(Outcome::Win, ADAPTER)), Err(GamesError::Forbidden(_))));
+        assert_eq!(h.service.pool(&game.game_id).unwrap(), before, "and nothing was reserved by asking");
+        // A paid credit's replay is still the idempotent success it was.
+        let (game2, credit2, payout2) = queued_reward(&h, 8, 1_000).await;
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        confirm_on_node(&h, &h.service.store().pool_payout(&payout2.payout_id).unwrap().unwrap());
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let again = h.service.reserve_reward_for_payout(&game2.game_id, "match-1", &player(1), &verdict(Outcome::Win, ADAPTER)).unwrap();
+        assert_eq!((again.credit_id, again.state), (credit2.credit_id, "paid".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_payout_can_only_be_marked_submitted_from_a_signed_state() {
+        let h = harness(Options::default());
+        let (_, _, payout) = queued_reward(&h, 7, 1_000).await;
+        let now = h.service.now();
+        assert!(h.service.store().pool_payout_mark_submitted(&payout.payout_id, now).is_err(), "queued: never signed");
+        assert!(h.service.store().pool_payout_mark_submitted(&"00".repeat(16), now).is_err(), "no such payout");
+        assert!(h.service.process_pool_payout_once().await.unwrap()); // signed and submitted by the worker
+        assert!(h.service.store().pool_payout_mark_submitted(&payout.payout_id, now).is_ok(), "already submitted: the same fact again");
+        confirm_on_node(&h, &h.service.store().pool_payout(&payout.payout_id).unwrap().unwrap());
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        assert!(h.service.store().pool_payout_mark_submitted(&payout.payout_id, now).is_err(), "confirmed: finished");
+        assert_eq!(h.service.store().pool_payout(&payout.payout_id).unwrap().unwrap().state, "confirmed", "and the failed call changed nothing");
+    }
+
+    #[tokio::test]
+    async fn the_older_grid_path_cannot_promise_funds_the_pools_are_owed() {
+        // With nothing owed to a pool, this Grid win is rewarded...
+        let free = harness(Options::default());
+        assert_eq!(free.solve(A, 0).await.outcome, Some("rewarded"));
+        // ...with the whole wallet owed to a game's pool, the same win is recorded but not promised.
+        let h = harness(Options { pool_balance: 1_000, ..Options::default() });
+        let _ = ready(&h, 7, 1_000, 100).await;
+        assert_eq!(h.service.store().pool_unspent_total().unwrap(), 1_000);
+        assert_eq!(h.solve(A, 0).await.outcome, Some("recorded"), "the pool's money is not the older path's to promise");
+    }
+
+    #[tokio::test]
+    async fn the_older_path_will_not_sign_a_payout_out_of_what_the_pools_are_owed() {
+        let h = harness(Options::default()); // the wallet holds 100,000
+        // A chess win (100 units) earns a withdrawable balance on the older path.
+        h.service.submit_chess_result(h.chess(A, GAME_ID_1), None).await.unwrap();
+        h.service.withdraw(A).unwrap();
+        // A pool is then funded with nearly the whole wallet: what is left for the older path is 50.
+        let _ = ready(&h, 7, 99_950, 100).await;
+        h.service.process_payout_once().await.unwrap();
+        assert!(h.node.submissions.lock().unwrap().is_empty(), "nothing was signed out of the pool's money");
+        assert!(!h.service.store().state().unwrap().paying, "the older path pauses itself, as it always has when the wallet is short");
+        // Topped up, it pays.
+        h.node.balance.store(200_000, Ordering::SeqCst);
+        h.service.store().set_state(None, Some(true), None, h.service.now()).unwrap();
+        h.service.process_payout_once().await.unwrap();
+        assert_eq!(h.node.submissions.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_queued_withdrawal_and_a_fee_in_flight_are_still_owed_until_they_leave_the_wallet() {
+        let h = harness(Options::default());
+        let (keys, _, game) = ready(&h, 7, 1_000, 100).await;
+        assert_eq!(h.service.store().pool_unspent_total().unwrap(), 1_000);
+        let credit = h.service.reserve_reward_for_payout(&game.game_id, "r1", &player(1), &verdict(Outcome::Win, ADAPTER)).unwrap();
+        let p = proof(&h, &keys, "pool-withdraw", 7, &game.game_id, "400");
+        h.service.pool_withdraw(&game.game_id, 400, p).await.unwrap();
+        assert_eq!(h.service.store().pool_unspent_total().unwrap(), 1_000, "a reserved reward, its fee and a queued withdrawal have not left the wallet");
+        // Reward first (oldest): sent, then confirmed.
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        assert_eq!(h.service.store().pool_in_flight_total().unwrap(), 101, "100 to the winner and 1 to the node may be out already");
+        assert_eq!(h.service.store().pool_unspent_total().unwrap(), 1_000, "still owed until the ledger says it left");
+        confirm_on_node(&h, &h.service.store().pool_payouts_for(&game.game_id).unwrap().into_iter().find(|p| p.ref_id == credit.credit_id).unwrap());
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        assert_eq!(h.service.store().pool_unspent_total().unwrap(), 899, "the reward and its fee have left");
+        // Then the withdrawal.
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let withdrawal = h.service.store().pool_payouts_for(&game.game_id).unwrap().into_iter().find(|p| p.kind == "withdrawal").unwrap();
+        assert_eq!(h.service.store().pool_unspent_total().unwrap(), 899);
+        confirm_on_node(&h, &withdrawal);
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        assert_eq!((h.service.store().pool_unspent_total().unwrap(), h.service.store().pool_in_flight_total().unwrap()), (499, 0));
+    }
+
+    #[tokio::test]
+    async fn a_shortfall_across_games_freezes_every_pool_and_nothing_is_signed() {
+        // Game A is owed 600 and game B 400, but the wallet holds 900.
+        let h = harness(Options { pool_balance: 900, ..Options::default() });
+        let (_, _, a) = ready(&h, 7, 600, 100).await;
+        let (_, _, b) = ready(&h, 8, 400, 100).await;
+        h.service.reserve_reward_for_payout(&a.game_id, "a1", &player(1), &verdict(Outcome::Win, ADAPTER)).unwrap();
+        h.service.reserve_reward_for_payout(&b.game_id, "b1", &player(2), &verdict(Outcome::Win, ADAPTER)).unwrap();
+        assert!(!h.service.process_pool_payout_once().await.unwrap());
+        assert!(h.service.store().pools_frozen().unwrap().is_some(), "both games are held, because the wallet cannot cover both");
+        assert!(h.node.submissions.lock().unwrap().is_empty());
+        // Covered again and cleared, both are paid.
+        h.node.balance.store(2_300, Ordering::SeqCst);
+        h.service.store().pools_set_frozen(false, None).unwrap();
+        for _ in 0..5 {
+            h.service.process_pool_payout_once().await.unwrap();
+            for payout in h.service.store().pool_payouts_for(&a.game_id).unwrap().into_iter().chain(h.service.store().pool_payouts_for(&b.game_id).unwrap()) {
+                if payout.state == "submitted" {
+                    confirm_on_node(&h, &payout);
+                }
+            }
+        }
+        assert_eq!((h.service.pool(&a.game_id).unwrap().paid, h.service.pool(&b.game_id).unwrap().paid), (100, 100));
+    }
+
+    #[tokio::test]
+    async fn a_payout_the_node_already_confirmed_does_not_look_like_a_shortfall_before_it_is_settled() {
+        // The wallet holds the pool's 1,000, the 1,000 reserve and 50 more.
+        let h = harness(Options { pool_balance: 2_050, ..Options::default() });
+        let (_, _, payout) = queued_reward(&h, 7, 1_000).await;
+        assert!(h.service.process_pool_payout_once().await.unwrap()); // signed and sent
+        // The block lands: the wallet drops by the 100 and the fee of 1 before this service has looked.
+        h.node.balance.store(1_949, Ordering::SeqCst);
+        confirm_on_node(&h, &h.service.store().pool_payout(&payout.payout_id).unwrap().unwrap());
+        assert!(h.service.process_pool_payout_once().await.unwrap(), "1,949 plus 101 in flight covers the 1,000 still on the books");
+        assert!(h.service.store().pools_frozen().unwrap().is_none(), "no false alarm");
+        assert_eq!(h.service.store().pool_payout(&payout.payout_id).unwrap().unwrap().state, "confirmed");
+        h.service.pool_check_solvency().await.expect("1,949 held against 899 still owed");
+    }
+
+    #[tokio::test]
+    async fn money_in_flight_is_what_keeps_a_landed_but_unsettled_payout_from_looking_like_a_shortfall() {
+        let h = harness(Options { pool_balance: 2_050, ..Options::default() });
+        let (game, _, payout) = queued_reward(&h, 7, 1_000).await;
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let sent = h.service.store().pool_payout(&payout.payout_id).unwrap().unwrap();
+        assert_eq!((sent.state.as_str(), sent.sent_units, sent.fee_units), ("submitted", Some(100), Some(1)));
+        // The node includes it before this service looks: the wallet has already dropped by 100 + 1 and the pool's
+        // 1,000 is still on the books, because nothing has settled it.
+        confirm_on_node(&h, &sent);
+        h.node.balance.store(950, Ordering::SeqCst);
+        let store = h.service.store();
+        let (balance, in_flight, owed) = (h.service.payout_balance().await.unwrap(), store.pool_in_flight_total().unwrap(), store.pool_unspent_total().unwrap());
+        assert_eq!((balance, in_flight, owed, store.legacy_owed_total().unwrap()), (950, 101, 1_000, 0));
+        // 1. Without the in-flight amount the wallet is short; 2. the in-flight amount covers the gap exactly (50 short, 101 in flight).
+        assert!(balance < owed, "excluding in-flight, 950 < 1,000 would freeze every pool");
+        assert!(balance + in_flight >= owed && owed - balance == 50);
+        // 3. With it included, the real check passes and freezes nothing.
+        h.service.pool_check_solvency().await.expect("950 + 101 covers 1,000");
+        assert!(store.pools_frozen().unwrap().is_none());
+        // The boundary is exact: 899 + 101 = 1,000 passes, 898 + 101 = 999 does not and names the real balance.
+        h.node.balance.store(899, Ordering::SeqCst);
+        h.service.pool_check_solvency().await.expect("899 + 101 is exactly 1,000");
+        h.node.balance.store(898, Ordering::SeqCst);
+        assert!(matches!(h.service.pool_check_solvency().await, Err(GamesError::PayoutsPaused)));
+        assert_eq!(store.pools_frozen().unwrap().unwrap(), "the payout wallet holds 898 but 1000 is owed across the pools and the older balances");
+        // Once the payout settles, nothing is in flight and the books drop by what left the wallet.
+        store.pools_set_frozen(false, None).unwrap();
+        h.node.balance.store(899, Ordering::SeqCst);
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        assert_eq!((store.pool_in_flight_total().unwrap(), store.pool_unspent_total().unwrap(), h.service.pool(&game.game_id).unwrap().paid), (0, 899, 100));
     }
 }

@@ -176,9 +176,32 @@ fn build_service(config: &GamesConfig) -> Result<Arc<GamesService>, String> {
     )))
 }
 
+/// Refuse to start on a chain the ledger does not know. A definite "not registered" stops at once; a node
+/// that cannot be read yet (it may still be starting) is retried for a short, bounded time, then refused:
+/// serving with chains nobody could confirm is how a game ends up anchored to someone else's chain.
+async fn verify_chains_at_start(service: &GamesService) -> Result<(), String> {
+    use UltraNet::games::service::GamesError;
+    const ATTEMPTS: u32 = 6;
+    for attempt in 1..=ATTEMPTS {
+        match service.verify_game_chains().await {
+            Ok(()) => return Ok(()),
+            Err(GamesError::ChainUnavailable) if attempt < ATTEMPTS => {
+                tracing::warn!(attempt, "the node's ledger could not be read to check the game chains; retrying");
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+            Err(GamesError::ChainUnavailable) => {
+                return Err("the ledger could not be read, so the configured game chains were not confirmed; not starting".into())
+            }
+            Err(other) => return Err(other.to_string()),
+        }
+    }
+    Ok(())
+}
+
 async fn serve() -> Result<(), String> {
     let config = GamesConfig::from_env()?;
     let service = build_service(&config)?;
+    verify_chains_at_start(&service).await?;
     if !config.policy.chess.pays {
         tracing::warn!(
             "chess is configured as record-only: wins are recorded and anchored but not paid"

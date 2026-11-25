@@ -172,7 +172,21 @@ impl GamesConfig {
             u32::try_from(number(name, default as u64)?).map_err(|_| format!("{name} is too large"))
         };
 
-        let standard = Policy::standard();
+        // Which AppChain anchors chess is a deployment fact, so there is no default: a missing line must
+        // never fall back to a chain id that belongs to something else (the Registry is #2, Ultra Chess #3).
+        let chess_chain_id = match lookup("GAMES_CHESS_CHAIN_ID") {
+            None => {
+                return Err(
+                    "GAMES_CHESS_CHAIN_ID is required and has no default: set it to the AppChain id of Ultra Chess (the Registry is a different chain)"
+                        .into(),
+                )
+            }
+            Some(value) => value
+                .trim()
+                .parse::<u32>()
+                .map_err(|_| "GAMES_CHESS_CHAIN_ID must be an unsigned integer".to_string())?,
+        };
+        let standard = Policy::standard(chess_chain_id);
         let game = |prefix: &str, base: &GamePolicy| -> Result<GamePolicy, String> {
             Ok(GamePolicy {
                 game: base.game,
@@ -335,6 +349,10 @@ mod tests {
     fn config(pairs: &[(&str, &str)]) -> Result<GamesConfig, String> {
         let mut map: HashMap<String, String> = HashMap::new();
         map.insert("GAMES_PAYOUT_ADDRESS".into(), PAYOUT.into());
+        map.insert(
+            "GAMES_CHESS_CHAIN_ID".into(),
+            crate::games::rules::TEST_CHESS_CHAIN_ID.to_string(),
+        );
         for (key, value) in pairs {
             map.insert((*key).into(), (*value).into());
         }
@@ -344,7 +362,7 @@ mod tests {
     #[test]
     fn the_defaults_are_the_reviewed_standard_policy() {
         let config = config(&[]).unwrap();
-        assert_eq!(config.policy, Policy::standard());
+        assert_eq!(config.policy, Policy::standard(crate::games::rules::TEST_CHESS_CHAIN_ID));
         assert_eq!(config.bind, "127.0.0.1:8095".parse().unwrap());
         assert_eq!(config.service.anchor_games, vec!["grid".to_string()]);
         assert!(
@@ -356,9 +374,11 @@ mod tests {
 
     #[test]
     fn the_payout_address_is_required_and_must_be_an_address() {
-        assert!(GamesConfig::from_lookup(&|_| None)
-            .unwrap_err()
-            .contains("GAMES_PAYOUT_ADDRESS"));
+        assert!(GamesConfig::from_lookup(&|name| {
+            (name == "GAMES_CHESS_CHAIN_ID").then(|| "3".to_string())
+        })
+        .unwrap_err()
+        .contains("GAMES_PAYOUT_ADDRESS"));
         assert!(config(&[("GAMES_PAYOUT_ADDRESS", "abc")])
             .unwrap_err()
             .contains("64"));
@@ -454,6 +474,36 @@ mod tests {
     }
 
     #[test]
+    fn the_chess_chain_has_no_default_and_a_missing_one_stops_the_start() {
+        // The map holds a valid payout address and nothing about chess: the service must refuse,
+        // and must name the setting, rather than fall back to some chain id.
+        let lookup = |name: &str| (name == "GAMES_PAYOUT_ADDRESS").then(|| PAYOUT.to_string());
+        let error = GamesConfig::from_lookup(&lookup).unwrap_err();
+        assert!(error.contains("GAMES_CHESS_CHAIN_ID is required"), "{error}");
+        assert!(error.contains("no default"), "{error}");
+    }
+
+    #[test]
+    fn an_unusable_chess_chain_is_refused_and_never_replaced_by_another() {
+        for bad in ["", "abc", "-1", "3.0", "4294967296"] {
+            let error = config(&[("GAMES_CHESS_CHAIN_ID", bad)]).unwrap_err();
+            assert!(error.contains("GAMES_CHESS_CHAIN_ID"), "{bad:?}: {error}");
+        }
+        // Chain 0 is the L1; chain 1 is Grid's.
+        assert!(config(&[("GAMES_CHESS_CHAIN_ID", "0")]).unwrap_err().contains("L1"));
+        assert!(config(&[("GAMES_CHESS_CHAIN_ID", "1")])
+            .unwrap_err()
+            .contains("different AppChains"));
+    }
+
+    #[test]
+    fn the_chess_chain_is_exactly_the_one_that_was_configured() {
+        // Not the Registry's #2 unless somebody writes 2: nothing here picks a number for the operator.
+        assert_eq!(config(&[("GAMES_CHESS_CHAIN_ID", "3")]).unwrap().policy.chess.chain_id, 3);
+        assert_eq!(config(&[("GAMES_CHESS_CHAIN_ID", "7")]).unwrap().policy.chess.chain_id, 7);
+    }
+
+    #[test]
     fn player_sign_in_is_required_unless_an_operator_turns_it_off_explicitly() {
         assert!(config(&[]).unwrap().service.require_player_auth, "fail closed by default");
         assert!(!config(&[("GAMES_REQUIRE_PLAYER_AUTH", "false")]).unwrap().service.require_player_auth);
@@ -520,7 +570,7 @@ mod tests {
         ])
         .unwrap();
         assert!(with_old.anchor.is_none(), "GAMES_ANCHOR_CLI is ignored here");
-        assert_eq!(with_old.policy, Policy::standard());
+        assert_eq!(with_old.policy, Policy::standard(crate::games::rules::TEST_CHESS_CHAIN_ID));
         assert!(FOREIGN_CREDENTIALS.contains(&"games-anchor-owner.key.enc"));
         assert!(FOREIGN_CREDENTIALS.contains(&"records-anchor.pass"));
     }

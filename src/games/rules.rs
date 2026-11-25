@@ -61,7 +61,11 @@ impl Policy {
     /// has to be written down, never a default: a configuration file missing one line must not be able
     /// to start paying for wins nobody proved. `GAMES_CHESS_PAYS=true` is the only thing that turns it
     /// on, and the rules review (§6, P1) records why it is off.
-    pub fn standard() -> Policy {
+    ///
+    /// **Chess has no default chain.** Which AppChain anchors chess is a deployment fact (Ultra Chess is
+    /// #3; #2 is the Registry), so the caller must name it. A default here once pointed chess at the
+    /// Registry's chain id; `GamesConfig` now refuses to start without `GAMES_CHESS_CHAIN_ID`.
+    pub fn standard(chess_chain_id: u32) -> Policy {
         Policy {
             grid: GamePolicy {
                 game: GAME_GRID,
@@ -73,7 +77,7 @@ impl Policy {
             },
             chess: GamePolicy {
                 game: GAME_CHESS,
-                chain_id: 2,
+                chain_id: chess_chain_id,
                 reward_units: 100,
                 rewarded_per_address_per_day: 3,
                 // The review's recommended ceiling for the game nobody can verify (§6, P1), not V2's
@@ -268,12 +272,16 @@ pub fn format_units(units: u64) -> String {
     format!("{}.{:06}", units / 1_000_000, units % 1_000_000)
 }
 
+/// The chess chain the tests use: Ultra Chess's real identity, never the Registry's (#2).
+#[cfg(test)]
+pub const TEST_CHESS_CHAIN_ID: u32 = 3;
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn policy() -> Policy {
-        Policy::standard()
+        Policy::standard(TEST_CHESS_CHAIN_ID)
     }
 
     fn grid(policy: &Policy) -> &GamePolicy {

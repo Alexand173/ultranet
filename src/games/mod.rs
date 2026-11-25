@@ -15,6 +15,7 @@ pub mod config;
 pub mod ownership;
 pub mod peer;
 pub mod peer_usage;
+pub mod pool_payouts;
 pub mod pools;
 pub mod records;
 pub mod records_api;
