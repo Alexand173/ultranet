@@ -285,6 +285,11 @@ approved a policy and the game's owner has funded the pool.**
   why not, and whether a reward is on offer and why not), `GET /api/games/players/{address}/results` (a wallet's
   rewards with payout state and transaction hash) and `GET /api/games/pools/{game}/deposits` (funding history).
   `GAMES_PLAY_PER_MINUTE` (default 20) limits plays per wallet; the module's fuel budget limits each run.
+- **The app.** Four sections: Wallet, Games, AppChains, Awards. Games lists the catalog (`/store`) and plays through
+  the wallet-authenticated route; Awards shows a wallet's rewards (`reward_paid` only after the network confirmed the
+  payout) and, for a chain's owner, the pool, funding history and owner-signed claim, policy and withdraw; an
+  AppChain's page lets its owner register games. Owner signatures use `UltraNet/game-admin/v1`, sign-in uses
+  `UltraNet/wallet-challenge/v1`, and both digests are pinned against vectors in the Rust and Android tests.
 - **Not built:** Grid and Chess still use their own older path (Chess stays record-only), and the Android screens
   for catalog games.
 - **Reward money is not AppChain fees.** Registration, anchor and transfer fees are not read or changed here.
