@@ -13,7 +13,7 @@ import kotlin.concurrent.thread
  * what the app actually sent. Debug builds allow cleartext to 127.0.0.1 for this.
  */
 class FakeGamesServer : AutoCloseable {
-    data class Request(val method: String, val path: String, val body: String)
+    data class Request(val method: String, val path: String, val body: String, val headers: Map<String, String> = emptyMap())
 
     private val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
     val requests = CopyOnWriteArrayList<Request>()
@@ -59,7 +59,9 @@ class FakeGamesServer : AutoCloseable {
                 if (count < 0) break
                 read += count
             }
-            val request = Request(method, path, String(body, Charsets.UTF_8))
+            val headers = lines.drop(1).filter { it.contains(":") }
+                .associate { it.substringBefore(":").trim().lowercase() to it.substringAfter(":").trim() }
+            val request = Request(method, path, String(body, Charsets.UTF_8), headers)
             requests.add(request)
             val (status, json) = handler(request)
             val payload = json.toByteArray(Charsets.UTF_8)

@@ -55,6 +55,7 @@ import cc.ultranet.ultraverse.data.ServiceCatalog
 import cc.ultranet.ultraverse.data.ServiceEntry
 import cc.ultranet.ultraverse.ui.appchains.AppChainsScreen
 import cc.ultranet.ultraverse.ui.chess.ChessScreen
+import cc.ultranet.ultraverse.data.GamesSigner
 import cc.ultranet.ultraverse.data.UltraNetGamesApi
 import cc.ultranet.ultraverse.wallet.ScreenOffLock
 import cc.ultranet.ultraverse.ui.games.GameCatalog
@@ -110,7 +111,14 @@ internal fun UltraVerseApp(
     val scope = rememberCoroutineScope()
     val controller = remember { WalletController(context.applicationContext) }
     val contactBook = remember { ContactBook(ContactStore(context.applicationContext)) }
-    val gamesApi = remember { UltraNetGamesApi() }
+    // The games service wants proof of the wallet behind an address: the API signs a one-time challenge with
+    // the unlocked wallet, and forgets the session when the wallet locks.
+    val gamesApi = remember {
+        UltraNetGamesApi().also { api -> api.signer = GamesSigner { address, digest -> controller.signGamesChallenge(address, digest) } }
+    }
+    LaunchedEffect(controller.state.unlocked) {
+        if (!controller.state.unlocked) gamesApi.clearSession()
+    }
     // What became of the last chess win, shown under the result. Cleared whenever the screen is left.
     var chessRewardNote by remember { mutableStateOf<String?>(null) }
     // An address handed to Pay from a contact; Pay consumes it after resetting its draft.

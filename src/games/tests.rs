@@ -5943,6 +5943,16 @@ mod wallet_auth {
     use crate::games::auth::{self, AuthConfig, AuthError, PURPOSE_PLAY};
     use crate::games::service::SessionView;
 
+    /// The Android wallet recomputes this digest from the challenge fields and signs its own result, so the two
+    /// implementations must agree byte for byte. The same vector is pinned in `GamesAuthSignerTest.kt`.
+    #[test]
+    fn the_challenge_digest_matches_the_vector_the_android_wallet_pins() {
+        let address = "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e";
+        let id = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+        let digest = auth::challenge_digest(PURPOSE_PLAY, address, id, 1_800_000_000, 1_800_000_300).unwrap();
+        assert_eq!(hex::encode(digest), "2d1074fd8db57d0497d6bf5f07a8963db1806425b147fe5a350233271e60e020");
+    }
+
     fn wallet() -> (QuantumKeyPair, String) {
         let keys = QuantumKeyPair::generate();
         let address = QuantumKeyPair::address_from_public_key(&keys.public_key);

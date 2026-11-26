@@ -364,6 +364,21 @@ internal class WalletController(
      * Signs a validator join proposal locally. It carries zero value, so it deliberately does not
      * touch the fee estimate or the unresolved-transfer guard that protects value transfers.
      */
+    /**
+     * Signs the games service's sign-in digest with the unlocked wallet. A locked wallet, or an address that is
+     * not this wallet's, signs nothing and returns null, so the caller can say "unlock" instead of failing late.
+     */
+    suspend fun signGamesChallenge(address: String, digest: ByteArray): SignedChallenge? {
+        if (state.storedWallet?.address != address) return null
+        val seed = activeSeed?.copyOf() ?: return null
+        idleSession.record(System.currentTimeMillis())
+        return try {
+            withContext(Dispatchers.Default) { GamesAuthSigner.sign(seed, address, digest) }
+        } finally {
+            seed.fill(0)
+        }
+    }
+
     suspend fun signValidatorProposal(alias: String, proposalPublicKeyHex: String): ValidatorProposalPayload? {
         state = state.copy(isBusy = true, error = null)
         return try {

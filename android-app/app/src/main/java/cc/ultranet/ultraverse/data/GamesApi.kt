@@ -1,6 +1,10 @@
 package cc.ultranet.ultraverse.data
 
+import cc.ultranet.ultraverse.wallet.GamesAuthSigner
+import cc.ultranet.ultraverse.wallet.SignedChallenge
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -30,6 +34,16 @@ internal sealed interface GamesResult<out T> {
 
     data class Unavailable(val message: String) : GamesResult<Nothing>
 }
+
+/**
+ * Signs a sign-in digest with the wallet. Returns null when the wallet is locked or is not [address]'s wallet;
+ * nothing is then sent and the player is told to unlock.
+ */
+internal fun interface GamesSigner {
+    suspend fun sign(address: String, digest: ByteArray): SignedChallenge?
+}
+
+private class GamesSession(val address: String, val token: String, val expiresAtSeconds: Long)
 
 internal data class GridOutcome(val moves: Int, val connected: Boolean, val par: Int, val limit: Int)
 
@@ -85,6 +99,22 @@ internal class UltraNetGamesApi(
     private val connectTimeoutMillis: Int = 10_000,
     private val readTimeoutMillis: Int = 20_000,
 ) {
+    /**
+     * How the wallet signs in. Without one the app sends no session and the service decides (a closed test
+     * with sign-in off still works; with it on, the service answers `auth_required`).
+     */
+    @Volatile
+    var signer: GamesSigner? = null
+
+    private val signInLock = Mutex()
+    @Volatile
+    private var session: GamesSession? = null
+
+    /** Forget the session, for instance when the wallet is locked or replaced. */
+    fun clearSession() {
+        session = null
+    }
+
     suspend fun submitGridAnswer(
         address: String,
         date: String,
@@ -101,7 +131,7 @@ internal class UltraNetGamesApi(
                     answer.forEach { array.put(JSONObject().put("cell", it.cell).put("turns", it.turns)) }
                 },
             )
-        return call("POST", "/grid/answers", body, ::parseWin)
+        return authed(address, "POST", "/grid/answers", body, ::parseWin)
     }
 
     suspend fun submitChessResult(address: String, gameId: String, mode: String, plies: Int): GamesResult<WinReport> {
@@ -112,22 +142,126 @@ internal class UltraNetGamesApi(
             .put("result", "player_win")
             .put("plies", plies)
             .put("app", "android")
-        return call("POST", "/chess/results", body, ::parseWin)
+        return authed(address, "POST", "/chess/results", body, ::parseWin)
     }
 
     suspend fun wallet(address: String): GamesResult<WalletReport> =
         call("GET", "/wallet/$address", null, ::parseWallet)
 
     suspend fun withdraw(address: String): GamesResult<PayoutReport> =
-        call("POST", "/withdraw", JSONObject().put("address", address), ::parsePayout)
+        authed(address, "POST", "/withdraw", JSONObject().put("address", address), ::parsePayout)
 
     suspend fun payout(id: String): GamesResult<PayoutReport> = call("GET", "/payouts/$id", null, ::parsePayout)
+
+    /**
+     * A call that acts for [address]: it carries that wallet's session. A session that has expired or been
+     * dropped is replaced once, and the call is retried once; a second `auth_required` is the player's answer.
+     */
+    private suspend fun <T> authed(
+        address: String,
+        method: String,
+        path: String,
+        body: JSONObject?,
+        parse: (JSONObject) -> T,
+    ): GamesResult<T> {
+        if (signer == null) return call(method, path, body, parse)
+        val token = when (val ready = sessionFor(address)) {
+            is GamesResult.Ok -> ready.value
+            is GamesResult.Refused -> return ready
+            is GamesResult.Unavailable -> return ready
+        }
+        val first = call(method, path, body, parse, token)
+        if (first is GamesResult.Refused && first.code == "auth_required") {
+            session = null
+            val fresh = when (val ready = sessionFor(address)) {
+                is GamesResult.Ok -> ready.value
+                is GamesResult.Refused -> return ready
+                is GamesResult.Unavailable -> return ready
+            }
+            return call(method, path, body, parse, fresh)
+        }
+        return first
+    }
+
+    private suspend fun sessionFor(address: String): GamesResult<String> = signInLock.withLock {
+        val now = System.currentTimeMillis() / 1000L
+        session?.takeIf { it.address == address && it.expiresAtSeconds - SESSION_MARGIN_SECONDS > now }?.let {
+            return@withLock GamesResult.Ok(it.token)
+        }
+        session = null
+        signIn(address)
+    }
+
+    /** Challenge, local signature, verification. The wallet signs a digest it computed, never the server's. */
+    private suspend fun signIn(address: String): GamesResult<String> {
+        val signer = signer ?: return GamesResult.Refused("auth_required", "Sign in to the games service first.")
+        val challenge = when (
+            val result = call(
+                "POST", "/auth/challenge",
+                JSONObject().put("address", address).put("purpose", GamesAuthSigner.PURPOSE_PLAY),
+                parse = { json ->
+                    ChallengeReport(
+                        json.getString("challenge_id"), json.getString("purpose"), json.getString("address"),
+                        json.getLong("issued_at"), json.getLong("expires_at"), json.getString("digest"),
+                    )
+                },
+            )
+        ) {
+            is GamesResult.Ok -> result.value
+            is GamesResult.Refused -> return result
+            is GamesResult.Unavailable -> return result
+        }
+        val digest = try {
+            if (challenge.address != address) throw IllegalArgumentException("address")
+            GamesAuthSigner.digest(challenge.purpose, address, challenge.challengeId, challenge.issuedAt, challenge.expiresAt)
+        } catch (_: IllegalArgumentException) {
+            return GamesResult.Refused("challenge_mismatch", "The games service sent a sign-in challenge this wallet will not sign. Nothing was signed.")
+        }
+        try {
+            if (toHex(digest) != challenge.digest) {
+                return GamesResult.Refused("challenge_mismatch", "The games service sent a sign-in challenge that does not match. Nothing was signed.")
+            }
+            val signed = signer.sign(address, digest)
+                ?: return GamesResult.Refused("wallet_locked", "Unlock your wallet to sign in to the games service.")
+            val verified = call(
+                "POST", "/auth/verify",
+                JSONObject().put("challenge_id", challenge.challengeId).put("public_key", signed.publicKeyHex).put("signature", signed.signatureHex),
+                parse = { json -> GamesSession(json.getString("address"), json.getString("token"), json.getLong("expires_at")) },
+            )
+            return when (verified) {
+                is GamesResult.Ok -> {
+                    if (verified.value.address != address) {
+                        GamesResult.Refused("challenge_mismatch", "The games service signed you in as a different wallet. Nothing was used.")
+                    } else {
+                        session = verified.value
+                        GamesResult.Ok(verified.value.token)
+                    }
+                }
+                is GamesResult.Refused -> verified
+                is GamesResult.Unavailable -> verified
+            }
+        } finally {
+            digest.fill(0)
+        }
+    }
+
+    private class ChallengeReport(
+        val challengeId: String,
+        val purpose: String,
+        val address: String,
+        val issuedAt: Long,
+        val expiresAt: Long,
+        val digest: String,
+    )
+
+    private fun toHex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
 
     private suspend fun <T> call(
         method: String,
         path: String,
         body: JSONObject?,
         parse: (JSONObject) -> T,
+        sessionToken: String? = null,
     ): GamesResult<T> = withContext(Dispatchers.IO) {
         val connection = try {
             (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
@@ -135,6 +269,7 @@ internal class UltraNetGamesApi(
                 connectTimeout = connectTimeoutMillis
                 readTimeout = readTimeoutMillis
                 setRequestProperty("Accept", "application/json")
+                if (sessionToken != null) setRequestProperty("X-Wallet-Session", sessionToken)
                 instanceFollowRedirects = false
                 if (body != null) {
                     doOutput = true
@@ -222,3 +357,6 @@ internal class UltraNetGamesApi(
         },
     )
 }
+
+/** A session is replaced this long before it expires, so a request never races the expiry. */
+private const val SESSION_MARGIN_SECONDS = 30L
