@@ -108,6 +108,11 @@ impl GamesService {
         self.check_play_rate(&player)?;
         let payload = hex::decode(payload_hex).map_err(|_| GamesError::Invalid("payload must be hexadecimal".into()))?;
         let game = self.catalog_game(game_id)?;
+        // A payload that declares which day it judges must declare this chain's current one. The module
+        // cannot check a clock, so this is the host's rule; see `play_context`.
+        if let Some(declared) = super::play_context::declared_day_context(&payload) {
+            self.require_current_day(game.chain_id, &declared, self.now()).await?;
+        }
         if game.status != STATUS_ACTIVE {
             return Err(GamesError::Forbidden("this game is not active".into()));
         }

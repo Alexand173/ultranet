@@ -17,6 +17,7 @@ pub mod peer;
 pub mod peer_usage;
 pub mod operator;
 pub mod play;
+pub mod play_context;
 pub mod pool_payouts;
 pub mod pools;
 pub mod records;
