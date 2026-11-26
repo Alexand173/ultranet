@@ -230,7 +230,7 @@ async fn serve() -> Result<(), String> {
     tracing::info!(bind = %config.bind, "ultranet-games listening");
 
     let result = tokio::select! {
-        result = api::run_server(service, config.bind, shutdown_rx) => result.map_err(|e| e.to_string()),
+        result = api::run_server(service, config.bind, config.cors_origins.clone(), shutdown_rx) => result.map_err(|e| e.to_string()),
         _ = tokio::signal::ctrl_c() => Ok(()),
         _ = UltraNet::platform::terminate() => Ok(()),
     };

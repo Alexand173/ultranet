@@ -231,6 +231,10 @@ pub struct StoreEntry {
     pub name: String,
     pub description: String,
     pub status: String,
+    /// `record_only` or `verified_adapter`: how this game's results are judged.
+    pub validation_scheme: String,
+    /// The SHA3-256 of the approved verifier module (the game's stable verifier identity), when one is bound.
+    pub adapter_hash: Option<String>,
     pub owner: Option<String>,
     pub playable: bool,
     /// Why it cannot be played, when it cannot.
@@ -363,6 +367,8 @@ impl GamesService {
             };
             entries.push(StoreEntry {
                 owner: owners.get(&game.chain_id).cloned().flatten(),
+                validation_scheme: game.validation_scheme,
+                adapter_hash: game.adapter_ref,
                 game_id: game.game_id,
                 chain_id: game.chain_id,
                 name: game.name,

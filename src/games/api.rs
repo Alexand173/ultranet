@@ -95,14 +95,29 @@ pub fn configure_routes(config: &mut web::ServiceConfig) {
         .route("/api/games/payouts/{id}", web::get().to(payout));
 }
 
+/// The browser rules: only the listed origins, only the methods and headers this API uses, no credentials or
+/// cookies (a wallet session travels in `X-Wallet-Session`, which a page must send on purpose).
+pub fn cors_for(origins: &[String]) -> actix_cors::Cors {
+    let mut cors = actix_cors::Cors::default()
+        .allowed_methods(["GET", "POST", "OPTIONS"])
+        .allowed_headers(["Accept", "Content-Type", "X-Wallet-Session"])
+        .max_age(3600);
+    for origin in origins {
+        cors = cors.allowed_origin(origin);
+    }
+    cors
+}
+
 pub async fn run_server(
     service: Arc<GamesService>,
     bind: std::net::SocketAddr,
+    cors_origins: Vec<String>,
     mut shutdown: watch::Receiver<bool>,
 ) -> std::io::Result<()> {
     let data = web::Data::from(service);
     let server = HttpServer::new(move || {
         App::new()
+            .wrap(cors_for(&cors_origins))
             .app_data(data.clone())
             .configure(configure_routes)
     })

@@ -7982,6 +7982,10 @@ mod reward_pools {
 
     // --- what the phone shows: the store, rewards history, funding history, play rate ------------------
 
+    fn ready_game_hash(h: &Harness, game: &CatalogGame) -> Option<String> {
+        h.service.catalog_game(&game.game_id).unwrap().adapter_ref
+    }
+
     #[tokio::test]
     async fn the_store_lists_each_game_with_its_live_owner_and_the_exact_reason_it_cannot_play_or_pay() {
         let h = harness(Options::default());
@@ -7997,6 +8001,8 @@ mod reward_pools {
         let by = |id: &str| listing.iter().find(|e| e.game_id == id).unwrap().clone();
         let ok = by(&ready_game.game_id);
         assert_eq!((ok.playable, ok.rewards, ok.reward_units, ok.rewards_reason), (true, "available", Some(100), None));
+        assert_eq!(ok.validation_scheme, "verified_adapter");
+        assert_eq!(ok.adapter_hash.as_deref(), ready_game_hash(&h, &ready_game).as_deref(), "the verifier identity is the bound module hash");
         assert_eq!(ok.owner.as_deref(), h.chain.owners.lock().unwrap().get(&7).map(String::as_str), "the owner is the ledger's, read now");
         let missing = by(&record_only.game_id);
         assert_eq!((missing.playable, missing.playable_reason, missing.rewards), (false, Some("adapter_module_not_installed"), "none"));
@@ -8071,5 +8077,190 @@ mod reward_pools {
         h.advance(61);
         assert!(h.service.play(&game.game_id, &player(1), "m3", "02").await.is_ok(), "the minute passed");
         assert_eq!(GamesError::PlayRateLimited.status(), 429);
+    }
+
+    #[actix_web::test]
+    async fn only_the_listed_website_origin_may_read_the_api_from_a_browser() {
+        use actix_web::{
+            http::{header, StatusCode},
+            test::{call_service, init_service, TestRequest},
+            web, App,
+        };
+        let h = harness(Options::default());
+        let origins = vec!["https://site.example".to_string()];
+        let app = init_service(
+            App::new().wrap(crate::games::api::cors_for(&origins)).app_data(web::Data::from(h.service.clone())).configure(crate::games::api::configure_routes),
+        )
+        .await;
+        // An allowed origin reads the store and is told so.
+        let ok = call_service(&app, TestRequest::get().uri("/api/games/store").insert_header((header::ORIGIN, "https://site.example")).to_request()).await;
+        assert_eq!(ok.status(), StatusCode::OK);
+        assert_eq!(ok.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(), "https://site.example");
+        assert!(ok.headers().get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none(), "no cookies or credentials are ever allowed");
+        // Its preflight for a signed play request, with the session header, is accepted.
+        let preflight = call_service(
+            &app,
+            TestRequest::default()
+                .method(actix_web::http::Method::OPTIONS)
+                .uri("/api/games/play/00112233445566778899aabbccddeeff")
+                .insert_header((header::ORIGIN, "https://site.example"))
+                .insert_header((header::ACCESS_CONTROL_REQUEST_METHOD, "POST"))
+                .insert_header((header::ACCESS_CONTROL_REQUEST_HEADERS, "content-type,x-wallet-session"))
+                .to_request(),
+        )
+        .await;
+        assert!(preflight.status().is_success(), "{}", preflight.status());
+        assert_eq!(preflight.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(), "https://site.example");
+        // Another origin is refused, and so is a preflight asking for a header this API does not use.
+        let other = call_service(&app, TestRequest::get().uri("/api/games/store").insert_header((header::ORIGIN, "https://evil.example")).to_request()).await;
+        assert!(other.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none() || !other.status().is_success());
+        let refused = call_service(
+            &app,
+            TestRequest::default()
+                .method(actix_web::http::Method::OPTIONS)
+                .uri("/api/games/store")
+                .insert_header((header::ORIGIN, "https://evil.example"))
+                .insert_header((header::ACCESS_CONTROL_REQUEST_METHOD, "GET"))
+                .to_request(),
+        )
+        .await;
+        assert!(!refused.status().is_success(), "{}", refused.status());
+        assert!(refused.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+        // With no origins configured nothing cross-origin is allowed at all.
+        let closed = init_service(App::new().wrap(crate::games::api::cors_for(&[])).app_data(web::Data::from(h.service.clone())).configure(crate::games::api::configure_routes)).await;
+        let none = call_service(&closed, TestRequest::get().uri("/api/games/store").insert_header((header::ORIGIN, "https://site.example")).to_request()).await;
+        assert!(none.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none() || !none.status().is_success());
+    }
+
+    // --- the contract the website and the Android app both read ------------------------------------------
+
+    /// The structure of a JSON value: object keys, array element shape, and leaf types. `null` matches anything,
+    /// because an optional field is `null` in one answer and a value in another.
+    fn shape_matches(real: &serde_json::Value, example: &serde_json::Value, path: &str, problems: &mut Vec<String>) {
+        use serde_json::Value as J;
+        match (real, example) {
+            (J::Null, _) | (_, J::Null) => {}
+            (J::Object(a), J::Object(b)) => {
+                let keys = |m: &serde_json::Map<String, serde_json::Value>| m.keys().cloned().collect::<std::collections::BTreeSet<_>>();
+                if keys(a) != keys(b) {
+                    problems.push(format!("{path}: keys differ: real {:?} vs fixture {:?}", keys(a), keys(b)));
+                }
+                for (key, value) in a {
+                    if let Some(other) = b.get(key) {
+                        shape_matches(value, other, &format!("{path}.{key}"), problems);
+                    }
+                }
+            }
+            (J::Array(a), J::Array(b)) => match (a.first(), b.first()) {
+                (Some(x), Some(y)) => shape_matches(x, y, &format!("{path}[]"), problems),
+                (None, _) => {}
+                (_, None) => problems.push(format!("{path}: the fixture has no example element")),
+            },
+            (J::Bool(_), J::Bool(_)) | (J::Number(_), J::Number(_)) | (J::String(_), J::String(_)) => {}
+            (a, b) => problems.push(format!("{path}: type differs: real {a} vs fixture {b}")),
+        }
+    }
+
+    const CONTRACT_WEB: &str = "website/src/lib/games-api-contract.json";
+    const CONTRACT_ANDROID: &str = "android-app/app/src/androidTest/assets/games-api-contract.json";
+
+    #[actix_web::test]
+    async fn every_answer_the_clients_read_has_the_shape_the_checked_in_contract_says() {
+        use actix_web::{
+            test::{call_service, init_service, read_body_json, TestRequest},
+            web, App,
+        };
+        use serde_json::{json, Value};
+        let h = harness(Options { require_player_auth: true, ..Options::default() });
+        let (keys, owner, game) = game_on(&h, 7).await;
+        h.service.platform_register_adapter(&game.game_id, &::wat::parse_str(PLAY_WAT).unwrap(), 1, "ops").unwrap();
+        let app = init_service(App::new().app_data(web::Data::from(h.service.clone())).configure(crate::games::api::configure_routes)).await;
+        let mut real = serde_json::Map::new();
+        macro_rules! capture {
+            ($name:expr, $request:expr) => {{
+                let response = call_service(&app, $request.to_request()).await;
+                let status = response.status().as_u16();
+                let body: Value = read_body_json(response).await;
+                assert_eq!(status, 200, "{}: {body}", $name);
+                real.insert($name.to_string(), body.clone());
+                body
+            }};
+        }
+        let admin = |action: &str, name: &str, description: &str| {
+            let mut fresh = [0u8; 16];
+            rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut fresh);
+            let nonce = hex::encode(fresh);
+            let timestamp = h.service.now();
+            let digest = catalog::admin_digest(action, 7, "", name, description, "", &nonce, timestamp);
+            json!({ "nonce": nonce, "timestamp": timestamp, "public_key": hex::encode(&keys.public_key), "signature": hex::encode(keys.sign(&digest)) })
+        };
+        let proof_for = |action: &str, game_id: &str, name: &str| {
+            let p = proof(&h, &keys, action, 7, game_id, name);
+            json!({ "nonce": p.nonce, "timestamp": p.timestamp, "public_key": p.public_key, "signature": p.signature })
+        };
+        let merge = |mut a: Value, b: Value| {
+            a.as_object_mut().unwrap().extend(b.as_object().unwrap().clone());
+            a
+        };
+        // Funding, claim, policy, in the order an owner does them.
+        let deposit = hex::encode([9u8; 32]);
+        h.chain.transfers.lock().unwrap().insert(deposit.clone(), crate::games::chain::TransferView { sender: owner.clone(), recipient: h.payout_address.clone(), amount: 1_000, pending: false });
+        capture!("fund", TestRequest::post().uri(&format!("/api/games/pools/{}/fund", game.game_id)).set_json(merge(json!({ "tx_hash": deposit }), proof_for("pool-fund", &game.game_id, &deposit))));
+        let t = terms(100);
+        let summary = format!("{}|{}|{}|{}|{}", t.reward_units, t.eligible_outcomes, t.per_player_per_day, t.per_game_per_day, t.effective_from);
+        let proposed = capture!("policy_propose", TestRequest::post().uri(&format!("/api/games/pools/{}/policy", game.game_id)).set_json(merge(
+            json!({ "reward_units": 100, "eligible_outcomes": "win", "per_player_per_day": 3, "per_game_per_day": 100 }),
+            proof_for("policy-propose", &game.game_id, &summary),
+        )));
+        h.service.platform_decide_policy(&game.game_id, proposed["version"].as_u64().unwrap() as u32, true, "ops", "ok").unwrap();
+        // Registering another game is an owner act on the same chain.
+        capture!("catalog_register", TestRequest::post().uri("/api/games/catalog").set_json(merge(json!({ "chain_id": 7, "name": "Second", "description": "d" }), admin("register", "Second", "d"))));
+        // A real wallet signs in; the session plays.
+        let (wallet_keys, wallet_address) = wallet();
+        let challenge = capture!("challenge", TestRequest::post().uri("/api/games/auth/challenge").set_json(json!({ "address": wallet_address, "purpose": "play" })));
+        let digest = crate::games::auth::challenge_digest("play", &wallet_address, challenge["challenge_id"].as_str().unwrap(), challenge["issued_at"].as_u64().unwrap(), challenge["expires_at"].as_u64().unwrap()).unwrap();
+        let session = capture!("session", TestRequest::post().uri("/api/games/auth/verify").set_json(json!({
+            "challenge_id": challenge["challenge_id"], "public_key": hex::encode(&wallet_keys.public_key), "signature": hex::encode(wallet_keys.sign(&digest)),
+        })));
+        let token = session["token"].as_str().unwrap().to_string();
+        capture!("play", TestRequest::post().uri(&format!("/api/games/play/{}", game.game_id)).insert_header(("X-Wallet-Session", token)).set_json(json!({ "address": wallet_address, "result_id": "m1", "payload": "01" })));
+        capture!("result", TestRequest::get().uri(&format!("/api/games/results/{}/m1", game.game_id)));
+        capture!("store", TestRequest::get().uri("/api/games/store"));
+        capture!("player_results", TestRequest::get().uri(&format!("/api/games/players/{wallet_address}/results")));
+        capture!("pool", TestRequest::get().uri(&format!("/api/games/pools/{}", game.game_id)));
+        capture!("deposits", TestRequest::get().uri(&format!("/api/games/pools/{}/deposits", game.game_id)));
+        capture!("policies", TestRequest::get().uri(&format!("/api/games/pools/{}/policies", game.game_id)));
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        capture!("payouts", TestRequest::get().uri(&format!("/api/games/pools/{}/payouts", game.game_id)));
+        capture!("withdraw", TestRequest::post().uri(&format!("/api/games/pools/{}/withdraw", game.game_id)).set_json(merge(json!({ "amount_units": 400 }), proof_for("pool-withdraw", &game.game_id, "400"))));
+
+        let real = Value::Object(real);
+        if std::env::var("UPDATE_GAMES_CONTRACT").is_ok() {
+            let text = serde_json::to_string_pretty(&real).unwrap() + "\n";
+            for path in [CONTRACT_WEB, CONTRACT_ANDROID] {
+                let full = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
+                std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+                std::fs::write(full, &text).unwrap();
+            }
+        }
+        let read = |path: &str| -> Value {
+            let full = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
+            serde_json::from_str(&std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{path}: {e}; run with UPDATE_GAMES_CONTRACT=1"))).unwrap()
+        };
+        let (web, android) = (read(CONTRACT_WEB), read(CONTRACT_ANDROID));
+        assert_eq!(web, android, "the website and Android contract copies must be identical");
+        let mut problems = Vec::new();
+        for (name, answer) in real.as_object().unwrap() {
+            match web.get(name) {
+                Some(example) => shape_matches(answer, example, name, &mut problems),
+                None => problems.push(format!("{name}: missing from the checked-in contract")),
+            }
+        }
+        for name in web.as_object().unwrap().keys() {
+            if real.get(name).is_none() {
+                problems.push(format!("{name}: in the contract but not produced by the service"));
+            }
+        }
+        assert!(problems.is_empty(), "the service and the checked-in contract disagree:\n{}", problems.join("\n"));
     }
 }
