@@ -24,4 +24,7 @@ export const ROUTES = [
   "/ultraverse",
   "/learn",
   "/send-ultra",
+  "/games",
+  "/games/manage",
+  "/games/rewards",
 ];
