@@ -1831,7 +1831,7 @@ mod tests {
             let connection = store.lock().unwrap();
             connection
                 .execute_batch(
-                    "DROP TABLE game_pool_payouts; DROP TABLE pool_state; DROP TABLE game_reward_policies; DROP TABLE game_pool_ledger; DROP TABLE game_pool_withdrawals; DROP TABLE game_pool_credits; DROP TABLE game_pool_deposits; DROP TABLE game_pools; DROP TABLE platform_game_audit; DROP TABLE platform_games; DROP TABLE auth_sessions; DROP TABLE auth_challenges; DROP TABLE registry_anchor_attempts; DROP TABLE peer_anchor_roots; DROP TABLE peer_anchor_days;
+                    "DROP TABLE game_adapter_modules; DROP TABLE game_pool_payouts; DROP TABLE pool_state; DROP TABLE game_reward_policies; DROP TABLE game_pool_ledger; DROP TABLE game_pool_withdrawals; DROP TABLE game_pool_credits; DROP TABLE game_pool_deposits; DROP TABLE game_pools; DROP TABLE platform_game_audit; DROP TABLE platform_games; DROP TABLE auth_sessions; DROP TABLE auth_challenges; DROP TABLE registry_anchor_attempts; DROP TABLE peer_anchor_roots; DROP TABLE peer_anchor_days;
                      DROP TABLE registry_days; DROP TABLE registry_results; DROP TABLE registry_games;
                      UPDATE meta SET value = '1' WHERE key = 'schema_version';",
                 )

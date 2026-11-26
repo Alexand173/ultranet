@@ -11,6 +11,13 @@
 //! ultranet-games enable  [--accepting] [--paying]                    (no flag = both)
 //! ultranet-games payouts          list unfinished payouts
 //! ultranet-games payout-resolve --id <id> (--confirmed | --failed) --note "..."
+//! ultranet-games pools            the pool gate, the shared-wallet totals and every game's pool
+//! ultranet-games pool-payouts     list unfinished pool payouts
+//! ultranet-games pool-freeze --reason "..."      stop every pool payout and withdrawal
+//! ultranet-games pool-unfreeze --note "..."      clear the freeze (after the cause is understood)
+//! ultranet-games policy-decide --game <id> --version N (--approve | --reject) --operator <name> --note "..."
+//! ultranet-games adapter-register --game <id> --module <file.wasm> --adapter-version N --operator <name>
+//! ultranet-games pool-payout-confirm --id <id> --operator <name> --note "what you checked on the chain"
 //! ultranet-games close-day --game grid|chess --date YYYY-MM-DD    (asks the Records Service to anchor)
 //! ultranet-games backup --to /var/backups/ultranet-games/games-YYYYMMDD.db
 //! ```
@@ -34,6 +41,7 @@ use UltraNet::{
         api,
         chain::HttpChain,
         config::GamesConfig,
+        operator::{confirm_pool_payout, decide_policy, register_adapter},
         rules::format_units,
         service::{system_clock, GamesService},
         store::GamesStore,
@@ -54,9 +62,16 @@ async fn main() {
         "enable" => set_switches(&args[1..], true),
         "payouts" => payouts(),
         "payout-resolve" => payout_resolve(&args[1..]),
+        "pools" => pools(),
+        "pool-payouts" => pool_payouts_list(),
+        "pool-freeze" => pool_freeze(&args[1..], true),
+        "pool-unfreeze" => pool_freeze(&args[1..], false),
+        "policy-decide" => policy_decide(&args[1..]),
+        "adapter-register" => adapter_register(&args[1..]),
+        "pool-payout-confirm" => pool_payout_confirm(&args[1..]),
         "close-day" => close_day(&args[1..]).await,
         "backup" => backup(&args[1..]),
-        _ => Err("use serve, check-config, status, audit, disable, enable, payouts, payout-resolve, close-day or backup".into()),
+        _ => Err("use serve, check-config, status, audit, disable, enable, payouts, payout-resolve, pools, pool-payouts, pool-freeze, pool-unfreeze, policy-decide, adapter-register, pool-payout-confirm, close-day or backup".into()),
     };
     if let Err(error) = result {
         eprintln!("ultranet-games: {error}");
@@ -430,6 +445,111 @@ fn payout_resolve(args: &[String]) -> Result<(), String> {
             UltraNet::auth::now_seconds(),
         )
         .map_err(|e| e.to_string())?;
+    println!("done");
+    Ok(())
+}
+
+fn operator_name(args: &[String]) -> Result<String, String> {
+    flag(args, "--operator").filter(|name| !name.trim().is_empty()).ok_or_else(|| "--operator <name> is required so the audit trail says who did this".to_string())
+}
+
+fn pools() -> Result<(), String> {
+    let store = open_store()?;
+    let gate = env::var("GAMES_POOL_PAYOUTS_ENABLED").unwrap_or_default();
+    println!("pool payouts gate (this shell's environment): {}", if gate.trim() == "true" { "ENABLED" } else { "disabled" });
+    match store.pools_frozen().map_err(|e| e.to_string())? {
+        Some(reason) => println!("pools:             FROZEN - {reason}"),
+        None => println!("pools:             not frozen"),
+    }
+    println!(
+        "owed to pools {} · owed on the older balances {} · in flight {} (base units)",
+        store.pool_unspent_total().map_err(|e| e.to_string())?,
+        store.legacy_owed_total().map_err(|e| e.to_string())?,
+        store.pool_in_flight_total().map_err(|e| e.to_string())?
+    );
+    for game in store.catalog_games(None).map_err(|e| e.to_string())? {
+        let pool = store.pool_view(&game.game_id).map_err(|e| e.to_string())?;
+        println!(
+            "{}  chain {}  {}  {}  funded {} reserved {} paid {} withdrawn {} available {}",
+            game.game_id, game.chain_id, game.status, game.validation_scheme, pool.funded, pool.reserved, pool.paid, pool.withdrawn, pool.available
+        );
+    }
+    let problems = store.pool_audit().map_err(|e| e.to_string())?;
+    for problem in &problems {
+        println!("PROBLEM: {problem}");
+    }
+    if !problems.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn pool_payouts_list() -> Result<(), String> {
+    let store = open_store()?;
+    let mut any = false;
+    for game in store.catalog_games(None).map_err(|e| e.to_string())? {
+        for payout in store.pool_payouts_for(&game.game_id).map_err(|e| e.to_string())? {
+            if payout.state == "confirmed" || payout.state == "failed" {
+                continue;
+            }
+            any = true;
+            println!(
+                "{}  {}  game {}  {} units to {}  {}  attempts {}  hash {}  {}",
+                payout.payout_id, payout.kind, payout.game_id, payout.amount_units, payout.to_address, payout.state, payout.attempts,
+                payout.tx_hash.as_deref().unwrap_or("-"), payout.last_error.as_deref().unwrap_or("")
+            );
+        }
+    }
+    if !any {
+        println!("no unfinished pool payouts");
+    }
+    Ok(())
+}
+
+fn pool_freeze(args: &[String], freeze: bool) -> Result<(), String> {
+    let store = open_store()?;
+    let why = flag(args, if freeze { "--reason" } else { "--note" }).ok_or(if freeze { "--reason \"why\" is required" } else { "--note \"what was fixed\" is required" })?;
+    store.pools_set_frozen(freeze, freeze.then_some(why.as_str())).map_err(|e| e.to_string())?;
+    println!("pools {}", if freeze { "frozen" } else { "unfrozen; the worker re-checks solvency before it signs anything" });
+    Ok(())
+}
+
+fn policy_decide(args: &[String]) -> Result<(), String> {
+    let game = flag(args, "--game").ok_or("--game is required")?;
+    let version: u32 = flag(args, "--version").ok_or("--version is required")?.parse().map_err(|_| "--version must be a number")?;
+    let approve = match (has(args, "--approve"), has(args, "--reject")) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => return Err("choose exactly one of --approve or --reject".into()),
+    };
+    let note = flag(args, "--note").ok_or("--note is required: say why")?;
+    let store = open_store()?;
+    let row = decide_policy(&store, &game, version, approve, &operator_name(args)?, &note, UltraNet::auth::now_seconds()).map_err(|e| e.to_string())?;
+    println!("policy {} v{} is now {} ({} units; approval funds nothing)", row.game_id, row.version, row.status, row.reward_units);
+    Ok(())
+}
+
+fn adapter_register(args: &[String]) -> Result<(), String> {
+    let game = flag(args, "--game").ok_or("--game is required")?;
+    let path = flag(args, "--module").ok_or("--module <file.wasm> is required")?;
+    let version: u32 = flag(args, "--adapter-version").ok_or("--adapter-version is required")?.parse().map_err(|_| "--adapter-version must be a number")?;
+    let bytes = fs::read(&path).map_err(|e| format!("cannot read {path}: {e}"))?;
+    let store = open_store()?;
+    let hash = register_adapter(&store, &game, &bytes, version, &operator_name(args)?, UltraNet::auth::now_seconds()).map_err(|e| e.to_string())?;
+    println!("game {game} is now bound to adapter {hash} (version {version}); it earns nothing until a policy is approved and its pool is funded");
+    Ok(())
+}
+
+fn pool_payout_confirm(args: &[String]) -> Result<(), String> {
+    let id = flag(args, "--id").ok_or("--id is required")?;
+    let note = flag(args, "--note").ok_or("--note is required: say what you checked on the chain")?;
+    let store = open_store()?;
+    let payout = store.pool_payout(&id).map_err(|e| e.to_string())?.ok_or("no such payout")?;
+    println!(
+        "payout {} · {} · {} units to {} · state {} · hash {}\nmarking it CONFIRMED: only do this after looking the hash up on the chain.",
+        payout.payout_id, payout.kind, payout.amount_units, payout.to_address, payout.state, payout.tx_hash.as_deref().unwrap_or("-")
+    );
+    confirm_pool_payout(&store, &id, &operator_name(args)?, &note, UltraNet::auth::now_seconds()).map_err(|e| e.to_string())?;
     println!("done");
     Ok(())
 }

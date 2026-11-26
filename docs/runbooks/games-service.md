@@ -232,8 +232,9 @@ binary refuses a newer database rather than misreading it).
 
 **Reward pools and reward policies (catalog games).** Each catalog game has its own pool, funded only by the owner
 of its AppChain; UltraNet funds no game. Accounting is in `src/games/pools.rs` and payouts in
-`src/games/pool_payouts.rs`. **There are still no HTTP routes and no operator CLI for it, and no game has a verified
-adapter, so nothing here moves money today.**
+`src/games/pool_payouts.rs`. Routes are in `api.rs`, operator actions in `operator.rs` and the CLI. **Nothing here
+moves money unless `GAMES_POOL_PAYOUTS_ENABLED=true` (the default is false) and an operator has registered an adapter,
+approved a policy and the game's owner has funded the pool.**
 
 - **Deposit model.** The owner makes an ordinary L1 transfer to the payout address and sends an owner-signed
   claim naming the transaction and the game. The ledger must show a confirmed transfer from that owner to the
@@ -248,8 +249,8 @@ adapter, so nothing here moves money today.**
   pool worker checks this at the start of every cycle and freezes all pool payouts if held < owed; (2) the older
   path (`pool_units` and `sign_and_submit`) only spends the balance above what the pools are owed; (3) a pool
   payout is signed only if the wallet covers its amount, fee and the reserve. Pool *reservation* itself does not
-  read the wallet; it is caught at (1) and (3) before any money moves. Pool payouts stay disabled in production:
-  there are no HTTP routes or operator CLI for them, and no game is yet approved to earn.
+  read the wallet; it is caught at (1) and (3) before any money moves. Pool payouts stay disabled in production
+  by `GAMES_POOL_PAYOUTS_ENABLED=false`: with it off no pool reward is reserved and the worker signs nothing.
   guarantee is the ledger, not a separate key per game.
 - **What may earn.** Only a result verified by the game's approved adapter (a platform decision; every game starts
   `record_only`) with an outcome the active policy pays for, within its limits and the pool's unreserved balance.
@@ -271,8 +272,17 @@ adapter, so nothing here moves money today.**
   than a payout needs, a reward no longer matching its policy) **freezes the pool path only**: the older Grid and
   Chess payouts are not paused, and the worker and new reservations stop until an operator clears it
   (`pools_set_frozen(false)`). The two paths share the payout key and take turns under one lock.
-- **Not built:** operator resolution of a payout that stays in doubt (it stays frozen), routes and an operator CLI,
-  and Grid and Chess still use their own older path.
+- **Operator commands** (database only, no keys, each audited with the operator's name): `pools`, `pool-payouts`,
+  `pool-freeze --reason`, `pool-unfreeze --note`, `policy-decide --game --version (--approve|--reject) --operator
+  --note`, `adapter-register --game --module file.wasm --adapter-version N --operator` (the host loader checks the
+  module before its bytes are stored; an owner cannot do this) and `pool-payout-confirm --id --operator --note` (only
+  for a signed or submitted payout, after looking the hash up on the chain).
+- **Player path.** `POST /api/games/play/{game}` (wallet session) runs the game's approved module twice and requires
+  agreement; `GET /api/games/results/{game}/{result}` reads back `reward_reserved` or `reward_paid`. A result is
+  *verified* when the runs agree, *reserved* when the pool set the reward aside, and *paid* only when the node
+  confirmed the transfer.
+- **Not built:** Grid and Chess still use their own older path (Chess stays record-only), and the Android screens
+  for catalog games.
 - **Reward money is not AppChain fees.** Registration, anchor and transfer fees are not read or changed here.
 
 **Wallet sign-in.** `GAMES_REQUIRE_PLAYER_AUTH` (default `true`) makes the routes that act for a player

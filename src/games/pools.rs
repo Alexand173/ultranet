@@ -860,11 +860,11 @@ impl From<PoolError> for GamesError {
     }
 }
 
-fn operator_actor(label: &str) -> String {
+pub(super) fn operator_actor(label: &str) -> String {
     hex::encode(Sha3_256::digest(format!("UltraNet/platform-operator/{label}").as_bytes()))
 }
 
-fn operator_digest(action: &str, game_id: &str, detail: &str, now: u64) -> [u8; 32] {
+pub(super) fn operator_digest(action: &str, game_id: &str, detail: &str, now: u64) -> [u8; 32] {
     let mut nonce = [0u8; 16];
     rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut nonce);
     let mut hasher = Sha3_256::new();
@@ -936,54 +936,14 @@ impl GamesService {
         )?)
     }
 
-    /// The platform's decision (an operator action, not exposed over HTTP). Approval re-checks the ceilings and
-    /// requires that the pool can pay at least one reward, so an approved policy never promises what cannot be paid.
+    /// The platform's decision (an operator action, not exposed over HTTP); see `operator.rs`.
     pub fn platform_decide_policy(&self, game_id: &str, version: u32, approve: bool, operator: &str, note: &str) -> Result<PolicyRow, GamesError> {
-        self.known(game_id)?;
-        let row = self.store().policy(game_id, version)?.ok_or_else(|| GamesError::NotFound("no such policy version".into()))?;
-        if approve {
-            check_platform_limits(&PolicyTerms {
-                reward_units: row.reward_units,
-                eligible_outcomes: row.eligible_outcomes.clone(),
-                per_player_per_day: row.per_player_per_day,
-                per_game_per_day: row.per_game_per_day,
-                effective_from: row.effective_from,
-            })?;
-            let pool = self.store().pool_view(game_id)?;
-            if pool.available < row.reward_units {
-                return Err(GamesError::Forbidden("the game's pool cannot pay even one reward at this level".into()));
-            }
-        }
-        let action = if approve { ACTION_POLICY_APPROVE } else { ACTION_POLICY_REJECT };
-        let now = self.now();
-        let actor = operator_actor(operator);
-        let zeros = "0".repeat(64);
-        let detail = serde_json::json!({ "operator": operator, "version": version, "note": note, "policy_hash": row.policy_hash }).to_string();
-        Ok(self.store().policy_decide(
-            game_id,
-            version,
-            approve,
-            &actor,
-            note,
-            now,
-            &AuditRecord { actor: &actor, action, chain_owner: &zeros, detail: &detail, digest: operator_digest(action, game_id, &detail, now) },
-        )?)
+        super::operator::decide_policy(self.store(), game_id, version, approve, operator, note, self.now())
     }
 
     /// The platform names the adapter whose verdicts may earn rewards for a game (an operator action).
     pub fn platform_approve_adapter(&self, game_id: &str, module_hash: [u8; 32], adapter_version: u32, operator: &str) -> Result<CatalogGame, GamesError> {
-        self.known(game_id)?;
-        let now = self.now();
-        let actor = operator_actor(operator);
-        let zeros = "0".repeat(64);
-        let detail = serde_json::json!({ "operator": operator, "module_hash": hex::encode(module_hash), "adapter_version": adapter_version }).to_string();
-        Ok(self.store().platform_approve_adapter(
-            game_id,
-            &module_hash,
-            adapter_version,
-            now,
-            &AuditRecord { actor: &actor, action: ACTION_ADAPTER_APPROVE, chain_owner: &zeros, detail: &detail, digest: operator_digest(ACTION_ADAPTER_APPROVE, game_id, &detail, now) },
-        )?)
+        super::operator::approve_adapter(self.store(), game_id, module_hash, adapter_version, operator, self.now())
     }
 
     /// Reserve the reward for one verified result, or refuse. Nothing is promised unless the whole check passes.

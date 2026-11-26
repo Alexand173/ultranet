@@ -75,6 +75,9 @@ pub struct ServiceConfig {
     pub require_player_auth: bool,
     /// The most games one AppChain may hold in the catalog (a platform limit against spam, not a price).
     pub catalog_max_games_per_chain: u32,
+    /// The production gate for per-game reward pools. Off unless an operator turns it on: with it off, no pool
+    /// reward is reserved, no pool payout is signed and no withdrawal is paid, whatever the pools hold.
+    pub pool_payouts_enabled: bool,
 }
 
 impl ServiceConfig {
@@ -93,6 +96,7 @@ impl ServiceConfig {
             // configuration (`GamesConfig`) turns this on unless an operator says otherwise.
             require_player_auth: false,
             catalog_max_games_per_chain: 20,
+            pool_payouts_enabled: false,
         }
     }
 }

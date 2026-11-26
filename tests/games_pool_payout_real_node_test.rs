@@ -154,10 +154,12 @@ fn build_service(path: &std::path::Path, base: &str, payout_keys: &QuantumKeyPai
     let signer = FaucetSigner::from_keypair_for_tests(payout_keys.clone()).unwrap();
     let mut policy = Policy::standard(3);
     policy.payout_reserve_units = 100; // the lowest the platform allows; the wallet needs this much beyond a payout
+    let mut config = ServiceConfig::new(address_of(payout_keys));
+    config.pool_payouts_enabled = true; // the rehearsal runs the gated path on purpose; the default is off
     let service = GamesService::new(
         GamesStore::open(path).unwrap(),
         policy,
-        ServiceConfig::new(address_of(payout_keys)),
+        config,
         Arc::new(HttpChain::new(base).unwrap()),
         node.clone(),
         Some(Arc::new(signer)),

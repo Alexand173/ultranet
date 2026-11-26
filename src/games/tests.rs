@@ -423,6 +423,7 @@ struct Options {
     clock: Option<Arc<AtomicU64>>,
     /// Require a wallet session on the routes that act for a player.
     require_player_auth: bool,
+    pool_payouts_enabled: bool,
 }
 
 impl Default for Options {
@@ -442,6 +443,7 @@ impl Default for Options {
             peer_secret: None,
             clock: None,
             require_player_auth: false,
+            pool_payouts_enabled: true,
         }
     }
 }
@@ -460,6 +462,7 @@ fn harness(options: Options) -> Harness {
     let mut config = ServiceConfig::new(payout_address.clone());
     config.anchor_games = options.anchor_games;
     config.require_player_auth = options.require_player_auth;
+    config.pool_payouts_enabled = options.pool_payouts_enabled;
     let tick = clock.clone();
     let records_anchorer = Arc::new(FakeAnchorer::default());
     let mut records_config = RecordsConfig::new();
@@ -7713,5 +7716,242 @@ mod reward_pools {
         h.node.balance.store(899, Ordering::SeqCst);
         assert!(h.service.process_pool_payout_once().await.unwrap());
         assert_eq!((store.pool_in_flight_total().unwrap(), store.pool_unspent_total().unwrap(), h.service.pool(&game.game_id).unwrap().paid), (0, 899, 100));
+    }
+
+    #[tokio::test]
+    async fn with_the_production_gate_off_nothing_is_reserved_signed_or_paid() {
+        assert!(!ServiceConfig::new("x".into()).pool_payouts_enabled, "the library default is off");
+        let h = harness(Options { pool_payouts_enabled: false, ..Options::default() });
+        let (_, _, game) = ready(&h, 7, 1_000, 100).await;
+        let refused = h.service.reserve_reward_for_payout(&game.game_id, "m1", &player(1), &verdict(Outcome::Win, ADAPTER));
+        assert!(matches!(refused, Err(GamesError::Forbidden(_))), "{refused:?}");
+        assert_eq!((h.service.pool(&game.game_id).unwrap().reserved, h.service.store().pool_payouts_for(&game.game_id).unwrap().len()), (0, 0));
+        // Even a payout that is already queued (made before the gate was closed) is left alone.
+        h.service.store().pool_reserve_queued(&game.game_id, "m2", &player(2), &"ab".repeat(16), &verdict(Outcome::Win, ADAPTER), h.service.now()).unwrap();
+        assert!(!h.service.process_pool_payout_once().await.unwrap());
+        assert!(h.node.submissions.lock().unwrap().is_empty(), "nothing was signed or sent");
+        assert_eq!(h.service.store().pool_payouts_for(&game.game_id).unwrap()[0].state, "queued");
+    }
+
+    // --- playing a catalog game: verified, reserved and paid are different facts ----------------------
+
+    /// The first payload byte picks the outcome (1 win, 2 loss, 3 tie), as in the adapter's own tests.
+    const PLAY_WAT: &str = r#"
+    (module
+      (memory (export "memory") 1 2)
+      (func (export "adapter_abi_version") (result i32) i32.const 1)
+      (func (export "input_buffer") (result i32) i32.const 1024)
+      (func (export "input_capacity") (result i32) i32.const 4200)
+      (func (export "output_buffer") (result i32) i32.const 8192)
+      (func (export "adapter_run") (param $len i32) (result i32)
+        (i32.store8 (i32.const 8192) (i32.const 1))
+        (i32.store8 (i32.const 8193) (i32.load8_u (i32.const 1061)))
+        (i32.store (i32.const 8194) (i32.const 7))
+        (i32.const 38)))
+    "#;
+
+    /// A funded game with a real module registered by the operator and an approved policy.
+    async fn playable(h: &Harness, chain: u32, funds: u64) -> CatalogGame {
+        let (keys, owner, game) = game_on(h, chain).await;
+        let bytes = ::wat::parse_str(PLAY_WAT).unwrap();
+        h.service.platform_register_adapter(&game.game_id, &bytes, 1, "ops").unwrap();
+        if funds > 0 {
+            fund(h, &keys, &owner, &game, funds, chain as u8).await.unwrap();
+        }
+        let row = propose(h, &keys, &game, terms(100)).await.unwrap();
+        h.service.platform_decide_policy(&game.game_id, row.version, true, "ops", "ok").unwrap_or_else(|_| row.clone());
+        h.service.catalog_game(&game.game_id).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_verified_win_reserves_the_reward_and_only_the_node_makes_it_final() {
+        let h = harness(Options::default());
+        let game = playable(&h, 7, 1_000).await;
+        let first = h.service.play(&game.game_id, &player(1), "m1", "01").await.unwrap();
+        assert_eq!((first.outcome, first.stage, first.reward_units, first.payout_state.as_deref()), ("win", "reward_reserved", Some(100), Some("queued")));
+        // Asking again is the same fact, not a second reward.
+        let again = h.service.play(&game.game_id, &player(1), "m1", "01").await.unwrap();
+        assert_eq!((again.credit_id.clone(), again.stage), (first.credit_id.clone(), "reward_reserved"));
+        assert_eq!(h.service.pool(&game.game_id).unwrap().reserved, 100);
+        // Nothing is paid until the worker signs it and the node confirms it.
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        assert_eq!(h.service.result_view(&game.game_id, "m1", None).unwrap().stage, "reward_reserved");
+        let sent = h.service.store().pool_payouts_for(&game.game_id).unwrap().remove(0);
+        confirm_on_node(&h, &sent);
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let paid = h.service.result_view(&game.game_id, "m1", None).unwrap();
+        assert_eq!((paid.stage, paid.payout_state.as_deref()), ("reward_paid", Some("confirmed")));
+        assert_eq!(h.service.play(&game.game_id, &player(1), "m1", "01").await.unwrap().stage, "reward_paid");
+        assert_eq!(h.service.pool(&game.game_id).unwrap().paid, 100);
+    }
+
+    #[tokio::test]
+    async fn a_verified_result_that_the_policy_does_not_pay_for_earns_nothing() {
+        let h = harness(Options::default());
+        let game = playable(&h, 7, 1_000).await;
+        let loss = h.service.play(&game.game_id, &player(1), "m1", "02").await.unwrap();
+        assert_eq!((loss.outcome, loss.stage, loss.not_rewarded), ("loss", "verified", Some("policy_does_not_pay_this_outcome")));
+        assert_eq!(h.service.pool(&game.game_id).unwrap().reserved, 0);
+        assert!(h.service.store().pool_payouts_for(&game.game_id).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_empty_pool_or_a_closed_gate_leaves_a_verified_result_unpaid_and_says_why() {
+        let h = harness(Options::default());
+        let game = playable(&h, 7, 0).await; // never funded
+        let view = h.service.play(&game.game_id, &player(1), "m1", "01").await.unwrap();
+        assert_eq!((view.stage, view.not_rewarded), ("verified", Some("no_approved_reward_policy")), "an unfunded pool cannot even have an approved policy");
+        let off = harness(Options { pool_payouts_enabled: false, ..Options::default() });
+        let game = playable(&off, 8, 1_000).await;
+        let view = off.service.play(&game.game_id, &player(1), "m1", "01").await.unwrap();
+        assert_eq!((view.stage, view.not_rewarded, view.credit_id), ("verified", Some("rewards_not_enabled"), None));
+        assert!(off.service.store().pool_payouts_for(&game.game_id).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_second_player_cannot_claim_a_result_id_that_is_already_taken() {
+        let h = harness(Options::default());
+        let game = playable(&h, 7, 1_000).await;
+        h.service.play(&game.game_id, &player(1), "m1", "01").await.unwrap();
+        let theirs = h.service.play(&game.game_id, &player(2), "m1", "01").await;
+        assert!(matches!(theirs, Err(GamesError::ResultConflict)), "{theirs:?}");
+        assert_eq!(h.service.pool(&game.game_id).unwrap().reserved, 100, "one reward, to the first player");
+    }
+
+    #[tokio::test]
+    async fn a_game_without_an_approved_module_is_never_judged_and_a_bad_module_is_never_stored() {
+        let h = harness(Options::default());
+        let (_, _, game) = game_on(&h, 7).await; // approved hash ADAPTER, but no bytes were ever registered
+        let missing = h.service.play(&game.game_id, &player(1), "m1", "01").await;
+        assert!(matches!(missing, Err(GamesError::Internal(_))), "bytes for the approved hash do not exist: {missing:?}");
+        // A module the host rejects (imports a host function) is refused and does not replace the approval.
+        let bad = ::wat::parse_str(r#"(module (import "env" "now" (func (result i32))))"#).unwrap();
+        let before = h.service.catalog_game(&game.game_id).unwrap().adapter_ref;
+        assert!(matches!(h.service.platform_register_adapter(&game.game_id, &bad, 1, "ops"), Err(GamesError::Invalid(_))));
+        assert_eq!(h.service.catalog_game(&game.game_id).unwrap().adapter_ref, before);
+        assert!(h.service.platform_register_adapter("no-such-game", &bad, 1, "ops").is_err());
+        // A game that was never given an adapter stays record-only.
+        let (_, owner2) = wallet();
+        h.chain.owners.lock().unwrap().insert(9, owner2);
+        let nothing = h.service.play("0".repeat(32).as_str(), &player(1), "m1", "01").await;
+        assert!(matches!(nothing, Err(GamesError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn a_stored_module_that_no_longer_matches_its_hash_is_never_run() {
+        let h = harness(Options::default());
+        let game = playable(&h, 7, 1_000).await;
+        let hash = game.adapter_ref.clone().unwrap();
+        let other = ::wat::parse_str(&PLAY_WAT.replace("(i32.const 7)", "(i32.const 8)")).unwrap();
+        h.service.store().lock().unwrap().execute("UPDATE game_adapter_modules SET module_bytes = ?2 WHERE module_hash = ?1", rusqlite::params![hash, other]).unwrap();
+        let swapped = h.service.play(&game.game_id, &player(1), "m1", "01").await;
+        assert!(matches!(swapped, Err(GamesError::Invalid(_))), "{swapped:?}");
+        assert_eq!(h.service.pool(&game.game_id).unwrap().reserved, 0);
+    }
+
+    #[tokio::test]
+    async fn an_input_the_module_cannot_judge_is_refused_before_any_reward() {
+        let h = harness(Options::default());
+        let game = playable(&h, 7, 1_000).await;
+        let oversized = "00".repeat(5_000);
+        assert!(matches!(h.service.play(&game.game_id, &player(1), "m1", &oversized).await, Err(GamesError::Invalid(_))));
+        assert!(matches!(h.service.play(&game.game_id, &player(1), "m1", "zz").await, Err(GamesError::Invalid(_))));
+        assert!(matches!(h.service.play(&game.game_id, &player(1), "", "01").await, Err(GamesError::Invalid(_))));
+        assert_eq!(h.service.pool(&game.game_id).unwrap().reserved, 0);
+    }
+
+    #[actix_web::test]
+    async fn the_http_routes_play_read_and_fund_with_the_same_rules() {
+        use actix_web::{
+            http::StatusCode,
+            test::{call_service, init_service, read_body_json, TestRequest},
+            web, App,
+        };
+        use serde_json::{json, Value};
+
+        let h = harness(Options { require_player_auth: true, ..Options::default() });
+        let game = playable(&h, 7, 1_000).await;
+        let app = init_service(App::new().app_data(web::Data::from(h.service.clone())).configure(crate::games::api::configure_routes)).await;
+        let uri = format!("/api/games/play/{}", game.game_id);
+        let body = json!({ "address": player(1), "result_id": "m1", "payload": "01" });
+        // No wallet session: refused before anything is judged.
+        let response = call_service(&app, TestRequest::post().uri(&uri).set_json(&body).to_request()).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(h.service.pool(&game.game_id).unwrap().reserved, 0);
+        // A malformed game id is a 404, and an unknown field is a 400.
+        assert_eq!(call_service(&app, TestRequest::post().uri("/api/games/play/nope").set_json(&body).to_request()).await.status(), StatusCode::NOT_FOUND);
+        let extra = json!({ "address": player(1), "result_id": "m1", "payload": "01", "reward": 999999 });
+        assert_eq!(call_service(&app, TestRequest::post().uri(&uri).set_json(&extra).to_request()).await.status(), StatusCode::BAD_REQUEST);
+        // The public reads work without a session and say what the pool holds.
+        let pool: Value = read_body_json(call_service(&app, TestRequest::get().uri(&format!("/api/games/pools/{}", game.game_id)).to_request()).await).await;
+        assert_eq!((pool["funded"].as_u64(), pool["reserved"].as_u64(), pool["success"].as_bool()), (Some(1_000), Some(0), Some(true)));
+        let missing = call_service(&app, TestRequest::get().uri(&format!("/api/games/results/{}/m1", game.game_id)).to_request()).await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND, "no reward was reserved for that result");
+        // A forged funding claim is refused, so a stranger cannot attach a transfer to someone's game.
+        let forged = json!({ "tx_hash": "ab".repeat(32), "nonce": "cd".repeat(16), "timestamp": h.service.now(), "public_key": "00", "signature": "00" });
+        let response = call_service(&app, TestRequest::post().uri(&format!("/api/games/pools/{}/fund", game.game_id)).set_json(&forged).to_request()).await;
+        assert!(matches!(response.status(), StatusCode::UNAUTHORIZED | StatusCode::BAD_REQUEST | StatusCode::FORBIDDEN), "{}", response.status());
+        assert_eq!(h.service.pool(&game.game_id).unwrap().funded, 1_000);
+    }
+
+    // --- the operator's actions: store-only, audited, never over HTTP --------------------------------
+
+    #[tokio::test]
+    async fn the_operator_settles_a_payout_in_doubt_only_with_a_reason_and_only_once() {
+        let h = harness(Options::default());
+        let (_, _, payout) = queued_reward(&h, 7, 1_000).await;
+        let store = h.service.store();
+        let now = h.service.now();
+        // Never signed: there is nothing on the chain to have looked at.
+        assert!(crate::games::operator::confirm_pool_payout(store, &payout.payout_id, "ops", "looked", now).is_err());
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        // No reason, no operator, no such payout: all refused, and nothing moves.
+        assert!(crate::games::operator::confirm_pool_payout(store, &payout.payout_id, "ops", " ", now).is_err());
+        assert!(crate::games::operator::confirm_pool_payout(store, &payout.payout_id, "", "looked", now).is_err());
+        assert!(crate::games::operator::confirm_pool_payout(store, &"00".repeat(16), "ops", "looked", now).is_err());
+        assert_eq!(store.pool_payout(&payout.payout_id).unwrap().unwrap().state, "submitted");
+        let history_before = h.service.catalog_history(&payout.game_id).unwrap().len();
+        let settled = crate::games::operator::confirm_pool_payout(store, &payout.payout_id, "ops", "tx included in block 12", now).unwrap();
+        assert_eq!((settled.pool.paid, settled.pool.reserved), (100, 0));
+        assert_eq!(store.pool_payout(&payout.payout_id).unwrap().unwrap().state, "confirmed");
+        let history = h.service.catalog_history(&payout.game_id).unwrap();
+        assert_eq!(history.len(), history_before + 1, "the settlement is in the audit history");
+        assert!(history.last().unwrap().detail.contains("tx included in block 12"));
+        // A finished payout cannot be settled a second time, so nothing can be paid twice.
+        assert!(crate::games::operator::confirm_pool_payout(store, &payout.payout_id, "ops", "again", now).is_err());
+        assert_eq!(h.service.pool(&payout.game_id).unwrap().paid, 100);
+    }
+
+    #[tokio::test]
+    async fn approving_a_policy_needs_an_operator_and_funds_nothing() {
+        let h = harness(Options::default());
+        let (keys, _, game) = game_on(&h, 7).await;
+        let row = propose(&h, &keys, &game, terms(100)).await.unwrap();
+        let store = h.service.store();
+        let now = h.service.now();
+        assert!(crate::games::operator::decide_policy(store, &game.game_id, row.version, true, "", "ok", now).is_err());
+        let unfunded = crate::games::operator::decide_policy(store, &game.game_id, row.version, true, "ops", "ok", now);
+        assert!(matches!(unfunded, Err(GamesError::Forbidden(_))), "an unfunded pool cannot back an approved policy: {unfunded:?}");
+        assert_eq!(h.service.pool(&game.game_id).unwrap().funded, 0, "approval funded nothing");
+        let rejected = crate::games::operator::decide_policy(store, &game.game_id, row.version, false, "ops", "not now", now).unwrap();
+        assert_eq!(rejected.status, "rejected");
+    }
+
+    #[tokio::test]
+    async fn the_operator_registers_a_module_by_hash_and_the_owner_has_no_route_to_do_it() {
+        let h = harness(Options::default());
+        let (_, _, game) = game_on(&h, 7).await;
+        let bytes = ::wat::parse_str(PLAY_WAT).unwrap();
+        let hash = crate::games::operator::register_adapter(h.service.store(), &game.game_id, &bytes, 2, "ops", h.service.now()).unwrap();
+        let bound = h.service.catalog_game(&game.game_id).unwrap();
+        assert_eq!((bound.adapter_ref.as_deref(), bound.adapter_version), (Some(hash.as_str()), 2));
+        assert_eq!(h.service.store().module_bytes(&hash).unwrap().unwrap(), bytes, "the exact bytes are kept");
+        // No HTTP route reaches an operator action.
+        use actix_web::{http::StatusCode, test::{call_service, init_service, TestRequest}, web, App};
+        let app = init_service(App::new().app_data(web::Data::from(h.service.clone())).configure(crate::games::api::configure_routes)).await;
+        for uri in ["adapter", "adapter-register", "policy-decide", "approve", "payout-confirm"] {
+            let response = call_service(&app, TestRequest::post().uri(&format!("/api/games/pools/{}/{uri}", game.game_id)).set_json(serde_json::json!({})).to_request()).await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+        }
     }
 }

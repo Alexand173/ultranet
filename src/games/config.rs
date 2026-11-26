@@ -257,6 +257,8 @@ impl GamesConfig {
         // Fail closed: a player's address in a request is not proof that they control the wallet, so the
         // routes that act for a player need a wallet session unless an operator explicitly turns that off.
         service.require_player_auth = boolean("GAMES_REQUIRE_PLAYER_AUTH", true)?;
+        // Fail closed: pool rewards and withdrawals move real ULTRA, so they stay off until an operator says so.
+        service.pool_payouts_enabled = boolean("GAMES_POOL_PAYOUTS_ENABLED", false)?;
         service.anchor_empty_days = boolean("GAMES_ANCHOR_EMPTY_DAYS", service.anchor_empty_days)?;
         service.anchor_retry_seconds =
             number("GAMES_ANCHOR_RETRY_SECONDS", service.anchor_retry_seconds)?;
@@ -507,6 +509,9 @@ mod tests {
     fn player_sign_in_is_required_unless_an_operator_turns_it_off_explicitly() {
         assert!(config(&[]).unwrap().service.require_player_auth, "fail closed by default");
         assert!(!config(&[("GAMES_REQUIRE_PLAYER_AUTH", "false")]).unwrap().service.require_player_auth);
+        assert!(!config(&[]).unwrap().service.pool_payouts_enabled, "pool payouts are off by default");
+        assert!(config(&[("GAMES_POOL_PAYOUTS_ENABLED", "true")]).unwrap().service.pool_payouts_enabled);
+        assert!(config(&[("GAMES_POOL_PAYOUTS_ENABLED", "maybe")]).is_err());
         assert!(config(&[("GAMES_REQUIRE_PLAYER_AUTH", "true")]).unwrap().service.require_player_auth);
         // A misspelt value is refused, never read as "off".
         assert!(config(&[("GAMES_REQUIRE_PLAYER_AUTH", "maybe")]).unwrap_err().contains("GAMES_REQUIRE_PLAYER_AUTH"));
