@@ -44,6 +44,9 @@ import cc.ultranet.ultraverse.wallet.AppChainOperation
 import cc.ultranet.ultraverse.wallet.AppChainReconciliation
 import cc.ultranet.ultraverse.wallet.UnresolvedAppChainTransaction
 import cc.ultranet.ultraverse.data.NodeEndpoint
+import cc.ultranet.ultraverse.data.UltraNetGamesApi
+import cc.ultranet.ultraverse.ui.games.ChainGamesSection
+import cc.ultranet.ultraverse.ui.games.GameAdminSign
 import cc.ultranet.ultraverse.data.NodeEndpointStore
 import cc.ultranet.ultraverse.data.UltraNetOperatorApi
 import cc.ultranet.ultraverse.wallet.AppChainSigner
@@ -84,6 +87,9 @@ internal fun AppChainsScreen(
     unresolvedAppChain: UnresolvedAppChainTransaction?,
     onReconcileAppChain: suspend () -> AppChainReconciliation?,
     onDiscardAppChain: suspend () -> AppChainReconciliation?,
+    // The games on each chain, and the owner's signature for registering one.
+    gamesApi: UltraNetGamesApi = remember { UltraNetGamesApi() },
+    onSignGameAdmin: GameAdminSign = { _, _, _, _, _ -> null },
 ) {
     val context = LocalContext.current
     val endpointStore = remember(context) { NodeEndpointStore(context.applicationContext) }
@@ -141,6 +147,8 @@ internal fun AppChainsScreen(
             onAnchor = { anchorTarget = current },
             onTransfer = { transferTarget = current },
             api = api,
+            gamesApi = gamesApi,
+            onSignGameAdmin = onSignGameAdmin,
         )
     } else {
         Registry(
@@ -639,6 +647,8 @@ private fun ChainDetail(
     onAnchor: () -> Unit,
     onTransfer: () -> Unit,
     api: UltraNetOperatorApi,
+    gamesApi: UltraNetGamesApi,
+    onSignGameAdmin: GameAdminSign,
 ) {
     val owns = walletAddress != null && walletAddress == chain.owner
     var anchors by remember(chain.id) { mutableStateOf<List<AppChainAnchorRecord>?>(null) }
@@ -702,6 +712,15 @@ private fun ChainDetail(
                             AnchorRow(record)
                         }
                     }
+                    Spacer(Modifier.height(16.dp))
+                    ChainGamesSection(
+                        chainId = chain.id,
+                        owns = owns,
+                        walletUnlocked = walletUnlocked,
+                        gamesApi = gamesApi,
+                        onSign = onSignGameAdmin,
+                        onOpenWallet = onOpenWallet,
+                    )
                     Spacer(Modifier.height(24.dp))
                 }
             }

@@ -1,5 +1,6 @@
 package cc.ultranet.ultraverse.data
 
+import cc.ultranet.ultraverse.wallet.AdminProofData
 import cc.ultranet.ultraverse.wallet.GamesAuthSigner
 import cc.ultranet.ultraverse.wallet.SignedChallenge
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +43,66 @@ internal sealed interface GamesResult<out T> {
 internal fun interface GamesSigner {
     suspend fun sign(address: String, digest: ByteArray): SignedChallenge?
 }
+
+internal data class StoreGame(
+    val gameId: String,
+    val chainId: Int,
+    val name: String,
+    val description: String,
+    val status: String,
+    /** The current L1 owner of the chain, as the service read it from the ledger; null if it could not. */
+    val owner: String?,
+    val playable: Boolean,
+    val playableReason: String?,
+    val rewards: String,
+    val rewardUnits: Long?,
+    val rewardsReason: String?,
+)
+
+/** What the service says about one result. Only [stage] `reward_paid` means the node confirmed a payment. */
+internal data class PlayReport(
+    val gameId: String,
+    val resultId: String,
+    val outcome: String,
+    val stage: String,
+    val rewardUnits: Long?,
+    val creditId: String?,
+    val payoutState: String?,
+    val notRewarded: String?,
+)
+
+internal data class RewardRow(
+    val gameId: String,
+    val resultId: String,
+    val rewardUnits: Long,
+    val stage: String,
+    val payoutState: String?,
+    val transactionHash: String?,
+    val at: Long,
+)
+
+internal data class PoolReport(
+    val funded: Long,
+    val reserved: Long,
+    val paid: Long,
+    val withdrawn: Long,
+    val feesReserved: Long,
+    val feesPaid: Long,
+    val available: Long,
+)
+
+internal data class DepositRow(val txHash: String, val funder: String, val amountUnits: Long, val claimedAt: Long)
+
+internal data class PolicyReport(
+    val version: Int,
+    val rewardUnits: Long,
+    val eligibleOutcomes: String,
+    val perPlayerPerDay: Int,
+    val perGamePerDay: Long,
+    val status: String,
+)
+
+internal data class PoolPayoutRow(val kind: String, val amountUnits: Long, val toAddress: String, val state: String, val transactionHash: String?)
 
 private class GamesSession(val address: String, val token: String, val expiresAtSeconds: Long)
 
@@ -152,6 +213,140 @@ internal class UltraNetGamesApi(
         authed(address, "POST", "/withdraw", JSONObject().put("address", address), ::parsePayout)
 
     suspend fun payout(id: String): GamesResult<PayoutReport> = call("GET", "/payouts/$id", null, ::parsePayout)
+
+    // --- the universal store: public reads, wallet-authenticated play, owner-signed actions -------------
+
+    suspend fun storeListing(query: String? = null, chainId: Int? = null): GamesResult<List<StoreGame>> {
+        val params = buildList {
+            if (!query.isNullOrBlank()) add("q=" + java.net.URLEncoder.encode(query.trim(), "UTF-8"))
+            if (chainId != null) add("chain_id=$chainId")
+        }
+        val path = "/store" + if (params.isEmpty()) "" else "?" + params.joinToString("&")
+        return call("GET", path, null, parse = { json -> json.getJSONArray("games").objects().map(::parseStoreGame) })
+    }
+
+    suspend fun playerResults(address: String): GamesResult<List<RewardRow>> =
+        call("GET", "/players/$address/results", null, parse = { json -> json.getJSONArray("results").objects().map(::parseRewardRow) })
+
+    suspend fun result(gameId: String, resultId: String): GamesResult<PlayReport> =
+        call("GET", "/results/$gameId/${java.net.URLEncoder.encode(resultId, "UTF-8")}", null, parse = ::parsePlay)
+
+    /** Play one input. The wallet must be signed in; the service judges the input with the game's approved module. */
+    suspend fun play(address: String, gameId: String, resultId: String, payloadHex: String): GamesResult<PlayReport> =
+        authed(
+            address, "POST", "/play/$gameId",
+            JSONObject().put("address", address).put("result_id", resultId).put("payload", payloadHex),
+            ::parsePlay,
+        )
+
+    suspend fun pool(gameId: String): GamesResult<PoolReport> = call("GET", "/pools/$gameId", null, parse = ::parsePool)
+
+    suspend fun deposits(gameId: String): GamesResult<List<DepositRow>> =
+        call("GET", "/pools/$gameId/deposits", null, parse = { json -> json.getJSONArray("deposits").objects().map(::parseDeposit) })
+
+    suspend fun policies(gameId: String): GamesResult<List<PolicyReport>> =
+        call("GET", "/pools/$gameId/policies", null, parse = { json -> json.getJSONArray("policies").objects().map(::parsePolicy) })
+
+    suspend fun poolPayouts(gameId: String): GamesResult<List<PoolPayoutRow>> =
+        call("GET", "/pools/$gameId/payouts", null, parse = { json -> json.getJSONArray("payouts").objects().map(::parsePoolPayout) })
+
+    suspend fun registerGame(chainId: Int, name: String, description: String, proof: AdminProofData): GamesResult<StoreGame> =
+        call(
+            "POST", "/catalog",
+            JSONObject().put("chain_id", chainId).put("name", name).put("description", description).withProof(proof),
+            parse = { json -> parseStoreGame(json.getJSONObject("game")) },
+        )
+
+    suspend fun claimDeposit(gameId: String, txHash: String, proof: AdminProofData): GamesResult<PoolReport> =
+        call("POST", "/pools/$gameId/fund", JSONObject().put("tx_hash", txHash).withProof(proof), parse = ::parsePool)
+
+    suspend fun proposePolicy(
+        gameId: String,
+        rewardUnits: Long,
+        outcomes: String,
+        perPlayerPerDay: Int,
+        perGamePerDay: Long,
+        proof: AdminProofData,
+    ): GamesResult<PolicyReport> =
+        call(
+            "POST", "/pools/$gameId/policy",
+            JSONObject().put("reward_units", rewardUnits).put("eligible_outcomes", outcomes).put("per_player_per_day", perPlayerPerDay)
+                .put("per_game_per_day", perGamePerDay).withProof(proof),
+            parse = ::parsePolicy,
+        )
+
+    suspend fun withdrawFromPool(gameId: String, amountUnits: Long, proof: AdminProofData): GamesResult<PoolReport> =
+        call("POST", "/pools/$gameId/withdraw", JSONObject().put("amount_units", amountUnits).withProof(proof), parse = ::parsePool)
+
+    private fun JSONObject.withProof(proof: AdminProofData): JSONObject =
+        put("nonce", proof.nonce).put("timestamp", proof.timestamp).put("public_key", proof.publicKeyHex).put("signature", proof.signatureHex)
+
+    private fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }
+
+    internal fun parseStoreGame(json: JSONObject) = StoreGame(
+        gameId = json.getString("game_id"),
+        chainId = json.getInt("chain_id"),
+        name = json.getString("name"),
+        description = json.optString("description", ""),
+        status = json.getString("status"),
+        owner = json.optStringOrNull("owner"),
+        playable = json.optBoolean("playable", false),
+        playableReason = json.optStringOrNull("playable_reason"),
+        rewards = json.optString("rewards", "none"),
+        rewardUnits = json.optLongOrNull("reward_units"),
+        rewardsReason = json.optStringOrNull("rewards_reason"),
+    )
+
+    internal fun parsePlay(json: JSONObject) = PlayReport(
+        gameId = json.getString("game_id"),
+        resultId = json.getString("result_id"),
+        outcome = json.optString("outcome", "invalid"),
+        stage = json.getString("stage"),
+        rewardUnits = json.optLongOrNull("reward_units"),
+        creditId = json.optStringOrNull("credit_id"),
+        payoutState = json.optStringOrNull("payout_state"),
+        notRewarded = json.optStringOrNull("not_rewarded"),
+    )
+
+    internal fun parseRewardRow(json: JSONObject) = RewardRow(
+        gameId = json.getString("game_id"),
+        resultId = json.getString("result_id"),
+        rewardUnits = json.getLong("reward_units"),
+        stage = json.getString("stage"),
+        payoutState = json.optStringOrNull("payout_state"),
+        transactionHash = json.optStringOrNull("transaction_hash"),
+        at = json.getLong("at"),
+    )
+
+    internal fun parsePool(json: JSONObject) = PoolReport(
+        funded = json.getLong("funded"),
+        reserved = json.getLong("reserved"),
+        paid = json.getLong("paid"),
+        withdrawn = json.getLong("withdrawn"),
+        feesReserved = json.optLong("fees_reserved", 0),
+        feesPaid = json.optLong("fees_paid", 0),
+        available = json.getLong("available"),
+    )
+
+    internal fun parseDeposit(json: JSONObject) =
+        DepositRow(json.getString("tx_hash"), json.getString("funder"), json.getLong("amount_units"), json.getLong("claimed_at"))
+
+    internal fun parsePolicy(json: JSONObject) = PolicyReport(
+        version = json.getInt("version"),
+        rewardUnits = json.getLong("reward_units"),
+        eligibleOutcomes = json.getString("eligible_outcomes"),
+        perPlayerPerDay = json.getInt("per_player_per_day"),
+        perGamePerDay = json.getLong("per_game_per_day"),
+        status = json.getString("status"),
+    )
+
+    internal fun parsePoolPayout(json: JSONObject) = PoolPayoutRow(
+        kind = json.getString("kind"),
+        amountUnits = json.getLong("amount_units"),
+        toAddress = json.getString("to_address"),
+        state = json.getString("state"),
+        transactionHash = json.optStringOrNull("tx_hash"),
+    )
 
     /**
      * A call that acts for [address]: it carries that wallet's session. A session that has expired or been

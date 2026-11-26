@@ -3,7 +3,9 @@ package cc.ultranet.ultraverse
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.After
@@ -26,11 +28,12 @@ class ProfileNavigationTest {
     fun close() = scenario?.close() ?: Unit
 
     @Test
-    fun profileTabOpensTheAddressPage() {
+    fun theProfileTileOpensTheAddressPage() {
         scenario = ActivityScenario.launch(MainActivity::class.java)
-        compose.waitUntil(30_000) { textExists("Profile") }
+        compose.waitUntil(30_000) { textExists("Payments & addresses") || textExists("Wallet") }
 
-        compose.onNodeWithContentDescription("Profile. Your address and receive code.").performClick()
+        compose.onNodeWithTag("ultraverse-home").performScrollToIndex(3)
+        compose.onNodeWithContentDescription("Profile & receive. Supported path.", substring = true).performClick()
 
         compose.waitUntil(10_000) { textExists("No receive code yet") }
         compose.onNodeWithText("No wallet on this device").assertExists()

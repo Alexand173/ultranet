@@ -50,6 +50,7 @@ internal object ServiceCatalog {
     const val MINING_ID = "validate-transactions"
     const val REGISTRY_ID = "registry"
     const val GAMES_ID = "games"
+    const val PROFILE_ID = "profile"
 
     val groups = listOf(
         ServiceGroup(
@@ -71,6 +72,14 @@ internal object ServiceCatalog {
                     icon = Icons.AutoMirrored.Outlined.ReceiptLong,
                     detail = "One address, one amount, one tap",
                     actionLabel = "Open Pay",
+                ),
+                ServiceEntry(
+                    id = PROFILE_ID,
+                    name = "Profile & receive",
+                    availability = Availability.Supported,
+                    icon = Icons.Outlined.AccountBalanceWallet,
+                    detail = "Your address and receive code",
+                    actionLabel = "Open profile",
                 ),
                 ServiceEntry(
                     id = CONTACTS_ID,

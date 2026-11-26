@@ -5946,6 +5946,18 @@ mod wallet_auth {
     use crate::games::auth::{self, AuthConfig, AuthError, PURPOSE_PLAY};
     use crate::games::service::SessionView;
 
+    /// The owner's admin digest, signed by the Android wallet for registering a game, claiming a deposit, proposing a
+    /// policy and withdrawing. The same vectors are pinned in `GameAdminSignerTest.kt`.
+    #[test]
+    fn the_admin_digest_matches_the_vectors_the_android_wallet_pins() {
+        let nonce = "ab".repeat(16);
+        let game = "00112233445566778899aabbccddeeff";
+        let withdraw = crate::games::catalog::admin_digest("pool-withdraw", 7, game, "400", "", "", &nonce, 1_800_000_000);
+        let register = crate::games::catalog::admin_digest("register", 7, "", "Echo Game", "a short description", "", &nonce, 1_800_000_000);
+        assert_eq!(hex::encode(withdraw), "8006596d5a34eaf610a746f8ef3bf172dddd2c374294ef27562a68ea85d62930");
+        assert_eq!(hex::encode(register), "f78faa7dee8619104d2ed305802a17a7ba5aaffdb87df06c257ed1ed9abd29cd");
+    }
+
     /// The Android wallet recomputes this digest from the challenge fields and signs its own result, so the two
     /// implementations must agree byte for byte. The same vector is pinned in `GamesAuthSignerTest.kt`.
     #[test]

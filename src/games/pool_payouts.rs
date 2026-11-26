@@ -92,6 +92,8 @@ pub struct PoolPayout {
     pub state: String,
     pub attempts: u32,
     pub last_error: Option<String>,
+    /// The exact signed bytes, kept for identical resends. Never sent over HTTP.
+    #[serde(skip_serializing)]
     pub envelope: Option<String>,
     pub tx_hash: Option<String>,
     pub nonce: Option<u64>,

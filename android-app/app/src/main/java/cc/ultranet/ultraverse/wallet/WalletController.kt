@@ -379,6 +379,29 @@ internal class WalletController(
         }
     }
 
+    /**
+     * Signs one owner action for the games service with the unlocked wallet. A locked wallet signs nothing and
+     * returns null. Whether this wallet owns the chain is the service's check against the ledger, not this one's.
+     */
+    suspend fun signGameAdmin(
+        action: String,
+        chainId: Int,
+        gameId: String,
+        name: String,
+        description: String = "",
+    ): AdminProofData? {
+        val address = state.storedWallet?.address ?: return null
+        val seed = activeSeed?.copyOf() ?: return null
+        idleSession.record(System.currentTimeMillis())
+        return try {
+            withContext(Dispatchers.Default) {
+                GameAdminSigner.sign(seed, address, action, chainId, gameId, name, description, System.currentTimeMillis() / 1000L)
+            }
+        } finally {
+            seed.fill(0)
+        }
+    }
+
     suspend fun signValidatorProposal(alias: String, proposalPublicKeyHex: String): ValidatorProposalPayload? {
         state = state.copy(isBusy = true, error = null)
         return try {

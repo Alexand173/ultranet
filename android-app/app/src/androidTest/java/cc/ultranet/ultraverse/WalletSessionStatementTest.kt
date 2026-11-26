@@ -99,7 +99,7 @@ class WalletSessionStatementTest {
 
         // Home, unlocked: the masthead shows the account, and the setup buttons are gone. The Apps
         // tab lands on the first service group by design, so the hero has to be scrolled back to.
-        compose.onNodeWithContentDescription("Apps. Scrolls to the grouped services.", substring = true)
+        compose.onNodeWithContentDescription("Wallet. Balance, send, receive and your tools.", substring = true)
             .performClick()
         compose.waitUntil(30_000) { homeExists() }
         compose.onNodeWithTag("ultraverse-home").performScrollToIndex(1)
@@ -121,7 +121,7 @@ class WalletSessionStatementTest {
         compose.onNodeWithText("Unlock local wallet").assertDoesNotExist()
 
         // Session persistence: catalog → Portfolio again must not ask for the password.
-        compose.onNodeWithContentDescription("Apps. Scrolls to the grouped services.", substring = true)
+        compose.onNodeWithContentDescription("Wallet. Balance, send, receive and your tools.", substring = true)
             .performClick()
         compose.waitUntil(30_000) { homeExists() }
         compose.onNodeWithTag("ultraverse-home").performScrollToIndex(1)

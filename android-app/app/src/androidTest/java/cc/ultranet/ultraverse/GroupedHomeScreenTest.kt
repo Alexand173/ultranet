@@ -53,14 +53,14 @@ class GroupedHomeScreenTest {
     @Test
     fun catalogContainsSevenSupportedAndNineUnavailableServices() {
         assertEquals(4, ServiceCatalog.groups.size)
-        assertEquals(listOf(3, 5, 7, 2), ServiceCatalog.groups.map { it.services.size })
-        assertEquals(17, ServiceCatalog.groups.sumOf { it.services.size })
+        assertEquals(listOf(4, 5, 7, 2), ServiceCatalog.groups.map { it.services.size })
+        assertEquals(18, ServiceCatalog.groups.sumOf { it.services.size })
         // Contacts replaced the Name Service concept; the Games tile is a directory holding the games.
-        assertEquals(8, ServiceCatalog.supportedCount)
+        assertEquals(9, ServiceCatalog.supportedCount)
         assertEquals(9, ServiceCatalog.unavailableCount)
         val payments = ServiceCatalog.groups.first { it.id == "payments-addresses" }
         assertEquals(
-            listOf(ServiceCatalog.WALLET_ID, ServiceCatalog.PAY_ID, ServiceCatalog.CONTACTS_ID),
+            listOf(ServiceCatalog.WALLET_ID, ServiceCatalog.PAY_ID, ServiceCatalog.PROFILE_ID, ServiceCatalog.CONTACTS_ID),
             payments.services.map { it.id },
         )
         val applications = ServiceCatalog.groups.first { it.id == "applications" }
@@ -135,31 +135,26 @@ class GroupedHomeScreenTest {
     }
 
     @Test
-    fun swapStaysDisabledWhileProfileAndPortfolioAreLiveDestinations() {
-        // Swap is the last tab without a native destination.
-        compose.onNodeWithContentDescription("Swap. Not available yet.", substring = true)
-            .assertIsNotEnabled()
-        compose.onNodeWithContentDescription("Profile. Your address and receive code.", substring = true)
-            .assertIsEnabled()
-        compose.onNodeWithContentDescription("Portfolio. Opens the native local wallet.", substring = true)
-            .assertIsDisplayed()
-        compose.onNodeWithContentDescription("Apps. Scrolls to the grouped services.", substring = true)
-            .assertIsDisplayed()
-
+    fun theFourSectionsAreTheOnlyTabsAndEveryOneIsEnabled() {
+        // Wallet, Games, AppChains and Awards: no placeholder tab such as Swap.
+        for (tab in listOf("Wallet", "Games", "AppChains", "Awards")) {
+            compose.onNodeWithTag("tab-$tab").assertIsEnabled()
+        }
+        compose.onNodeWithTag("tab-Swap").assertDoesNotExist()
+        compose.onNodeWithTag("tab-Profile").assertDoesNotExist()
         compose.onNodeWithTag("ultraverse-home").performScrollToIndex(3)
         compose.onNodeWithText("Payments & addresses").assertIsDisplayed()
     }
 
     @Test
-    fun appsTabReturnsToTheFirstGroupAfterEveryHeaderItem() {
-        compose.onNodeWithContentDescription("Portfolio. Opens the native local wallet.", substring = true)
-            .performClick()
+    fun theWalletTabReturnsToTheFirstGroupFromAnotherSection() {
+        compose.onNodeWithTag("tab-Games").performClick()
         compose.waitUntil(5_000) {
-            runCatching { compose.onNodeWithText("Restore wallet").assertIsDisplayed(); true }
+            runCatching { compose.onNodeWithTag("games-store").assertIsDisplayed(); true }
                 .getOrDefault(false)
         }
 
-        compose.onNodeWithContentDescription("Apps. Scrolls to the grouped services.", substring = true)
+        compose.onNodeWithContentDescription("Wallet. Balance, send, receive and your tools.", substring = true)
             .performClick()
         compose.waitUntil(5_000) {
             runCatching { compose.onNodeWithText("Payments & addresses").assertIsDisplayed(); true }
@@ -169,8 +164,11 @@ class GroupedHomeScreenTest {
     }
 
     @Test
-    fun portfolioOpensNativeWalletSetupInsteadOfTheWebsite() {
-        compose.onNodeWithContentDescription("Portfolio. Opens the native local wallet.", substring = true).performClick()
+    fun theWalletTabOpensNativeWalletSetupInsteadOfTheWebsite() {
+        compose.onNodeWithTag("tab-Games").performClick()
+        compose.onNodeWithTag("tab-Wallet").performClick()
+        // The Wallet tab lands on the first service group; the wallet setup is in the masthead above it.
+        compose.onNodeWithTag("ultraverse-home").performScrollToIndex(1)
         compose.waitUntil(5_000) {
             runCatching { compose.onNodeWithText("Create local wallet").assertIsDisplayed(); true }.getOrDefault(false)
         }
