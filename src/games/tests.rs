@@ -8263,4 +8263,154 @@ mod reward_pools {
         }
         assert!(problems.is_empty(), "the service and the checked-in contract disagree:\n{}", problems.join("\n"));
     }
+
+    // --- the shipped UltraGrid verifier, judged by the real runtime --------------------------------
+
+    /// The day the harness's clock is in, and the anchor root that day's puzzles derive from.
+    fn grid_day_of(h: &Harness) -> (u32, String) {
+        let day = crate::games::play_context::day_of(h.service.now());
+        (day, crate::games::play_context::date_of(day))
+    }
+
+    fn grid_seed(chain: u32, date: &str, root: &[u8; 32]) -> [u8; 32] {
+        crate::ultragrid::daily_seed(chain, date, root).unwrap()
+    }
+
+    async fn grid_game(h: &Harness) -> CatalogGame {
+        let (_, _, game) = game_on(h, GRID_CHAIN).await;
+        let hash = h
+            .service
+            .platform_register_adapter(&game.game_id, crate::games::adapters::GRID_VERIFIER, 1, "ops")
+            .unwrap();
+        // The hash an operator approves is the hash of the bytes in the repository, not a value typed in.
+        assert_eq!(hash, hex::encode(<sha3::Sha3_256 as sha3::Digest>::digest(crate::games::adapters::GRID_VERIFIER)));
+        h.service.catalog_game(&game.game_id).unwrap()
+    }
+
+    #[test]
+    fn the_shipped_grid_verifier_is_a_module_the_runtime_accepts() {
+        let module = AdapterModule::compile(crate::games::adapters::GRID_VERIFIER, RuntimeLimits::default()).expect("the shipped module compiles");
+        // Pinned: a changed module must change this hash deliberately, in a commit that says so. The full
+        // digest, not a prefix, so two modules cannot share a pin by accident.
+        assert_eq!(
+            hex::encode(module.hash()),
+            "49de66d6c8f1b0c67ab0402932a82e01c0b474cce4ea9e02b6f70e303b804813",
+            "the shipped UltraGrid verifier's bytes changed: rebuild with scripts/build-adapters.sh and update this pin, the runbook's identity table and any registered copy"
+        );
+        assert_eq!(
+            module.hash(),
+            <[u8; 32]>::from(<sha3::Sha3_256 as sha3::Digest>::digest(crate::games::adapters::GRID_VERIFIER)),
+            "the pin is the SHA3-256 of the bytes in the repository, recomputed, not copied from a note"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_grid_verifier_regenerates_the_puzzle_and_accepts_only_a_real_solution() {
+        let h = harness(Options::default());
+        let game = grid_game(&h).await;
+        let (day, date) = grid_day_of(&h);
+        let root = [0u8; 32];
+        let seed = grid_seed(GRID_CHAIN, &date, &root);
+        let level = 3u8;
+        let generated = crate::ultragrid::generate(&seed, level);
+        let reference: Vec<(u16, u8)> = generated.reference.iter().map(|turn| (turn.cell, turn.turns)).collect();
+        let payload = crate::games::play_context::grid_payload(GRID_CHAIN, day, &root, level, &reference);
+
+        let played = h.service.play(&game.game_id, &player(1), "grid-1", &hex::encode(&payload)).await.expect("the reference solution plays");
+        assert_eq!(played.outcome, "win", "the reference route must win: {played:?}");
+        assert_eq!(played.score, generated.reference.iter().map(|t| u32::from(t.turns)).sum::<u32>());
+
+        // A well-formed answer that does not solve the puzzle is judged, not refused: an empty route.
+        let none: Vec<(u16, u8)> = Vec::new();
+        let surrendered = crate::games::play_context::grid_payload(GRID_CHAIN, day, &root, level, &none);
+        let lost = h.service.play(&game.game_id, &player(1), "grid-2", &hex::encode(&surrendered)).await.unwrap();
+        assert_eq!(lost.outcome, "loss");
+        assert_eq!(lost.score, 0, "nothing was turned, so nothing was earned");
+        assert_ne!(lost.score, played.score);
+
+        // An illegal rotation is a different verdict: a turn count the puzzle does not allow is not a
+        // move at all, so the module refuses the answer instead of recording it as a loss. That line is
+        // the module's to draw, and it is drawn in the shared engine, not here.
+        let mut illegal = reference.clone();
+        illegal[0].1 = 0;
+        let refused_play = crate::games::play_context::grid_payload(GRID_CHAIN, day, &root, level, &illegal);
+        assert_eq!(h.service.play(&game.game_id, &player(1), "grid-2b", &hex::encode(&refused_play)).await.unwrap().outcome, "invalid");
+
+        // An answer for one level cannot be replayed against another. The payload names the level, the
+        // module regenerates that level's puzzle, and the other level's cells do not exist in it — so the
+        // answer is refused, not scored: a win here would mean a route had been judged against a puzzle
+        // the player never saw.
+        let other = crate::games::play_context::grid_payload(GRID_CHAIN, day, &root, level + 1, &reference);
+        assert_eq!(h.service.play(&game.game_id, &player(1), "grid-3", &hex::encode(&other)).await.unwrap().outcome, "invalid");
+    }
+
+    #[tokio::test]
+    async fn a_grid_play_must_be_for_this_chain_and_this_day() {
+        let h = harness(Options::default());
+        let game = grid_game(&h).await;
+        let (day, date) = grid_day_of(&h);
+        let root = [0u8; 32];
+        let seed = grid_seed(GRID_CHAIN, &date, &root);
+        let generated = crate::ultragrid::generate(&seed, 1);
+        let reference: Vec<(u16, u8)> = generated.reference.iter().map(|turn| (turn.cell, turn.turns)).collect();
+
+        // Yesterday's play is refused: the host is the clock.
+        let yesterday = crate::games::play_context::grid_payload(GRID_CHAIN, day - 1, &root, 1, &reference);
+        let refused = h.service.play(&game.game_id, &player(1), "grid-d1", &hex::encode(&yesterday)).await;
+        assert!(matches!(refused, Err(GamesError::Invalid(_))), "yesterday must be refused: {refused:?}");
+
+        // Another chain's seed is refused before the module sees it.
+        let other_chain = crate::games::play_context::grid_payload(GRID_CHAIN + 1, day, &root, 1, &reference);
+        let refused = h.service.play(&game.game_id, &player(1), "grid-d2", &hex::encode(&other_chain)).await;
+        assert!(matches!(refused, Err(GamesError::Forbidden(_))), "another chain must be refused: {refused:?}");
+
+        // An anchor root of the player's choosing is refused: that is how an easier puzzle would be chosen.
+        let chosen_root = crate::games::play_context::grid_payload(GRID_CHAIN, day, &[7u8; 32], 1, &reference);
+        let refused = h.service.play(&game.game_id, &player(1), "grid-d3", &hex::encode(&chosen_root)).await;
+        assert!(matches!(refused, Err(GamesError::Forbidden(_))), "a chosen anchor root must be refused: {refused:?}");
+
+        // With the chain's real root the same play is judged, which is the point: the context is the gate.
+        h.chain.add_anchor(GRID_CHAIN, 1, [4u8; 32], 1);
+        let today_root = [4u8; 32];
+        let seed = grid_seed(GRID_CHAIN, &date, &today_root);
+        let generated = crate::ultragrid::generate(&seed, 1);
+        let route: Vec<(u16, u8)> = generated.reference.iter().map(|turn| (turn.cell, turn.turns)).collect();
+        let payload = crate::games::play_context::grid_payload(GRID_CHAIN, day, &today_root, 1, &route);
+        assert_eq!(h.service.play(&game.game_id, &player(1), "grid-d4", &hex::encode(&payload)).await.unwrap().outcome, "win");
+    }
+
+    #[tokio::test]
+    async fn the_grid_verifier_is_deterministic_and_refuses_a_malformed_payload() {
+        let h = harness(Options::default());
+        let game = grid_game(&h).await;
+        let (day, date) = grid_day_of(&h);
+        let root = [0u8; 32];
+        let seed = grid_seed(GRID_CHAIN, &date, &root);
+        let generated = crate::ultragrid::generate(&seed, 0);
+        let route: Vec<(u16, u8)> = generated.reference.iter().map(|turn| (turn.cell, turn.turns)).collect();
+        let payload = crate::games::play_context::grid_payload(GRID_CHAIN, day, &root, 0, &route);
+
+        // Two runs of the module agree byte for byte, which the runtime also enforces on every judge.
+        let module = AdapterModule::compile(crate::games::adapters::GRID_VERIFIER, RuntimeLimits::default()).unwrap();
+        let first = module.run_once(&[9u8; 32], &payload).unwrap();
+        let second = module.run_once(&[9u8; 32], &payload).unwrap();
+        assert_eq!(first.raw_output, second.raw_output, "two runs must agree on every output byte");
+        assert_eq!(first.fuel_used, second.fuel_used, "and on the fuel they burned");
+        assert_eq!(first.output.outcome, Outcome::Win);
+
+        // A payload that is not this layout is judged invalid, never silently accepted.
+        let garbage = hex::encode([0u8; 60]);
+        assert_eq!(h.service.play(&game.game_id, &player(1), "grid-g1", &garbage).await.unwrap().outcome, "invalid");
+        let truncated = hex::encode(&payload[..payload.len() - 2]);
+        assert_eq!(h.service.play(&game.game_id, &player(1), "grid-g2", &truncated).await.unwrap().outcome, "invalid");
+        // Exactly the payload limit is still judged, and an inconsistent answer inside it is invalid
+        // rather than an error: the limit is about size, not about content.
+        let mut at_the_limit = crate::games::play_context::grid_payload(GRID_CHAIN, day, &root, 0, &vec![(0u16, 1u8); 2_000]);
+        at_the_limit.truncate(4_096);
+        assert_eq!(h.service.play(&game.game_id, &player(1), "grid-g3", &hex::encode(&at_the_limit)).await.unwrap().outcome, "invalid");
+        // One byte past it is refused by the host before any module runs.
+        let mut over = crate::games::play_context::grid_payload(GRID_CHAIN, day, &root, 0, &vec![(0u16, 1u8); 2_000]);
+        over.truncate(4_097);
+        assert!(h.service.play(&game.game_id, &player(1), "grid-g4", &hex::encode(&over)).await.is_err(), "a 4,097-byte payload must be refused");
+    }
 }

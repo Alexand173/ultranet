@@ -338,6 +338,45 @@ Not here. The registry, self-service registration, `game-register` and its sibli
 API belong to the Records Service: [`records-service.md`](./records-service.md). This binary has no registry
 commands.
 
+### 5.2 The verifier modules the platform ships
+
+A game is judged by a WebAssembly module whose identity is the SHA3-256 of its exact bytes. The bytes are
+committed in `src/games/adapters/` and are what `adapter-register --module` installs; nothing about a module is
+taken from its filename, its version or what it says about itself.
+
+| Module | UltraGrid universal verifier |
+|---|---|
+| File | `src/games/adapters/grid-verifier.wasm` |
+| Source | `adapters/grid-verifier` — it includes `src/ultragrid/mod.rs`, the same generator the node and the phone use |
+| ABI / adapter version | 1 |
+| Size | 29,504 bytes |
+| SHA3-256 | `49de66d6c8f1b0c67ab0402932a82e01c0b474cce4ea9e02b6f70e303b804813` |
+| Rebuilt by | `./scripts/build-adapters.sh` (add `--verify` to prove the runtime accepts it) |
+| Pinned by | `src/games/tests.rs::the_shipped_grid_verifier_is_a_module_the_runtime_accepts` |
+
+**A registered copy must match that hash.** `adapter-register` prints what it bound
+(`game <id> is now bound to adapter <hash> …`), and the catalog reports the same value as `adapter_hash` from
+`GET /api/games/store`. If a host's `adapter_hash` is not the digest above, it is running different bytes: stop
+and find out which module it holds before letting a game pay anything.
+
+**Why the module is built the way it is.** The host validates a module before running it and refuses anything
+outside a narrow instruction set. `memory.copy` and `memory.fill` are allowed — every Rust-built module needs
+them, because `memcpy` and `memset` ship precompiled in the wasm standard library with bulk memory enabled, so
+no build flag removes them; `adapters/grid-verifier/.cargo/config.toml` turns off everything else the validator
+would refuse. They are safe to admit because they reach only the module's own linear memory — capped at
+**16 pages (1 MiB)**, unchanged — and because the runtime charges fuel **per byte** copied or filled (one fuel
+per 64 bytes, measured), so a bulk operation cannot buy work the equivalent loop would have paid for. The
+module also declares its own memory: 10 pages at start and 16 at most, with a 512 KiB stack, because the
+linker's 1 MiB default stack alone is the whole host allowance and would make the module ask for 17 pages and
+be refused for it. Fuel
+metering is unchanged; a starved budget traps before the operation completes, and every out-of-bounds bulk
+operation traps. The tests that hold this down are in `src/games/adapter.rs`:
+`bulk_operations_are_metered_per_byte_and_not_per_instruction`,
+`a_bulk_operation_without_the_fuel_to_pay_for_it_traps_before_it_finishes`,
+`out_of_bounds_bulk_operations_trap_instead_of_reaching_outside_memory`,
+`bulk_operations_are_deterministic_across_fresh_instances` and
+`bulk_memory_did_not_bring_any_other_extension_with_it`.
+
 ---
 
 ## 6. When something goes wrong

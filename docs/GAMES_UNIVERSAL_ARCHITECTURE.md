@@ -109,10 +109,17 @@ rule. Those rows stay NOT IMPLEMENTED until stages 2 to 5 exist.
 contract, nothing more: it is not connected to the Games service, pays nobody and touches no ledger or database.
 
 - **Validation (done, tested).** A module is loaded only if it is at most 256 KiB, validates under the integer
-  core (no floating point, SIMD, threads, bulk memory, reference types, tail calls, multiple or 64-bit
-  memory), imports nothing, exports the six functions of ABI 1 with the exact types, and declares a memory
-  maximum no larger than the host's 16 pages. Each run is a fresh instance with a fuel budget, a bounded call
-  depth and bounded input and output.
+  core (no floating point, SIMD, threads, reference types, tail calls, multiple memories, multiple values,
+  saturating float-to-int, extended const or 64-bit memory), imports nothing, exports the six functions of ABI 1
+  with the exact types, and declares a memory maximum no larger than the host's 16 pages. Each run is a fresh
+  instance with a fuel budget, a bounded call depth and bounded input and output.
+- **Bulk memory is the one exception, and it is metered per byte.** `memory.copy` and `memory.fill` are allowed.
+  Every Rust-built adapter needs them: `memcpy` and `memset` ship precompiled in the wasm standard library with
+  bulk memory on, so no build flag removes them (measured 2026-11-26 — the shipped std's `compiler_builtins`
+  rlib contains 27 such opcodes). They reach only the module's own linear memory, which is capped at 16 pages,
+  and wasmi charges one fuel per 64 bytes copied or filled, so the operation costs what the loop would. Tests
+  measure the ratio at 4,096, 32,768 and 65,536 bytes, prove a starved budget traps before the fill completes,
+  and prove every out-of-bounds bulk operation traps.
 - **Determinism (done, tested).** No imports means no clock, network, file or randomness. The only result the
   host will stand behind comes from two fresh runs that agree on every output byte and on the fuel used.
 - **A module cannot declare itself verified.** The output has no such field; "verified" is the host's decision.
