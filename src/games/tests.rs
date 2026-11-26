@@ -424,6 +424,7 @@ struct Options {
     /// Require a wallet session on the routes that act for a player.
     require_player_auth: bool,
     pool_payouts_enabled: bool,
+    play_per_minute: u64,
 }
 
 impl Default for Options {
@@ -444,6 +445,7 @@ impl Default for Options {
             clock: None,
             require_player_auth: false,
             pool_payouts_enabled: true,
+            play_per_minute: 20,
         }
     }
 }
@@ -463,6 +465,7 @@ fn harness(options: Options) -> Harness {
     config.anchor_games = options.anchor_games;
     config.require_player_auth = options.require_player_auth;
     config.pool_payouts_enabled = options.pool_payouts_enabled;
+    config.play_per_minute = options.play_per_minute;
     let tick = clock.clone();
     let records_anchorer = Arc::new(FakeAnchorer::default());
     let mut records_config = RecordsConfig::new();
@@ -7963,5 +7966,98 @@ mod reward_pools {
             let response = call_service(&app, TestRequest::post().uri(&format!("/api/games/pools/{}/{uri}", game.game_id)).set_json(serde_json::json!({})).to_request()).await;
             assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
         }
+    }
+
+    // --- what the phone shows: the store, rewards history, funding history, play rate ------------------
+
+    #[tokio::test]
+    async fn the_store_lists_each_game_with_its_live_owner_and_the_exact_reason_it_cannot_play_or_pay() {
+        let h = harness(Options::default());
+        let ready_game = playable(&h, 7, 1_000).await; // verified module, funded, approved policy
+        let (_, _, record_only) = game_on(&h, 8).await; // adapter hash named, bytes never installed
+        let unfunded = {
+            let (keys, _, game) = game_on(&h, 9).await;
+            h.service.platform_register_adapter(&game.game_id, &::wat::parse_str(PLAY_WAT).unwrap(), 1, "ops").unwrap();
+            let _ = keys;
+            game
+        };
+        let listing = h.service.store_listing(None, None).await.unwrap();
+        let by = |id: &str| listing.iter().find(|e| e.game_id == id).unwrap().clone();
+        let ok = by(&ready_game.game_id);
+        assert_eq!((ok.playable, ok.rewards, ok.reward_units, ok.rewards_reason), (true, "available", Some(100), None));
+        assert_eq!(ok.owner.as_deref(), h.chain.owners.lock().unwrap().get(&7).map(String::as_str), "the owner is the ledger's, read now");
+        let missing = by(&record_only.game_id);
+        assert_eq!((missing.playable, missing.playable_reason, missing.rewards), (false, Some("adapter_module_not_installed"), "none"));
+        let nopolicy = by(&unfunded.game_id);
+        assert_eq!((nopolicy.playable, nopolicy.rewards_reason), (true, Some("no_approved_reward_policy")));
+        // Search is by name or id; the chain filter narrows; identity is the id, never the name.
+        assert_eq!(h.service.store_listing(Some(&ready_game.game_id[..8]), None).await.unwrap().len(), 1);
+        assert_eq!(h.service.store_listing(Some("pool game"), None).await.unwrap().len(), 3, "the same display name on three chains");
+        assert_eq!(h.service.store_listing(None, Some(8)).await.unwrap().len(), 1);
+        assert!(h.service.store_listing(Some("no such thing"), None).await.unwrap().is_empty());
+        // A chain handover moves the owner shown, and nothing else.
+        let (_, new_owner) = wallet();
+        h.chain.owners.lock().unwrap().insert(7, new_owner.clone());
+        assert_eq!(h.service.store_listing(None, Some(7)).await.unwrap()[0].owner.as_deref(), Some(new_owner.as_str()));
+        // Closing the gate removes the reward offer, and a drained pool says so.
+        let off = harness(Options { pool_payouts_enabled: false, ..Options::default() });
+        let game = playable(&off, 7, 1_000).await;
+        let entry = off.service.store_listing(None, None).await.unwrap().into_iter().find(|e| e.game_id == game.game_id).unwrap();
+        assert_eq!((entry.playable, entry.rewards, entry.rewards_reason), (true, "none", Some("rewards_not_enabled")));
+        let small = harness(Options::default());
+        let g = playable(&small, 7, 150).await;
+        small.service.play(&g.game_id, &player(1), "m1", "01").await.unwrap(); // reserves 100 + its fee of 1: 49 is left
+        let entry = small.service.store_listing(None, None).await.unwrap().into_iter().find(|e| e.game_id == g.game_id).unwrap();
+        assert_eq!((entry.rewards, entry.rewards_reason), ("none", Some("pool_cannot_cover_the_reward")));
+    }
+
+    #[tokio::test]
+    async fn a_players_history_shows_reserved_then_paid_with_the_transaction_reference() {
+        let h = harness(Options::default());
+        let game = playable(&h, 7, 1_000).await;
+        h.service.play(&game.game_id, &player(1), "m1", "01").await.unwrap();
+        h.service.play(&game.game_id, &player(2), "m2", "01").await.unwrap();
+        let before = h.service.player_result_list(&player(1)).unwrap();
+        assert_eq!((before.len(), before[0].stage, before[0].payout_state.as_deref(), before[0].transaction_hash.is_none()), (1, "reward_reserved", Some("queued"), true));
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let sent = h.service.store().pool_payouts_for(&game.game_id).unwrap().into_iter().find(|p| p.to_address == player(1)).unwrap();
+        let signed = h.service.player_result_list(&player(1)).unwrap().remove(0);
+        assert_eq!((signed.stage, signed.transaction_hash.clone()), ("reward_reserved", sent.tx_hash.clone()), "a hash is shown, but it is not paid yet");
+        confirm_on_node(&h, &sent);
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let paid = h.service.player_result_list(&player(1)).unwrap().remove(0);
+        assert_eq!((paid.stage, paid.payout_state.as_deref(), paid.reward_units), ("reward_paid", Some("confirmed"), 100));
+        // Another wallet's history is its own.
+        assert_eq!(h.service.player_result_list(&player(2)).unwrap().len(), 1);
+        assert!(h.service.player_result_list(&player(3)).unwrap().is_empty());
+        assert!(h.service.player_result_list("nonsense").is_err());
+    }
+
+    #[tokio::test]
+    async fn the_funding_history_lists_each_confirmed_deposit_once() {
+        let h = harness(Options::default());
+        let (keys, owner, game) = game_on(&h, 7).await;
+        fund(&h, &keys, &owner, &game, 400, 1).await.unwrap();
+        fund(&h, &keys, &owner, &game, 600, 2).await.unwrap();
+        assert!(fund(&h, &keys, &owner, &game, 600, 2).await.is_err(), "the same transfer funds once");
+        let deposits = h.service.pool_deposit_list(&game.game_id).unwrap();
+        assert_eq!(deposits.iter().map(|d| d.amount_units).sum::<u64>(), 1_000);
+        assert_eq!(deposits.len(), 2);
+        assert!(deposits.iter().all(|d| d.funder == owner));
+    }
+
+    #[tokio::test]
+    async fn one_wallet_cannot_start_more_plays_per_minute_than_the_limit_and_others_are_unaffected() {
+        let h = harness(Options { play_per_minute: 3, ..Options::default() });
+        let game = playable(&h, 7, 1_000).await;
+        for n in 0..3 {
+            h.service.play(&game.game_id, &player(1), &format!("m{n}"), "02").await.unwrap();
+        }
+        let blocked = h.service.play(&game.game_id, &player(1), "m3", "02").await;
+        assert!(matches!(blocked, Err(GamesError::PlayRateLimited)), "{blocked:?}");
+        assert!(h.service.play(&game.game_id, &player(2), "m0", "02").await.is_ok(), "another wallet is not slowed");
+        h.advance(61);
+        assert!(h.service.play(&game.game_id, &player(1), "m3", "02").await.is_ok(), "the minute passed");
+        assert_eq!(GamesError::PlayRateLimited.status(), 429);
     }
 }

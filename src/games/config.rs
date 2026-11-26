@@ -259,6 +259,7 @@ impl GamesConfig {
         service.require_player_auth = boolean("GAMES_REQUIRE_PLAYER_AUTH", true)?;
         // Fail closed: pool rewards and withdrawals move real ULTRA, so they stay off until an operator says so.
         service.pool_payouts_enabled = boolean("GAMES_POOL_PAYOUTS_ENABLED", false)?;
+        service.play_per_minute = number("GAMES_PLAY_PER_MINUTE", service.play_per_minute)?;
         service.anchor_empty_days = boolean("GAMES_ANCHOR_EMPTY_DAYS", service.anchor_empty_days)?;
         service.anchor_retry_seconds =
             number("GAMES_ANCHOR_RETRY_SECONDS", service.anchor_retry_seconds)?;

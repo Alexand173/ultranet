@@ -78,6 +78,9 @@ pub struct ServiceConfig {
     /// The production gate for per-game reward pools. Off unless an operator turns it on: with it off, no pool
     /// reward is reserved, no pool payout is signed and no withdrawal is paid, whatever the pools hold.
     pub pool_payouts_enabled: bool,
+    /// The most plays one wallet may start per minute. Each play runs a module twice, so this bounds the CPU a
+    /// single wallet can spend; the module's own fuel budget bounds each run.
+    pub play_per_minute: u64,
 }
 
 impl ServiceConfig {
@@ -97,6 +100,7 @@ impl ServiceConfig {
             require_player_auth: false,
             catalog_max_games_per_chain: 20,
             pool_payouts_enabled: false,
+            play_per_minute: 20,
         }
     }
 }
@@ -157,6 +161,8 @@ pub enum GamesError {
     SessionMismatch,
     #[error("too many sign-in requests; try again shortly")]
     AuthRateLimited,
+    #[error("you are playing too fast; try again in a minute")]
+    PlayRateLimited,
     #[error("{0}")]
     NotFound(String),
     #[error("internal error: {0}")]
@@ -194,6 +200,7 @@ impl GamesError {
             GamesError::AuthFailed => "auth_failed",
             GamesError::SessionMismatch => "session_mismatch",
             GamesError::AuthRateLimited => "auth_rate_limited",
+            GamesError::PlayRateLimited => "play_rate_limited",
             GamesError::Internal(_) => "internal_error",
         }
     }
@@ -219,6 +226,7 @@ impl GamesError {
             | GamesError::OwnerLimit
             | GamesError::RegistrationLimit
             | GamesError::AuthRateLimited
+            | GamesError::PlayRateLimited
             | GamesError::CatalogFull => 429,
             GamesError::Disabled
             | GamesError::PayoutsPaused
@@ -560,6 +568,7 @@ pub struct GamesService {
     days: Mutex<HashMap<String, GridDay>>,
     payout_lock: tokio::sync::Mutex<()>,
     anchor_lock: tokio::sync::Mutex<()>,
+    play_limiter: Mutex<HashMap<String, Vec<u64>>>,
 }
 
 pub fn date_of(timestamp: u64) -> String {
@@ -627,7 +636,25 @@ impl GamesService {
             days: Mutex::new(HashMap::new()),
             payout_lock: tokio::sync::Mutex::new(()),
             anchor_lock: tokio::sync::Mutex::new(()),
+            play_limiter: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Count one play for `address` in the last minute; refuse the one past the limit. In memory by design: a
+    /// restart forgets it, which only ever lets a wallet play a little sooner, never pays anything.
+    pub(super) fn check_play_rate(&self, address: &str) -> Result<(), GamesError> {
+        let now = self.now();
+        let mut limiter = self.play_limiter.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if limiter.len() > 10_000 {
+            limiter.retain(|_, times| times.last().map_or(false, |last| now.saturating_sub(*last) < 60));
+        }
+        let times = limiter.entry(address.to_string()).or_default();
+        times.retain(|at| now.saturating_sub(*at) < 60);
+        if times.len() as u64 >= self.config.play_per_minute {
+            return Err(GamesError::PlayRateLimited);
+        }
+        times.push(now);
+        Ok(())
     }
 
     pub fn store(&self) -> &GamesStore {

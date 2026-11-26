@@ -105,6 +105,7 @@ impl GamesService {
         if result_id.is_empty() || result_id.len() > 128 {
             return Err(GamesError::Invalid("result_id must be 1 to 128 characters".into()));
         }
+        self.check_play_rate(&player)?;
         let payload = hex::decode(payload_hex).map_err(|_| GamesError::Invalid("payload must be hexadecimal".into()))?;
         let game = self.catalog_game(game_id)?;
         if game.status != STATUS_ACTIVE {
@@ -217,5 +218,173 @@ impl GamesService {
             payout_state,
             not_rewarded: None,
         })
+    }
+}
+
+// --- what a phone needs to show: the store, a player's rewards, a pool's funding ---------------------
+
+/// One game as the store lists it. `owner` is read from the ledger now; it is `None` when the node cannot say.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct StoreEntry {
+    pub game_id: String,
+    pub chain_id: u32,
+    pub name: String,
+    pub description: String,
+    pub status: String,
+    pub owner: Option<String>,
+    pub playable: bool,
+    /// Why it cannot be played, when it cannot.
+    pub playable_reason: Option<&'static str>,
+    pub rewards: &'static str,
+    pub reward_units: Option<u64>,
+    /// Why no reward is on offer, when none is.
+    pub rewards_reason: Option<&'static str>,
+}
+
+/// One of a player's results that earned or reserved a reward, with where its payout stands.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PlayerResult {
+    pub game_id: String,
+    pub result_id: String,
+    pub credit_id: String,
+    pub reward_units: u64,
+    pub stage: &'static str,
+    pub payout_state: Option<String>,
+    pub transaction_hash: Option<String>,
+    pub at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct Deposit {
+    pub tx_hash: String,
+    pub funder: String,
+    pub amount_units: u64,
+    pub claimed_at: u64,
+}
+
+fn stage_of(state: &str) -> &'static str {
+    match state {
+        "paid" => STAGE_PAID,
+        "released" => STAGE_RELEASED,
+        _ => STAGE_RESERVED,
+    }
+}
+
+impl GamesStore {
+    /// A player's credits, newest first, with each payout's state and transaction hash where there is one.
+    pub fn player_results(&self, player: &str, limit: u32) -> Result<Vec<PlayerResult>, PoolError> {
+        let guard = self.lock()?;
+        let mut statement = guard.prepare(
+            "SELECT c.game_id, c.result_id, c.credit_id, c.amount_units, c.state, p.state, p.tx_hash, c.created_at
+             FROM game_pool_credits c
+             LEFT JOIN game_pool_payouts p ON p.kind = 'reward' AND p.ref_id = c.credit_id
+             WHERE c.player = ?1 ORDER BY c.created_at DESC, c.credit_id LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![player, i64::from(limit)], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?, row.get::<_, Option<String>>(5)?, row.get::<_, Option<String>>(6)?, row.get::<_, i64>(7)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (game_id, result_id, credit_id, amount, state, payout_state, tx, at) = row?;
+            out.push(PlayerResult {
+                game_id,
+                result_id,
+                credit_id,
+                reward_units: super::store::to_u64(amount)?,
+                stage: stage_of(&state),
+                payout_state,
+                transaction_hash: tx,
+                at: super::store::to_u64(at)?,
+            });
+        }
+        Ok(out)
+    }
+
+    pub fn pool_deposits_for(&self, game_id: &str) -> Result<Vec<Deposit>, PoolError> {
+        let guard = self.lock()?;
+        let mut statement = guard.prepare("SELECT tx_hash, funder, amount_units, claimed_at FROM game_pool_deposits WHERE game_id = ?1 ORDER BY claimed_at DESC, tx_hash")?;
+        let rows = statement.query_map(params![game_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (tx_hash, funder, amount, at) = row?;
+            out.push(Deposit { tx_hash, funder, amount_units: super::store::to_u64(amount)?, claimed_at: super::store::to_u64(at)? });
+        }
+        Ok(out)
+    }
+}
+
+impl GamesService {
+    /// Every game, with who owns its chain now and whether it can be played and rewarded, so a screen never has to
+    /// guess. `query` matches the name or the game id; `chain_id` narrows to one AppChain. At most 100 entries.
+    pub async fn store_listing(&self, query: Option<&str>, chain_id: Option<u32>) -> Result<Vec<StoreEntry>, GamesError> {
+        let needle = query.map(|q| q.trim().to_lowercase()).filter(|q| !q.is_empty());
+        let games: Vec<_> = self
+            .catalog_games(chain_id)?
+            .into_iter()
+            .filter(|game| needle.as_deref().map_or(true, |n| game.name.to_lowercase().contains(n) || game.game_id.contains(n)))
+            .take(100)
+            .collect();
+        let mut owners: std::collections::HashMap<u32, Option<String>> = std::collections::HashMap::new();
+        for game in &games {
+            if !owners.contains_key(&game.chain_id) {
+                owners.insert(game.chain_id, self.chain().chain_owner(game.chain_id).await.ok().flatten());
+            }
+        }
+        let mut entries = Vec::with_capacity(games.len());
+        for game in games {
+            let has_module = match game.adapter_ref.as_deref() {
+                Some(hash) => self.store().module_bytes(hash)?.is_some(),
+                None => false,
+            };
+            let playable_reason = if game.status != STATUS_ACTIVE {
+                Some("game_not_active")
+            } else if game.validation_scheme != SCHEME_VERIFIED_ADAPTER || game.adapter_ref.is_none() {
+                Some("record_only_no_approved_adapter")
+            } else if !has_module {
+                Some("adapter_module_not_installed")
+            } else {
+                None
+            };
+            let (rewards, reward_units, rewards_reason) = if playable_reason.is_some() {
+                ("none", None, Some("not_playable"))
+            } else if !self.service_config().pool_payouts_enabled {
+                ("none", None, Some("rewards_not_enabled"))
+            } else {
+                match self.store().policy_active(&game.game_id, self.now())? {
+                    None => ("none", None, Some("no_approved_reward_policy")),
+                    Some(policy) => {
+                        if self.store().pool_view(&game.game_id)?.available < policy.reward_units {
+                            ("none", Some(policy.reward_units), Some("pool_cannot_cover_the_reward"))
+                        } else {
+                            ("available", Some(policy.reward_units), None)
+                        }
+                    }
+                }
+            };
+            entries.push(StoreEntry {
+                owner: owners.get(&game.chain_id).cloned().flatten(),
+                game_id: game.game_id,
+                chain_id: game.chain_id,
+                name: game.name,
+                description: game.description,
+                status: game.status,
+                playable: playable_reason.is_none(),
+                playable_reason,
+                rewards,
+                reward_units,
+                rewards_reason,
+            });
+        }
+        Ok(entries)
+    }
+
+    pub fn player_result_list(&self, address: &str) -> Result<Vec<PlayerResult>, GamesError> {
+        let address = self.normalize_address(address)?;
+        Ok(self.store().player_results(&address, 100)?)
+    }
+
+    pub fn pool_deposit_list(&self, game_id: &str) -> Result<Vec<Deposit>, GamesError> {
+        self.catalog_game(game_id)?;
+        Ok(self.store().pool_deposits_for(game_id)?)
     }
 }

@@ -16,6 +16,9 @@
 //! POST /api/games/play/{game}             (X-Wallet-Session) {address, result_id, payload}  judged by the game's approved adapter
 //! GET  /api/games/results/{game}/{result}  verified / reward_reserved / reward_paid (paid = the node confirmed it)
 //! GET  /api/games/pools/{game}[/policies|/payouts]   a game's own pool, policies and payouts (read-only)
+//! GET  /api/games/store?q=&chain_id=       every game with its live chain owner, playability and reward availability
+//! GET  /api/games/players/{address}/results  a wallet's rewards: reserved, paid or released, with payout state and hash
+//! GET  /api/games/pools/{game}/deposits    a pool's funding history
 //! POST /api/games/pools/{game}/fund       owner-signed claim over a confirmed deposit transfer
 //! POST /api/games/pools/{game}/policy     owner-signed reward policy proposal (inert until the platform approves)
 //! POST /api/games/pools/{game}/withdraw   owner-signed; the funds go to the chain's current owner
@@ -73,6 +76,9 @@ pub fn configure_routes(config: &mut web::ServiceConfig) {
         .route("/api/games/catalog/{game_id}/history", web::get().to(catalog_history))
         .route("/api/games/play/{game_id}", web::post().to(play))
         .route("/api/games/results/{game_id}/{result_id}", web::get().to(result_view))
+        .route("/api/games/store", web::get().to(store_listing))
+        .route("/api/games/players/{address}/results", web::get().to(player_results))
+        .route("/api/games/pools/{game_id}/deposits", web::get().to(pool_deposits))
         .route("/api/games/pools/{game_id}", web::get().to(pool_view))
         .route("/api/games/pools/{game_id}/policies", web::get().to(pool_policies))
         .route("/api/games/pools/{game_id}/payouts", web::get().to(pool_payouts))
@@ -417,6 +423,24 @@ async fn play(service: web::Data<GamesService>, request: HttpRequest, id: web::P
         return error_response(&error);
     }
     respond(service.play(&id, &body.address, &body.result_id, &body.payload).await)
+}
+
+#[derive(Deserialize)]
+struct StoreQuery {
+    q: Option<String>,
+    chain_id: Option<u32>,
+}
+
+async fn store_listing(service: web::Data<GamesService>, query: web::Query<StoreQuery>) -> HttpResponse {
+    respond(service.store_listing(query.q.as_deref(), query.chain_id).await.map(|games| json!({ "games": games })))
+}
+
+async fn player_results(service: web::Data<GamesService>, address: web::Path<String>) -> HttpResponse {
+    respond(service.player_result_list(&address).map(|results| json!({ "results": results })))
+}
+
+async fn pool_deposits(service: web::Data<GamesService>, id: web::Path<String>) -> HttpResponse {
+    respond(game_id_or_404(id.into_inner()).and_then(|id| service.pool_deposit_list(&id)).map(|deposits| json!({ "deposits": deposits })))
 }
 
 async fn result_view(service: web::Data<GamesService>, path: web::Path<(String, String)>) -> HttpResponse {

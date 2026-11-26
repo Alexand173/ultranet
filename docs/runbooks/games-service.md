@@ -281,6 +281,10 @@ approved a policy and the game's owner has funded the pool.**
   agreement; `GET /api/games/results/{game}/{result}` reads back `reward_reserved` or `reward_paid`. A result is
   *verified* when the runs agree, *reserved* when the pool set the reward aside, and *paid* only when the node
   confirmed the transfer.
+- **Reads for the app.** `GET /api/games/store` (every game with its live chain owner, whether it can be played and
+  why not, and whether a reward is on offer and why not), `GET /api/games/players/{address}/results` (a wallet's
+  rewards with payout state and transaction hash) and `GET /api/games/pools/{game}/deposits` (funding history).
+  `GAMES_PLAY_PER_MINUTE` (default 20) limits plays per wallet; the module's fuel budget limits each run.
 - **Not built:** Grid and Chess still use their own older path (Chess stays record-only), and the Android screens
   for catalog games.
 - **Reward money is not AppChain fees.** Registration, anchor and transfer fees are not read or changed here.
