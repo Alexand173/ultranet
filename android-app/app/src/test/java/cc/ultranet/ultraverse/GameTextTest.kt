@@ -25,7 +25,7 @@ class GameTextTest {
     private val other = "cd".repeat(32)
 
     private fun game(id: String, owner: String?, playable: Boolean, rewards: String) = StoreGame(
-        gameId = id, chainId = 7, name = "Same Name", description = "", status = "active", owner = owner,
+        gameId = id, chainId = 7, name = "Same Name", description = "", status = "active", validationScheme = "verified_adapter", adapterHash = null, owner = owner,
         playable = playable, playableReason = if (playable) null else "record_only_no_approved_adapter",
         rewards = rewards, rewardUnits = null, rewardsReason = null,
     )
@@ -35,7 +35,7 @@ class GameTextTest {
         val labels = listOf("verified", "reward_reserved", "reward_paid", "reward_released").associateWith(::stageLabel)
         assertTrue(labels.getValue("reward_paid").startsWith("Paid"))
         listOf("verified", "reward_reserved", "reward_released").forEach { assertFalse(labels.getValue(it), labels.getValue(it).startsWith("Paid")) }
-        assertEquals("an unknown stage is never shown as paid", "Unknown state", stageLabel("something_else"))
+        assertEquals("an unknown stage is never shown as paid", "Unknown State", stageLabel("something_else"))
         assertFalse(payoutStateText("submitted")!!.contains("confirmed by the network"))
         assertTrue(payoutStateText("confirmed")!!.contains("confirmed"))
         assertNull(payoutStateText(null))

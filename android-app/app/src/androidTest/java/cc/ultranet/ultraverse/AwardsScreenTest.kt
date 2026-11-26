@@ -93,11 +93,11 @@ class AwardsScreenTest {
     @Test
     fun rewardsAreShownPaidReservedOrReleasedExactlyAsTheServiceSaysAndPaidOnlyWhenConfirmed() {
         show()
-        waitForText("Paid, confirmed by the network")
-        compose.onNodeWithText("Reward reserved, not paid yet").assertIsDisplayed()
-        compose.onNodeWithText("Reward released, not paid").assertIsDisplayed()
+        waitForText("Paid — Confirmed on UltraNet")
+        compose.onNodeWithText("Reward Reserved — Not Yet Paid").assertIsDisplayed()
+        compose.onNodeWithText("Reward Released — Not Paid").assertIsDisplayed()
         // Exactly one reward reads as paid, and it is the confirmed one.
-        assertEquals(1, compose.onAllNodes(hasText("Paid, confirmed", substring = true)).fetchSemanticsNodes().size)
+        assertEquals(1, compose.onAllNodes(hasText("Paid — Confirmed", substring = true)).fetchSemanticsNodes().size)
         compose.onNodeWithTag("reward-paid-one").assertIsDisplayed()
         compose.onNodeWithText("Payment sent, waiting for the network to confirm").assertIsDisplayed()
         compose.onNodeWithText("Transaction ${"cd".repeat(32).let { "${it.take(10)}…${it.takeLast(8)}" }}").assertIsDisplayed()

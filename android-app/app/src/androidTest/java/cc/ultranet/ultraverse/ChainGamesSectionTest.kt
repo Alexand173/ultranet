@@ -37,7 +37,7 @@ class ChainGamesSectionTest {
         server.handler = { request ->
             when {
                 request.method == "POST" && request.path.endsWith("/catalog") -> 200 to
-                    """{"success":true,"game":{"game_id":"${"11".repeat(16)}","chain_id":7,"name":"New","description":"d","status":"active","owner":null,"playable":false,"playable_reason":"adapter_module_not_installed","rewards":"none","reward_units":null,"rewards_reason":"not_playable"}}"""
+                    """{"success":true,"game_id":"${"11".repeat(16)}","chain_id":7,"name":"New","description":"d","status":"active","validation_scheme":"record_only","adapter_version":0,"adapter_ref":null,"reward_policy_ref":null,"created_by":"${"ab".repeat(32)}","created_at":1,"updated_at":1}"""
                 else -> 200 to """{"success":true,"games":[]}"""
             }
         }

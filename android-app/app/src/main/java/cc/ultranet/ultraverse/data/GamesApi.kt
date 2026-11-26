@@ -50,6 +50,9 @@ internal data class StoreGame(
     val name: String,
     val description: String,
     val status: String,
+    val validationScheme: String,
+    /** SHA3-256 of the approved verifier module; null while the game is record only. */
+    val adapterHash: String?,
     /** The current L1 owner of the chain, as the service read it from the ledger; null if it could not. */
     val owner: String?,
     val playable: Boolean,
@@ -58,6 +61,9 @@ internal data class StoreGame(
     val rewardUnits: Long?,
     val rewardsReason: String?,
 )
+
+/** A game as the catalog records it at registration: identity and status only. */
+internal data class RegisteredGame(val gameId: String, val chainId: Int, val name: String, val status: String)
 
 /** What the service says about one result. Only [stage] `reward_paid` means the node confirmed a payment. */
 internal data class PlayReport(
@@ -250,11 +256,12 @@ internal class UltraNetGamesApi(
     suspend fun poolPayouts(gameId: String): GamesResult<List<PoolPayoutRow>> =
         call("GET", "/pools/$gameId/payouts", null, parse = { json -> json.getJSONArray("payouts").objects().map(::parsePoolPayout) })
 
-    suspend fun registerGame(chainId: Int, name: String, description: String, proof: AdminProofData): GamesResult<StoreGame> =
+    /** The service answers with the catalog's own record, flat: an id and a status, not a store entry. */
+    suspend fun registerGame(chainId: Int, name: String, description: String, proof: AdminProofData): GamesResult<RegisteredGame> =
         call(
             "POST", "/catalog",
             JSONObject().put("chain_id", chainId).put("name", name).put("description", description).withProof(proof),
-            parse = { json -> parseStoreGame(json.getJSONObject("game")) },
+            parse = ::parseRegisteredGame,
         )
 
     suspend fun claimDeposit(gameId: String, txHash: String, proof: AdminProofData): GamesResult<PoolReport> =
@@ -289,12 +296,21 @@ internal class UltraNetGamesApi(
         name = json.getString("name"),
         description = json.optString("description", ""),
         status = json.getString("status"),
+        validationScheme = json.optString("validation_scheme", "record_only"),
+        adapterHash = json.optStringOrNull("adapter_hash"),
         owner = json.optStringOrNull("owner"),
         playable = json.optBoolean("playable", false),
         playableReason = json.optStringOrNull("playable_reason"),
         rewards = json.optString("rewards", "none"),
         rewardUnits = json.optLongOrNull("reward_units"),
         rewardsReason = json.optStringOrNull("rewards_reason"),
+    )
+
+    internal fun parseRegisteredGame(json: JSONObject) = RegisteredGame(
+        gameId = json.getString("game_id"),
+        chainId = json.getInt("chain_id"),
+        name = json.getString("name"),
+        status = json.getString("status"),
     )
 
     internal fun parsePlay(json: JSONObject) = PlayReport(

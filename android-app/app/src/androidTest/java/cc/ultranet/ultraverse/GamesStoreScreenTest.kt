@@ -120,9 +120,14 @@ class GamesStoreScreenTest {
         waitFor("game-play")
         compose.onNodeWithTag("game-play").assertIsEnabled().performClick()
         waitFor("play-result")
-        compose.onNodeWithText("Reward reserved, not paid yet").assertIsDisplayed()
+        compose.onNodeWithText("Reward Reserved — Not Yet Paid").assertIsDisplayed()
         compose.onNodeWithText("Payment queued").assertIsDisplayed()
-        compose.onAllNodes(hasText("Paid", substring = true)).fetchSemanticsNodes().let { assertTrue("nothing says paid", it.isEmpty()) }
+        // The reserved badge reads "Reward Reserved — Not Yet Paid", so a bare substring check for "Paid" now
+        // matches the honest wording. What must never appear is a claim of payment: the confirmed label, which
+        // only the network-confirmed stage produces.
+        compose.onAllNodes(hasText("Confirmed on UltraNet", substring = true)).fetchSemanticsNodes()
+            .let { assertTrue("nothing claims the reward was paid", it.isEmpty()) }
+        compose.onNodeWithText("Paid — Confirmed on UltraNet").assertDoesNotExist()
         val sent = server.posts("/play/$playableId").single()
         val body = org.json.JSONObject(sent.body)
         assertEquals(wallet, body.getString("address"))
@@ -145,7 +150,7 @@ class GamesStoreScreenTest {
         waitFor("game-play")
         compose.onNodeWithTag("game-play").performClick()
         waitFor("play-result")
-        compose.onNodeWithText("Verified, no reward").assertIsDisplayed()
+        compose.onNodeWithText("Verified — No Reward").assertIsDisplayed()
         compose.onNodeWithText("Verified, but this outcome does not earn a reward.").assertIsDisplayed()
     }
 

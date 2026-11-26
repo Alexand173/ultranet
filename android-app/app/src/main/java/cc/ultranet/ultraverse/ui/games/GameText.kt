@@ -49,11 +49,11 @@ internal fun notRewardedText(code: String?): String? = when (code) {
 
 /** The one line a player reads about a result. Only `reward_paid` says paid. */
 internal fun stageLabel(stage: String): String = when (stage) {
-    "verified" -> "Verified, no reward"
-    "reward_reserved" -> "Reward reserved, not paid yet"
-    "reward_paid" -> "Paid, confirmed by the network"
-    "reward_released" -> "Reward released, not paid"
-    else -> "Unknown state"
+    "verified" -> "Verified — No Reward"
+    "reward_reserved" -> "Reward Reserved — Not Yet Paid"
+    "reward_paid" -> "Paid — Confirmed on UltraNet"
+    "reward_released" -> "Reward Released — Not Paid"
+    else -> "Unknown State"
 }
 
 internal fun payoutStateText(state: String?): String? = when (state) {

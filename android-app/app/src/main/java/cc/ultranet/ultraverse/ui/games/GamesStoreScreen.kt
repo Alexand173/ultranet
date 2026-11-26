@@ -214,10 +214,13 @@ private fun GameCard(game: StoreGame, onClick: () -> Unit) {
 
 @Composable
 private fun AvailabilityBadge(game: StoreGame) {
+    // The same five words the website uses, chosen from the same facts the service reported.
     val (label, color) = when {
+        !game.playable && (game.playableReason == "record_only_no_approved_adapter" || game.validationScheme == "record_only") ->
+            "Record Only" to UltraVerseColors.gold
         !game.playable -> "Unavailable" to UltraVerseColors.unavailableStrong
-        game.rewards == "available" -> "Rewards" to UltraVerseColors.gold
-        else -> "Playable" to UltraVerseColors.supported
+        game.rewards == "available" -> "Rewards Available" to UltraVerseColors.supported
+        else -> "Rewards Unavailable" to UltraVerseColors.muted
     }
     Text(
         text = label,
