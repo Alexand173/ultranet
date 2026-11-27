@@ -1,0 +1,22 @@
+[package]
+name = "grid-verifier"
+version = "1.0.0"
+edition = "2021"
+publish = false
+
+# Its own workspace: this crate is not built by the node's cargo invocation, only by
+# scripts/build-adapters.sh, which produces the .wasm bytes the Games service stores.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+sha3 = "0.10"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

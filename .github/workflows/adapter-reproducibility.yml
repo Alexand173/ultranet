@@ -1,0 +1,157 @@
+name: Adapter reproducibility
+
+# One claim, checked: the verifier the Games service installs is the module this source builds. The bytes
+# are committed (src/games/adapters/grid-verifier.wasm), their SHA3-256 is pinned by an acceptance test
+# (src/games/tests.rs) and recorded in the runbook (docs/runbooks/games-service.md §5.2). This job rebuilds
+# from source with the script and flags a developer uses, and fails if the three disagree.
+#
+# Why its own workflow rather than a job in `windows-tests.yml`: this is a byte-for-byte property of one
+# small crate, it needs the wasm target and nothing else, and it takes about a minute. It should not sit
+# behind, or be run alongside, a 20–50 minute suite that exists for a different reason — and the `paths`
+# filter below keeps it off documentation-only changes.
+#
+# The module's runtime acceptance test is deliberately **not** repeated here. `windows-tests.yml` runs
+# `cargo test --locked --all-targets`, which includes the four tests in src/games/tests.rs that compile the
+# module through the real runtime and judge a play with it. Duplicating that here would mean building the
+# whole node and its ZK dependencies a second time for a check that is already made.
+#
+# A deliberate verifier update, end to end:
+#   1. change adapters/grid-verifier, or src/ultragrid/mod.rs which it includes by path;
+#   2. run ./scripts/build-adapters.sh (--verify also runs the runtime test locally);
+#   3. update the pin in src/games/tests.rs and the identity table in docs/runbooks/games-service.md;
+#   4. commit the source, the rebuilt bytes and the two updated records together — this job passes only
+#      when all of them agree, so a forgotten file is a red check instead of a host running bytes nobody
+#      reviewed;
+#   5. registering the new module on a host is a platform decision and happens outside CI, per the runbook.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "adapters/grid-verifier/**"
+      - "src/ultragrid/**"
+      - "src/games/adapters.rs"
+      - "src/games/adapters/**"
+      - "src/games/tests.rs"
+      - "scripts/build-adapters.sh"
+      - "rust-toolchain.toml"
+      - "docs/runbooks/games-service.md"
+      - ".github/workflows/adapter-reproducibility.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "adapters/grid-verifier/**"
+      - "src/ultragrid/**"
+      - "src/games/adapters.rs"
+      - "src/games/adapters/**"
+      - "src/games/tests.rs"
+      - "scripts/build-adapters.sh"
+      - "rust-toolchain.toml"
+      - "docs/runbooks/games-service.md"
+      - ".github/workflows/adapter-reproducibility.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: adapter-reproducibility-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reproduce:
+    name: Rebuild the UltraGrid verifier and match its pinned identity
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Install Rust with the wasm target
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.97.0"
+          targets: wasm32-unknown-unknown
+
+      # The expected identity is read out of the acceptance test rather than written here. A workflow that
+      # carried its own copy of the hash would be a third place to update and a way for the check to agree
+      # with itself while disagreeing with the test.
+      - name: Read the pinned identity from the acceptance test
+        id: pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin="$(python3 - <<'PY'
+          import re
+          import sys
+
+          text = open("src/games/tests.rs", encoding="utf-8").read()
+          match = re.search(r'hex::encode\(module\.hash\(\)\),\s*"([0-9a-f]{64})"', text)
+          if not match:
+              sys.exit("no 64-character SHA3-256 pin found in src/games/tests.rs")
+          print(match.group(1))
+          PY
+          )"
+          if ! [[ "$pin" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::the pinned identity is not 64 hex characters: $pin"
+            exit 1
+          fi
+          echo "pin=$pin" >> "$GITHUB_OUTPUT"
+          echo "Pinned identity: $pin"
+
+      # No build cache, on purpose. A restored `target/` would let cargo reuse a previously linked .wasm,
+      # and the comparison would then be between yesterday's bytes and today's pin — precisely the bypass
+      # this job exists to prevent. `target/` is removed first as well, so a cache added later cannot
+      # quietly reintroduce it. The crate has a handful of small dependencies; a cold build is well under
+      # a minute, which is why not caching costs nothing worth having.
+      - name: Build the module from source, cold
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf adapters/grid-verifier/target
+          ./scripts/build-adapters.sh
+          test -f adapters/grid-verifier/target/wasm32-unknown-unknown/release/grid_verifier.wasm
+
+      - name: Compare the freshly built bytes with the pinned identity
+        shell: bash
+        env:
+          PIN: ${{ steps.pin.outputs.pin }}
+        run: |
+          set -euo pipefail
+          built=adapters/grid-verifier/target/wasm32-unknown-unknown/release/grid_verifier.wasm
+          actual="$(python3 -c 'import hashlib, sys; print(hashlib.sha3_256(open(sys.argv[1], "rb").read()).hexdigest())' "$built")"
+          echo "expected: $PIN"
+          echo "actual  : $actual"
+          if [ "$actual" != "$PIN" ]; then
+            echo "::error title=Adapter identity mismatch::The rebuilt verifier hashes to $actual, but the pinned identity is $PIN"
+            exit 1
+          fi
+          echo "The rebuilt module matches the pin."
+
+      # Belt and braces: the hash above is taken from the build output, this proves the file committed to
+      # the repository is the same file. The build script copies it into place, so a difference here means
+      # somebody changed the source without rebuilding, or rebuilt without committing.
+      - name: Confirm the committed bytes are the ones just built
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- src/games/adapters/grid-verifier.wasm; then
+            echo "::error title=Stale committed module::src/games/adapters/grid-verifier.wasm is not what this source builds; run ./scripts/build-adapters.sh and commit the result"
+            git diff --stat -- src/games/adapters/grid-verifier.wasm
+            exit 1
+          fi
+          echo "The committed module is the freshly built one."
+
+      - name: Confirm the runbook records the same identity
+        shell: bash
+        env:
+          PIN: ${{ steps.pin.outputs.pin }}
+        run: |
+          set -euo pipefail
+          if ! grep -q "$PIN" docs/runbooks/games-service.md; then
+            echo "::error title=Runbook identity drift::docs/runbooks/games-service.md does not record the pinned identity $PIN"
+            exit 1
+          fi
+          echo "The runbook records the same identity."
