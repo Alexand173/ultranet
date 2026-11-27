@@ -319,6 +319,50 @@ Not here. The registry, self-service registration, `game-register` and its sibli
 API belong to the Records Service: [`records-service.md`](./records-service.md). This binary has no registry
 commands.
 
+### 5.2 The verifier modules the platform ships
+
+A game is judged by a WebAssembly module whose identity is the SHA3-256 of its exact bytes. The bytes are
+committed in `src/games/adapters/`; nothing about a module is taken from its filename, its version or what it
+says about itself. Installing one on a host is an operator action of the games service — what this change
+establishes is narrower and stronger: the module can be rebuilt to exactly those bytes on another machine, and
+the runtime accepts it.
+
+| Module | UltraGrid universal verifier |
+|---|---|
+| File | `src/games/adapters/grid-verifier.wasm` |
+| Source | `adapters/grid-verifier` — it includes `src/ultragrid/mod.rs`, the same generator the node and the phone use |
+| ABI / adapter version | 1 |
+| Size | 29,360 bytes |
+| SHA3-256 | `376470459f3ac1d0fde46ac4e81f4661fdb219b8039ca8d552f785a898556321` |
+| Rebuilt by | `./scripts/build-adapters.sh` (add `--verify` to prove the runtime accepts it) |
+| Reproduced on another machine by | `.github/workflows/adapter-reproducibility.yml` |
+| Pinned by | `src/games/tests.rs::the_shipped_grid_verifier_is_a_module_the_runtime_accepts` |
+
+**A copy registered on a host must match that hash.** A host holding a different digest is running different
+bytes, and no game should be allowed to pay out against it.
+
+**Why the module is built the way it is.** The host validates a module before running it and refuses anything
+outside a narrow instruction set. `memory.copy` and `memory.fill` are allowed — every Rust-built module needs
+them, because `memcpy` and `memset` ship precompiled in the wasm standard library with bulk memory enabled, so
+no build flag removes them; `adapters/grid-verifier/.cargo/config.toml` turns off everything else the validator
+would refuse. They are safe to admit because they reach only the module's own linear memory — capped at
+**16 pages (1 MiB)**, unchanged — and because the runtime charges fuel **per byte** copied or filled (one fuel
+per 64 bytes, measured), so a bulk operation cannot buy work the equivalent loop would have paid for. The
+module also declares its own memory: 10 pages at start and 16 at most, with a 512 KiB stack.
+
+**Paths are normalised at build time.** A panic location embeds the absolute path of the file it came from, and
+some come from crates.io sources under `$CARGO_HOME`, so the same source built on two machines produced two
+different modules (49de66d6… here against 4436023d… on the runner, 2026-11-26). `scripts/rustc-remap-paths.sh`
+maps the builder's `$CARGO_HOME` and checkout onto `/cargo` and `/workspace`; `scripts/build-adapters.sh`
+refuses the build if any builder path survives in the output; and the reproducibility workflow rebuilds from
+source on a runner and fails unless the result is byte-identical to the pin above.
+
+**What is not pinned here.** The behavioural Grid tests — that a play belongs to this chain and this day, that
+the module regenerates the puzzle and refuses a malformed payload — stay with the play pipeline, which this
+change does not carry. What is proved here is the identity of the bytes and the validator's admission of bulk
+memory, including `bulk_memory_did_not_bring_any_other_extension_with_it` and the per-byte fuel metering in
+`src/games/adapter.rs`.
+
 ---
 
 ## 6. When something goes wrong

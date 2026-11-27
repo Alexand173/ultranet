@@ -7715,3 +7715,31 @@ mod reward_pools {
         assert_eq!((store.pool_in_flight_total().unwrap(), store.pool_unspent_total().unwrap(), h.service.pool(&game.game_id).unwrap().paid), (0, 899, 100));
     }
 }
+
+// --- the shipped UltraGrid verifier, judged by the real runtime --------------------------------
+//
+// This test travels with the verifier so the verifier can gate itself on its own. The behavioural
+// Grid tests — puzzle regeneration, day and chain binding, malformed payloads — stay with the play
+// pipeline that gives them meaning, because they need `service.play`, which this branch does not
+// carry. Splitting them this way keeps the byte-identity claim provable here and the behaviour
+// claim where the behaviour lives.
+mod shipped_grid_verifier {
+    use crate::games::adapter::{AdapterModule, RuntimeLimits};
+
+    #[test]
+    fn the_shipped_grid_verifier_is_a_module_the_runtime_accepts() {
+        let module = AdapterModule::compile(crate::games::adapters::GRID_VERIFIER, RuntimeLimits::default()).expect("the shipped module compiles");
+        // Pinned: a changed module must change this hash deliberately, in a commit that says so. The full
+        // digest, not a prefix, so two modules cannot share a pin by accident.
+        assert_eq!(
+            hex::encode(module.hash()),
+            "376470459f3ac1d0fde46ac4e81f4661fdb219b8039ca8d552f785a898556321",
+            "the shipped UltraGrid verifier's bytes changed: rebuild with scripts/build-adapters.sh and update this pin, the runbook's identity table and any registered copy"
+        );
+        assert_eq!(
+            module.hash(),
+            <[u8; 32]>::from(<sha3::Sha3_256 as sha3::Digest>::digest(crate::games::adapters::GRID_VERIFIER)),
+            "the pin is the SHA3-256 of the bytes in the repository, recomputed, not copied from a note"
+        );
+    }
+}
