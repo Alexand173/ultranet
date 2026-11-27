@@ -95,6 +95,32 @@ jobs:
         with:
           fetch-depth: 0
 
+      # What changed, before anything may read it as "nothing changed". The range is resolved, validated
+      # and diffed by its own script so every way it can fail is testable outside CI; here the only thing
+      # to know is that this step failing fails the run, which is the point. An infrastructure or git
+      # error must never be inherited by the planner as an empty change set, because an empty change set
+      # is the legitimate input for MODE=none — a green job that ran no tests.
+      - name: Work out which files changed
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          FULL_INPUT: ${{ inputs.full_suite }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          HEAD_SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          range="$(bash scripts/ci/resolve-changed-files.sh)"
+          echo "  $range"
+          {
+            echo "### Comparison range"
+            echo
+            echo '```'
+            echo "$range"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # The one decision every later step depends on. It is a step rather than a job-level `if:`
       # because a skipped job is a check with no conclusion, and this job's conclusion is the thing a
       # reviewer (or a future branch protection rule) reads.
@@ -104,17 +130,8 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           FULL_INPUT: ${{ inputs.full_suite }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          base="${BASE_SHA:-}"
-          if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]]; then
-            # A brand-new branch reports an all-zero `before`; compare against its first parent instead.
-            base="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
-          fi
-          git diff --name-only "$base" "$HEAD_SHA" > changed-files.txt || true
-
           # The plan is computed by a separate, pure script so it can be read and tested on its own.
           EVENT="$EVENT" FULL_INPUT="${FULL_INPUT:-false}" \
             bash scripts/ci/windows-test-plan.sh < changed-files.txt > windows-test-plan.txt
@@ -123,6 +140,17 @@ jobs:
           adapter=$(sed -n 's/^ADAPTER=//p' windows-test-plan.txt)
           compile_all=$(sed -n 's/^COMPILE_ALL=//p' windows-test-plan.txt)
           directives=$(grep -c '^TEST ' windows-test-plan.txt || true)
+          files=$(grep -c . changed-files.txt || true)
+
+          # A plan without one of the three modes means the planner did not finish. Reading that as
+          # `none` would be the same failure this job exists to prevent, so it stops the run instead.
+          case "$mode" in
+            none|runtime|full) ;;
+            *)
+              echo "::error title=Windows test selection::the plan carries no usable MODE ('${mode}')"
+              exit 1
+              ;;
+          esac
 
           # A runtime tier with nothing to run is a selection bug, not a reason to pass.
           if [ "$mode" = "runtime" ] && [ "$directives" -eq 0 ]; then
@@ -141,8 +169,8 @@ jobs:
             echo "|---|---|"
             echo "| mode | \`$mode\` |"
             echo "| adapter/module changed | \`$adapter\` |"
-            echo "| changed files | $(grep -c . changed-files.txt || true) |"
-            echo "| test commands | $directives |"
+            echo "| changed files | ${files:-0} |"
+            echo "| test commands | ${directives:-0} |"
             echo
             if [ "$mode" = "runtime" ]; then
               echo "Exact commands this run will execute:"
