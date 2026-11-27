@@ -53,7 +53,10 @@ jobs:
   test-windows:
     name: Windows x64 Rust tests
     runs-on: windows-2022
-    timeout-minutes: 180
+    # 200, not 180: the serial all-targets suite measures 120–140 minutes on this runner (five of the
+    # last six green runs), so the old limit left one slow day between a passing suite and a job that
+    # dies at the ceiling and reads as a red suite. The step's own limit below is the real bound.
+    timeout-minutes: 200
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
       CARGO_NET_RETRY: "5"
@@ -139,7 +142,9 @@ jobs:
       # timeout.
       # Bounded so a hang fails naming this step instead of the job dying at the 180-minute limit.
       - name: Run complete Windows test suite serially
-        timeout-minutes: 150
+        # 170, not 150. Still bounded, so a genuine hang fails naming this step rather than the job; the
+        # margin over the measured 120–140 minutes is now large enough that variance cannot fake a red.
+        timeout-minutes: 170
         shell: msys2 {0}
         env:
           LIBCLANG_PATH: C:/Program Files/LLVM/bin
@@ -152,10 +157,17 @@ jobs:
             exit "$status"
           fi
 
+      # Always, not only on failure. A green run is exactly when the suite's own summary is worth
+      # keeping — it is the only place the test counts and warnings can be read back later, since the
+      # logs expire in the UI. `warn` matters as much as `always`: setup can fail before the log exists,
+      # and a missing log must never be able to turn a meaningful failure into a green job, nor turn an
+      # unrelated missing file into a second failure. The suite step above is still what decides the
+      # verdict; this step only records.
       - name: Upload Windows test log
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: ultranet-windows-test-log-${{ github.run_id }}
+          name: ultranet-windows-test-log-${{ github.run_id }}-${{ github.run_attempt }}
           path: windows-test.log
-          if-no-files-found: ignore
+          if-no-files-found: warn
+          retention-days: 14
