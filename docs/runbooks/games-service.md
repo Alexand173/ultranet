@@ -349,8 +349,8 @@ taken from its filename, its version or what it says about itself.
 | File | `src/games/adapters/grid-verifier.wasm` |
 | Source | `adapters/grid-verifier` — it includes `src/ultragrid/mod.rs`, the same generator the node and the phone use |
 | ABI / adapter version | 1 |
-| Size | 29,504 bytes |
-| SHA3-256 | `49de66d6c8f1b0c67ab0402932a82e01c0b474cce4ea9e02b6f70e303b804813` |
+| Size | 29,360 bytes |
+| SHA3-256 | `376470459f3ac1d0fde46ac4e81f4661fdb219b8039ca8d552f785a898556321` |
 | Rebuilt by | `./scripts/build-adapters.sh` (add `--verify` to prove the runtime accepts it) |
 | Pinned by | `src/games/tests.rs::the_shipped_grid_verifier_is_a_module_the_runtime_accepts` |
 

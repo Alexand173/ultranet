@@ -8294,7 +8294,7 @@ mod reward_pools {
         // digest, not a prefix, so two modules cannot share a pin by accident.
         assert_eq!(
             hex::encode(module.hash()),
-            "49de66d6c8f1b0c67ab0402932a82e01c0b474cce4ea9e02b6f70e303b804813",
+            "376470459f3ac1d0fde46ac4e81f4661fdb219b8039ca8d552f785a898556321",
             "the shipped UltraGrid verifier's bytes changed: rebuild with scripts/build-adapters.sh and update this pin, the runbook's identity table and any registered copy"
         );
         assert_eq!(

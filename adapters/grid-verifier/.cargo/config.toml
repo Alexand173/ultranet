@@ -11,6 +11,13 @@
 # This file is the single place that answers "how is this module built"; scripts/build-adapters.sh
 # uses it implicitly, and the module's SHA3-256 is pinned by a test in src/games/tests.rs, so a
 # change here that alters the bytes cannot pass unnoticed.
+# Path remapping is deliberately **not** here. The prefixes that need it are the builder's own —
+# `$CARGO_HOME` and the workspace root — and this file cannot interpolate them: a literal path would
+# hardcode one machine, which is the defect being fixed. `scripts/build-adapters.sh` discovers them
+# and passes `--remap-path-prefix` through `scripts/rustc-remap-paths.sh` (a `RUSTC_WRAPPER`), because
+# `RUSTFLAGS` would replace the flags below rather than add to them. The flags below therefore stay
+# exactly as they are: this file owns the instruction set, the linker layout and the memory bounds;
+# the wrapper owns only the path names.
 [target.wasm32-unknown-unknown]
 rustflags = [
     "-C",
