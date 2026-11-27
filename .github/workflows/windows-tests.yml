@@ -1,5 +1,23 @@
 name: Windows test suite
 
+# Tiered on purpose. The complete serial all-targets suite costs 120–140 minutes of this runner for a
+# property that almost never changes, so paying it on every commit is a tax on every unrelated change.
+# This file runs three scopes instead, chosen from what actually changed:
+#
+#   none      nothing to prove on Windows (docs, website, Android). The job still runs and reports
+#             success in about a minute, because a check that never reports is indistinguishable from
+#             a check that was skipped — and it would block a PR the day branch protection is added.
+#   targeted  Rust changed: compile every Windows test target, and run the adapter validator and the
+#             shipped-verifier tests when the change touches the wasm module. This catches exactly the
+#             failure mode that kept this suite red for six days in 2026-10: a test target that stopped
+#             compiling on Windows.
+#   full      the complete serial suite. Only on purpose: `workflow_dispatch` with full_suite=true,
+#             which is the pre-release / LIVE gate. Deliberately no schedule — a nightly 2½-hour run on
+#             a repo with no branch protection buys nothing that the gate does not.
+#
+# The full suite's command, its 170-minute bound, and the always-uploaded log are unchanged. Only the
+# condition on which they run is new.
+
 on:
   push:
     branches:
@@ -8,6 +26,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      full_suite:
+        description: "Run the complete serial Windows suite (the ~2h20 release gate). Leave false for the fast check."
+        required: false
+        default: "false"
+        type: boolean
 
 permissions:
   contents: read
@@ -53,9 +77,9 @@ jobs:
   test-windows:
     name: Windows x64 Rust tests
     runs-on: windows-2022
-    # 200, not 180: the serial all-targets suite measures 120–140 minutes on this runner (five of the
-    # last six green runs), so the old limit left one slow day between a passing suite and a job that
-    # dies at the ceiling and reads as a red suite. The step's own limit below is the real bound.
+    # 200, not 180: the full serial suite measures 120–140 minutes on this runner (five of the last six
+    # green runs), so a lower ceiling puts one slow day between a passing suite and a job that dies at
+    # the limit and reads as a red suite. The full-suite step keeps its own 170-minute bound below.
     timeout-minutes: 200
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
@@ -65,13 +89,80 @@ jobs:
       RUST_BACKTRACE: "1"
       CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS: "-C link-arg=-Wl,--exclude-all-symbols"
     steps:
+      # Full history, so the scope step can diff this run against its real base. The repository is
+      # small; a shallow clone would make "what changed" a guess.
       - name: Check out source
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
+      # The one decision every later step depends on. It is a step rather than a job-level `if:`
+      # because a skipped job is a check with no conclusion, and this job's conclusion is the thing a
+      # reviewer (or a future branch protection rule) reads.
+      - name: Decide what this run must prove
+        id: scope
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          FULL_INPUT: ${{ inputs.full_suite }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          base="${BASE_SHA:-}"
+          if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]]; then
+            # A brand-new branch reports an all-zero `before`; compare against its first parent instead.
+            base="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+          changed="$(git diff --name-only "$base" "$HEAD_SHA" 2>/dev/null || true)"
+
+          rust=0
+          adapter=0
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            case "$f" in
+              src/*|tests/*|adapters/*|Cargo.toml|Cargo.lock|rust-toolchain.toml|.cargo/*) rust=1 ;;
+            esac
+            case "$f" in
+              adapters/*|scripts/*|src/ultragrid/*|src/games/adapters*) adapter=1 ;;
+            esac
+          done <<<"$changed"
+
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "${FULL_INPUT:-}" = "true" ]; then
+            mode=full
+            reason="workflow_dispatch asked for the complete suite"
+          elif [ "$rust" = "1" ]; then
+            mode=targeted
+            reason="Rust source changed"
+          else
+            mode=none
+            reason="no Rust source changed"
+          fi
+
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "adapter=$adapter" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Windows test scope::$mode — $reason"
+          {
+            echo "### Windows test scope: \`$mode\`"
+            echo
+            echo "$reason."
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| mode | \`$mode\` |"
+            echo "| Rust changed | $rust |"
+            echo "| adapter/module changed | $adapter |"
+            echo "| changed files | $(printf '%s' "$changed" | grep -c . || true) |"
+            [ "$mode" = "full" ] || echo "| full suite | not run — dispatch with full_suite=true, or the release gate |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Everything below that costs minutes is gated on the scope. `none` finishes in about a minute:
+      # checkout, the decision, and an honest summary saying the suite did not run and why.
       # No `update: true`: a full MSYS2 package upgrade on a fresh runner every run was both the
-      # slowest part of this step and the cause of the run that failed after 46 seconds with the
-      # suite never starting. The packages below are what this build actually needs.
+      # slowest part of this step and the cause of a run that failed after 46 seconds with the suite
+      # never starting. The packages below are what this build actually needs.
       - name: Install MinGW toolchain
+        if: steps.scope.outputs.mode != 'none'
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -84,6 +175,7 @@ jobs:
             mingw-w64-x86_64-cmake
 
       - name: Locate LLVM for bindgen
+        if: steps.scope.outputs.mode != 'none'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -104,15 +196,17 @@ jobs:
           $llvmPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Install Rust
+        if: steps.scope.outputs.mode != 'none'
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.97.0"
           targets: x86_64-pc-windows-gnu
 
       # The registry alone left `target/` cold, so every run rebuilt the whole graph — PQClean's C
-      # sources through bindgen included — on two cores before a single test binary existed. That
-      # is why a job that runs ~32 minutes of tests took ~50 minutes end to end.
+      # sources through bindgen included — on two cores before a single test binary existed. Skipped
+      # when nothing will be built, because the restore alone costs minutes.
       - name: Restore Cargo dependency and build cache
+        if: steps.scope.outputs.mode != 'none'
         uses: actions/cache@v5
         with:
           path: |
@@ -125,6 +219,7 @@ jobs:
             ultranet-cargo-
 
       - name: Verify Windows test toolchain
+        if: steps.scope.outputs.mode != 'none'
         shell: msys2 {0}
         env:
           LIBCLANG_PATH: C:/Program Files/LLVM/bin
@@ -135,13 +230,42 @@ jobs:
           rustc --version
           clang --version
 
+      # The ordinary case: prove the Windows build and every test target still compile, then run the
+      # two fast suites that cover the wasm module when the change touched it. Serial, like the full
+      # suite, for the same reason: this runner has two vCPUs and concurrency here has produced sled
+      # allocation panics and start-up races.
+      - name: Run targeted Windows tests
+        if: steps.scope.outputs.mode == 'targeted'
+        timeout-minutes: 60
+        shell: msys2 {0}
+        env:
+          LIBCLANG_PATH: C:/Program Files/LLVM/bin
+        run: |
+          set -o pipefail
+          {
+            echo "== every Windows test target must compile =="
+            cargo test --target x86_64-pc-windows-gnu --locked --all-targets --no-run
+            if [ "${{ steps.scope.outputs.adapter }}" = "1" ]; then
+              echo "== adapter validator, bulk memory and fuel metering =="
+              cargo test --target x86_64-pc-windows-gnu --locked --lib -- games::adapter::tests --test-threads=1
+              echo "== the shipped verifier the runtime has to accept =="
+              cargo test --target x86_64-pc-windows-gnu --locked --lib -- shipped_grid_verifier --test-threads=1
+            fi
+          } 2>&1 | tee windows-test.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::error title=Windows tests::The targeted Windows check failed"
+            exit "$status"
+          fi
+
       # Serial on purpose. Two failures on this runner were concurrency, not logic: sled panicked with
       # "failed to allocate Arc" while several stores were open at once, and a loopback request lost a
       # start-up race. The runner has two vCPUs and a thin memory margin, so a flaky check costs more
-      # than a slow one. Expect roughly 30 minutes more than the parallel run, well inside the job's
-      # timeout.
-      # Bounded so a hang fails naming this step instead of the job dying at the 180-minute limit.
+      # than a slow one.
+      # Bounded so a hang fails naming this step instead of the job dying at the 200-minute limit.
+      # Unchanged command, unchanged selection, unchanged coverage — only the trigger is now explicit.
       - name: Run complete Windows test suite serially
+        if: steps.scope.outputs.mode == 'full'
         # 170, not 150. Still bounded, so a genuine hang fails naming this step rather than the job; the
         # margin over the measured 120–140 minutes is now large enough that variance cannot fake a red.
         timeout-minutes: 170
@@ -161,8 +285,8 @@ jobs:
       # keeping — it is the only place the test counts and warnings can be read back later, since the
       # logs expire in the UI. `warn` matters as much as `always`: setup can fail before the log exists,
       # and a missing log must never be able to turn a meaningful failure into a green job, nor turn an
-      # unrelated missing file into a second failure. The suite step above is still what decides the
-      # verdict; this step only records.
+      # unrelated missing file into a second failure. The steps above are still what decide the verdict;
+      # this step only records.
       - name: Upload Windows test log
         if: always()
         uses: actions/upload-artifact@v5
