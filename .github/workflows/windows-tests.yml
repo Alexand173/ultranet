@@ -1,22 +1,21 @@
 name: Windows test suite
 
-# Tiered on purpose. The complete serial all-targets suite costs 120–140 minutes of this runner for a
-# property that almost never changes, so paying it on every commit is a tax on every unrelated change.
-# This file runs three scopes instead, chosen from what actually changed:
+# Three tiers, chosen from what actually changed by `scripts/ci/windows-test-plan.sh`.
 #
 #   none      nothing to prove on Windows (docs, website, Android). The job still runs and reports
-#             success in about a minute, because a check that never reports is indistinguishable from
-#             a check that was skipped — and it would block a PR the day branch protection is added.
-#   targeted  Rust changed: compile every Windows test target, and run the adapter validator and the
-#             shipped-verifier tests when the change touches the wasm module. This catches exactly the
-#             failure mode that kept this suite red for six days in 2026-10: a test target that stopped
-#             compiling on Windows.
+#             success in about a minute, because a check that never reports is indistinguishable from a
+#             check that was skipped — and it would block a PR the day branch protection is added.
+#   runtime   Rust changed: compile every Windows test target, then run the fast runtime suites for the
+#             areas that changed. This is the tier that keeps critical modules exercised per commit
+#             without the 120–140 minute serial suite.
 #   full      the complete serial suite. Only on purpose: `workflow_dispatch` with full_suite=true,
 #             which is the pre-release / LIVE gate. Deliberately no schedule — a nightly 2½-hour run on
-#             a repo with no branch protection buys nothing that the gate does not.
+#             a repo with no branch protection buys nothing the gate does not.
 #
-# The full suite's command, its 170-minute bound, and the always-uploaded log are unchanged. Only the
-# condition on which they run is new.
+# The selection is a separate, pure script so it can be read and tested against any change set without
+# running CI. What it must never do is select nothing for a change that needs tests: every directive is
+# asserted below to match at least one test, so a filter that stops matching anything fails the job
+# instead of passing it quietly.
 
 on:
   push:
@@ -28,7 +27,7 @@ on:
   workflow_dispatch:
     inputs:
       full_suite:
-        description: "Run the complete serial Windows suite (the ~2h20 release gate). Leave false for the fast check."
+        description: "Run the complete serial Windows suite (the ~2h20 release gate). Leave false for the tiered run."
         required: false
         default: "false"
         type: boolean
@@ -114,50 +113,50 @@ jobs:
             # A brand-new branch reports an all-zero `before`; compare against its first parent instead.
             base="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
           fi
-          changed="$(git diff --name-only "$base" "$HEAD_SHA" 2>/dev/null || true)"
+          git diff --name-only "$base" "$HEAD_SHA" > changed-files.txt || true
 
-          rust=0
-          adapter=0
-          while IFS= read -r f; do
-            [ -n "$f" ] || continue
-            case "$f" in
-              src/*|tests/*|adapters/*|Cargo.toml|Cargo.lock|rust-toolchain.toml|.cargo/*) rust=1 ;;
-            esac
-            case "$f" in
-              adapters/*|scripts/*|src/ultragrid/*|src/games/adapters*) adapter=1 ;;
-            esac
-          done <<<"$changed"
+          # The plan is computed by a separate, pure script so it can be read and tested on its own.
+          EVENT="$EVENT" FULL_INPUT="${FULL_INPUT:-false}" \
+            bash scripts/ci/windows-test-plan.sh < changed-files.txt > windows-test-plan.txt
 
-          if [ "$EVENT" = "workflow_dispatch" ] && [ "${FULL_INPUT:-}" = "true" ]; then
-            mode=full
-            reason="workflow_dispatch asked for the complete suite"
-          elif [ "$rust" = "1" ]; then
-            mode=targeted
-            reason="Rust source changed"
-          else
-            mode=none
-            reason="no Rust source changed"
+          mode=$(sed -n 's/^MODE=//p' windows-test-plan.txt)
+          adapter=$(sed -n 's/^ADAPTER=//p' windows-test-plan.txt)
+          compile_all=$(sed -n 's/^COMPILE_ALL=//p' windows-test-plan.txt)
+          directives=$(grep -c '^TEST ' windows-test-plan.txt || true)
+
+          # A runtime tier with nothing to run is a selection bug, not a reason to pass.
+          if [ "$mode" = "runtime" ] && [ "$directives" -eq 0 ]; then
+            echo "::error title=Windows test selection::mode=runtime but the plan contains no tests"
+            exit 1
           fi
 
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "adapter=$adapter" >> "$GITHUB_OUTPUT"
-          echo "::notice title=Windows test scope::$mode — $reason"
+          echo "compile_all=$compile_all" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Windows test scope::$mode — $directives test command(s)"
           {
             echo "### Windows test scope: \`$mode\`"
-            echo
-            echo "$reason."
             echo
             echo "| | |"
             echo "|---|---|"
             echo "| mode | \`$mode\` |"
-            echo "| Rust changed | $rust |"
-            echo "| adapter/module changed | $adapter |"
-            echo "| changed files | $(printf '%s' "$changed" | grep -c . || true) |"
-            [ "$mode" = "full" ] || echo "| full suite | not run — dispatch with full_suite=true, or the release gate |"
+            echo "| adapter/module changed | \`$adapter\` |"
+            echo "| changed files | $(grep -c . changed-files.txt || true) |"
+            echo "| test commands | $directives |"
+            echo
+            if [ "$mode" = "runtime" ]; then
+              echo "Exact commands this run will execute:"
+              echo
+              grep '^TEST ' windows-test-plan.txt | sed 's/^TEST LIB /lib    /; s/^TEST BIN /binary /' | sed 's/^/    /'
+            elif [ "$mode" = "full" ]; then
+              echo "The complete serial suite runs; the tiered selection is not used."
+            else
+              echo "No Rust source changed, so no Windows toolchain and no tests were run."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       # Everything below that costs minutes is gated on the scope. `none` finishes in about a minute:
-      # checkout, the decision, and an honest summary saying the suite did not run and why.
+      # checkout, the decision, and an honest summary saying nothing ran and why.
       # No `update: true`: a full MSYS2 package upgrade on a fresh runner every run was both the
       # slowest part of this step and the cause of a run that failed after 46 seconds with the suite
       # never starting. The packages below are what this build actually needs.
@@ -230,32 +229,73 @@ jobs:
           rustc --version
           clang --version
 
-      # The ordinary case: prove the Windows build and every test target still compile, then run the
-      # two fast suites that cover the wasm module when the change touched it. Serial, like the full
-      # suite, for the same reason: this runner has two vCPUs and concurrency here has produced sled
-      # allocation panics and start-up races.
-      - name: Run targeted Windows tests
-        if: steps.scope.outputs.mode == 'targeted'
+      # Compile first, once. Every test target must build on Windows before any test runs, so a
+      # structural break fails here, cheaply and clearly, rather than as a mysterious later error.
+      - name: Compile every Windows test target
+        if: steps.scope.outputs.compile_all == '1'
         timeout-minutes: 60
         shell: msys2 {0}
         env:
           LIBCLANG_PATH: C:/Program Files/LLVM/bin
         run: |
           set -o pipefail
-          {
-            echo "== every Windows test target must compile =="
-            cargo test --target x86_64-pc-windows-gnu --locked --all-targets --no-run
-            if [ "${{ steps.scope.outputs.adapter }}" = "1" ]; then
-              echo "== adapter validator, bulk memory and fuel metering =="
-              cargo test --target x86_64-pc-windows-gnu --locked --lib -- games::adapter::tests --test-threads=1
-              echo "== the shipped verifier the runtime has to accept =="
-              cargo test --target x86_64-pc-windows-gnu --locked --lib -- shipped_grid_verifier --test-threads=1
-            fi
-          } 2>&1 | tee windows-test.log
+          cargo test --target x86_64-pc-windows-gnu --locked --all-targets --no-run 2>&1 | tee windows-test.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            echo "::error title=Windows tests::The targeted Windows check failed"
+            echo "::error title=Windows tests::A Windows test target does not compile"
             exit "$status"
+          fi
+
+      # The middle tier: the fast runtime suites for the areas that changed, run serially because this
+      # runner has two vCPUs and concurrency here has produced sled allocation panics and start-up races.
+      # Each directive must actually execute at least one test. A filter that matches nothing is a
+      # selection bug — it would otherwise exit 0 and report a green job that tested nothing.
+      - name: Run the selected Windows runtime tests
+        if: steps.scope.outputs.mode == 'runtime'
+        timeout-minutes: 60
+        shell: msys2 {0}
+        env:
+          LIBCLANG_PATH: C:/Program Files/LLVM/bin
+        run: |
+          set -uo pipefail
+          executed=0
+          while IFS= read -r line; do
+            case "$line" in
+              'TEST LIB '*) kind=LIB; sel=${line#TEST LIB } ;;
+              'TEST BIN '*) kind=BIN; sel=${line#TEST BIN } ;;
+              *) continue ;;
+            esac
+
+            tmp="$(mktemp)"
+            if [ "$kind" = "LIB" ]; then
+              cargo test --target x86_64-pc-windows-gnu --locked --lib -- "$sel" --test-threads=1 >"$tmp" 2>&1
+            else
+              cargo test --target x86_64-pc-windows-gnu --locked --test "$sel" -- --test-threads=1 >"$tmp" 2>&1
+            fi
+            status=$?
+            cat "$tmp" | tee -a windows-test.log >/dev/null
+
+            passed=$(grep -oE '[0-9]+ passed' "$tmp" | tail -1 | grep -oE '[0-9]+' || true)
+            failed=$(grep -oE '[0-9]+ failed' "$tmp" | tail -1 | grep -oE '[0-9]+' || true)
+            if [ "$status" -ne 0 ]; then
+              echo "::error title=Windows tests::${kind} ${sel} failed (${passed:-0} passed, ${failed:-?} failed)"
+              rm -f "$tmp"
+              exit "$status"
+            fi
+            if [ "${passed:-0}" -lt 1 ]; then
+              echo "::error title=Windows test selection::${kind} ${sel} matched zero tests — the selection is stale or the tests were renamed"
+              rm -f "$tmp"
+              exit 1
+            fi
+            echo "  ${kind} ${sel}: ${passed} passed, ${failed:-0} failed"
+            executed=$((executed + 1))
+            rm -f "$tmp"
+          done < windows-test-plan.txt
+
+          echo "  directives executed: $executed"
+          if [ "$executed" -eq 0 ]; then
+            echo "::error title=Windows test selection::no test directive ran"
+            exit 1
           fi
 
       # Serial on purpose. Two failures on this runner were concurrency, not logic: sled panicked with
