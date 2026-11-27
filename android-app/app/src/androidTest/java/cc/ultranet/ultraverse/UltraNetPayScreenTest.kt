@@ -145,7 +145,7 @@ class UltraNetPayScreenTest {
         compose.waitUntil(240_000) { textExists("Account balance") }
 
         // The Apps tab lands on the first service group, which holds the Pay tile.
-        compose.onNodeWithContentDescription("Apps. Scrolls to the grouped services.", substring = true)
+        compose.onNodeWithContentDescription("Wallet. Balance, send, receive and your tools.", substring = true)
             .performClick()
         compose.waitUntil(30_000) { homeExists() }
         compose.onNodeWithTag("ultraverse-home").performScrollToIndex(3)

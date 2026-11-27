@@ -886,7 +886,7 @@ mod tests {
         }
         raw(&path)
             .execute_batch(
-                "DROP TABLE game_pool_payouts; DROP TABLE pool_state; DROP TABLE game_reward_policies; DROP TABLE game_pool_ledger; DROP TABLE game_pool_withdrawals; DROP TABLE game_pool_credits; DROP TABLE game_pool_deposits; DROP TABLE game_pools; DROP TABLE platform_game_audit; DROP TABLE platform_games; DROP TABLE auth_sessions; DROP TABLE auth_challenges; DROP TABLE registry_anchor_attempts; DROP TABLE peer_anchor_roots; DROP TABLE peer_anchor_days;
+                "DROP TABLE game_adapter_modules; DROP TABLE game_pool_payouts; DROP TABLE pool_state; DROP TABLE game_reward_policies; DROP TABLE game_pool_ledger; DROP TABLE game_pool_withdrawals; DROP TABLE game_pool_credits; DROP TABLE game_pool_deposits; DROP TABLE game_pools; DROP TABLE platform_game_audit; DROP TABLE platform_games; DROP TABLE auth_sessions; DROP TABLE auth_challenges; DROP TABLE registry_anchor_attempts; DROP TABLE peer_anchor_roots; DROP TABLE peer_anchor_days;
                  UPDATE meta SET value = '2' WHERE key = 'schema_version';",
             )
             .unwrap();
@@ -896,7 +896,7 @@ mod tests {
         let version: String = raw(&path)
             .query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, "8", "2 went through 3, 4, 5, 6 and 7 and arrived at 8");
+        assert_eq!(version, "9", "2 went through 3, 4, 5, 6, 7 and 8 and arrived at 9");
         drop(upgraded);
         assert!(GamesStore::open(&path).is_ok(), "opening again is a no-op");
         assert_eq!(GamesStore::open(&path).unwrap().peer_anchor_usage(DAY).unwrap(), 1);
@@ -975,7 +975,7 @@ mod tests {
             store.set_peer_hold("kept across the upgrade", NOW).unwrap();
         }
         raw(&path)
-            .execute_batch("DROP TABLE game_pool_payouts; UPDATE meta SET value = '7' WHERE key = 'schema_version';")
+            .execute_batch("DROP TABLE game_adapter_modules; DROP TABLE game_pool_payouts; UPDATE meta SET value = '7' WHERE key = 'schema_version';")
             .unwrap();
         let upgraded = GamesStore::open(&path).unwrap();
         assert_eq!(upgraded.peer_anchor_usage(DAY).unwrap(), 1, "peer usage is untouched");
@@ -984,9 +984,28 @@ mod tests {
         let version: String = raw(&path)
             .query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, "8");
+        assert_eq!(version, "9");
         drop(upgraded);
         assert!(GamesStore::open(&path).is_ok(), "opening again is a no-op");
+    }
+
+    #[test]
+    fn a_schema_8_database_gains_the_adapter_module_table_and_keeps_everything_else() {
+        let path = db("upgrade8");
+        {
+            let store = GamesStore::open(&path).unwrap();
+            reserve(&store, DAY, 1, 8);
+            store.set_peer_hold("kept across the upgrade", NOW).unwrap();
+        }
+        raw(&path).execute_batch("DROP TABLE game_adapter_modules; UPDATE meta SET value = '8' WHERE key = 'schema_version';").unwrap();
+        let upgraded = GamesStore::open(&path).unwrap();
+        assert_eq!(upgraded.peer_anchor_usage(DAY).unwrap(), 1, "peer usage is untouched");
+        assert!(upgraded.pool_next_open_payout().unwrap().is_none(), "the pool tables are untouched");
+        assert!(upgraded.module_bytes(&"ab".repeat(32)).unwrap().is_none(), "the new table is there, and empty");
+        let hash = upgraded.module_put(b"\0asm", 1, "ops", NOW).unwrap();
+        assert_eq!(upgraded.module_bytes(&hash).unwrap().unwrap(), b"\0asm".to_vec(), "and it keeps what it is given");
+        let version: String = raw(&path).query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, "9");
     }
 
     #[test]
@@ -998,7 +1017,7 @@ mod tests {
             store.set_peer_hold("kept across the upgrade", NOW).unwrap();
         }
         raw(&path)
-            .execute_batch("DROP TABLE game_pool_payouts; DROP TABLE pool_state; DROP TABLE game_reward_policies; DROP TABLE game_pool_ledger; DROP TABLE game_pool_withdrawals; DROP TABLE game_pool_credits; DROP TABLE game_pool_deposits; DROP TABLE game_pools; DROP TABLE platform_game_audit; DROP TABLE platform_games; UPDATE meta SET value = '5' WHERE key = 'schema_version';")
+            .execute_batch("DROP TABLE game_adapter_modules; DROP TABLE game_pool_payouts; DROP TABLE pool_state; DROP TABLE game_reward_policies; DROP TABLE game_pool_ledger; DROP TABLE game_pool_withdrawals; DROP TABLE game_pool_credits; DROP TABLE game_pool_deposits; DROP TABLE game_pools; DROP TABLE platform_game_audit; DROP TABLE platform_games; UPDATE meta SET value = '5' WHERE key = 'schema_version';")
             .unwrap();
         let upgraded = GamesStore::open(&path).unwrap();
         assert_eq!(upgraded.peer_anchor_usage(DAY).unwrap(), 1, "peer usage is untouched");
@@ -1007,7 +1026,7 @@ mod tests {
         let version: String = raw(&path)
             .query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, "8");
+        assert_eq!(version, "9");
         drop(upgraded);
         assert!(GamesStore::open(&path).is_ok(), "opening again is a no-op");
     }
@@ -1021,7 +1040,7 @@ mod tests {
             store.set_peer_hold("kept across the upgrade", NOW).unwrap();
         }
         raw(&path)
-            .execute_batch("DROP TABLE game_pool_payouts; DROP TABLE pool_state; DROP TABLE game_reward_policies; DROP TABLE game_pool_ledger; DROP TABLE game_pool_withdrawals; DROP TABLE game_pool_credits; DROP TABLE game_pool_deposits; DROP TABLE game_pools; DROP TABLE platform_game_audit; DROP TABLE platform_games; DROP TABLE auth_sessions; DROP TABLE auth_challenges; UPDATE meta SET value = '4' WHERE key = 'schema_version';")
+            .execute_batch("DROP TABLE game_adapter_modules; DROP TABLE game_pool_payouts; DROP TABLE pool_state; DROP TABLE game_reward_policies; DROP TABLE game_pool_ledger; DROP TABLE game_pool_withdrawals; DROP TABLE game_pool_credits; DROP TABLE game_pool_deposits; DROP TABLE game_pools; DROP TABLE platform_game_audit; DROP TABLE platform_games; DROP TABLE auth_sessions; DROP TABLE auth_challenges; UPDATE meta SET value = '4' WHERE key = 'schema_version';")
             .unwrap();
         let upgraded = GamesStore::open(&path).unwrap();
         assert_eq!(upgraded.peer_anchor_usage(DAY).unwrap(), 1, "peer usage is untouched");
@@ -1033,7 +1052,7 @@ mod tests {
         let version: String = raw(&path)
             .query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, "8");
+        assert_eq!(version, "9");
         drop(upgraded);
         assert!(GamesStore::open(&path).is_ok(), "opening again is a no-op");
     }
@@ -1047,7 +1066,7 @@ mod tests {
             store.set_peer_hold("kept across the upgrade", NOW).unwrap();
         }
         raw(&path)
-            .execute_batch("DROP TABLE game_pool_payouts; DROP TABLE pool_state; DROP TABLE game_reward_policies; DROP TABLE game_pool_ledger; DROP TABLE game_pool_withdrawals; DROP TABLE game_pool_credits; DROP TABLE game_pool_deposits; DROP TABLE game_pools; DROP TABLE platform_game_audit; DROP TABLE platform_games; DROP TABLE auth_sessions; DROP TABLE auth_challenges; DROP TABLE registry_anchor_attempts; UPDATE meta SET value = '3' WHERE key = 'schema_version';")
+            .execute_batch("DROP TABLE game_adapter_modules; DROP TABLE game_pool_payouts; DROP TABLE pool_state; DROP TABLE game_reward_policies; DROP TABLE game_pool_ledger; DROP TABLE game_pool_withdrawals; DROP TABLE game_pool_credits; DROP TABLE game_pool_deposits; DROP TABLE game_pools; DROP TABLE platform_game_audit; DROP TABLE platform_games; DROP TABLE auth_sessions; DROP TABLE auth_challenges; DROP TABLE registry_anchor_attempts; UPDATE meta SET value = '3' WHERE key = 'schema_version';")
             .unwrap();
         let upgraded = GamesStore::open(&path).unwrap();
         assert_eq!(upgraded.peer_anchor_usage(DAY).unwrap(), 1, "peer usage is untouched");
@@ -1058,7 +1077,7 @@ mod tests {
         let version: String = raw(&path)
             .query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, "8");
+        assert_eq!(version, "9");
         drop(upgraded);
         assert!(GamesStore::open(&path).is_ok(), "opening again is a no-op");
     }

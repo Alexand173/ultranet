@@ -13,12 +13,26 @@
 //! GET  /api/games/wallet/{address}        the balance, today's counts and recent wins
 //! POST /api/games/withdraw                {address}   queue the whole balance for withdrawal
 //! GET  /api/games/payouts/{id}            where a withdrawal stands
+//! POST /api/games/play/{game}             (X-Wallet-Session) {address, result_id, payload}  judged by the game's approved adapter
+//! GET  /api/games/results/{game}/{result}  verified / reward_reserved / reward_paid (paid = the node confirmed it)
+//! GET  /api/games/pools/{game}[/policies|/payouts]   a game's own pool, policies and payouts (read-only)
+//! GET  /api/games/store?q=&chain_id=       every game with its live chain owner, playability and reward availability
+//! GET  /api/games/players/{address}/results  a wallet's rewards: reserved, paid or released, with payout state and hash
+//! GET  /api/games/pools/{game}/deposits    a pool's funding history
+//! POST /api/games/pools/{game}/fund       owner-signed claim over a confirmed deposit transfer
+//! POST /api/games/pools/{game}/policy     owner-signed reward policy proposal (inert until the platform approves)
+//! POST /api/games/pools/{game}/withdraw   owner-signed; the funds go to the chain's current owner
 //! ```
 //!
-//! There is no login. Money only ever flows **to the address that was credited**, so submitting
-//! someone else's answer credits *them*, and a withdrawal pays the address it names and no other. That
-//! removes the one piece of state (a session) that could be stolen. What it cannot do is stop abuse,
-//! which is the job of the caps, the chain-presence rule and the reverse proxy's rate limits.
+//! Wallet sessions: the routes that act for a player (answers, results, play, withdrawals) need an
+//! `X-Wallet-Session` obtained by signing a one-time challenge, unless `GAMES_REQUIRE_PLAYER_AUTH` is turned off.
+//! Pool routes that move or promise money are owner-signed over the exact request and checked against the L1
+//! ledger's current owner of the game's AppChain. Approving a policy, naming an adapter and settling a payout in
+//! doubt are operator actions in the CLI only; no route reaches them. With `GAMES_POOL_PAYOUTS_ENABLED=false`
+//! (the default) no pool reward is reserved and nothing is paid from any pool.
+//!
+//! The older Grid and Chess routes keep their rule: money only ever flows **to the address that was credited**,
+//! and a withdrawal pays the address it names and no other.
 
 use super::service::{
     AdminProof,
@@ -60,6 +74,17 @@ pub fn configure_routes(config: &mut web::ServiceConfig) {
         .route("/api/games/catalog/{game_id}/update", web::post().to(catalog_update))
         .route("/api/games/catalog/{game_id}/status", web::post().to(catalog_status))
         .route("/api/games/catalog/{game_id}/history", web::get().to(catalog_history))
+        .route("/api/games/play/{game_id}", web::post().to(play))
+        .route("/api/games/results/{game_id}/{result_id}", web::get().to(result_view))
+        .route("/api/games/store", web::get().to(store_listing))
+        .route("/api/games/players/{address}/results", web::get().to(player_results))
+        .route("/api/games/pools/{game_id}/deposits", web::get().to(pool_deposits))
+        .route("/api/games/pools/{game_id}", web::get().to(pool_view))
+        .route("/api/games/pools/{game_id}/policies", web::get().to(pool_policies))
+        .route("/api/games/pools/{game_id}/payouts", web::get().to(pool_payouts))
+        .route("/api/games/pools/{game_id}/fund", web::post().to(pool_fund))
+        .route("/api/games/pools/{game_id}/policy", web::post().to(pool_policy_propose))
+        .route("/api/games/pools/{game_id}/withdraw", web::post().to(pool_withdraw))
         .route("/api/games/auth/challenge", web::post().to(auth_challenge))
         .route("/api/games/auth/verify", web::post().to(auth_verify))
         .route("/api/games/auth/logout", web::post().to(auth_logout))
@@ -70,14 +95,29 @@ pub fn configure_routes(config: &mut web::ServiceConfig) {
         .route("/api/games/payouts/{id}", web::get().to(payout));
 }
 
+/// The browser rules: only the listed origins, only the methods and headers this API uses, no credentials or
+/// cookies (a wallet session travels in `X-Wallet-Session`, which a page must send on purpose).
+pub fn cors_for(origins: &[String]) -> actix_cors::Cors {
+    let mut cors = actix_cors::Cors::default()
+        .allowed_methods(["GET", "POST", "OPTIONS"])
+        .allowed_headers(["Accept", "Content-Type", "X-Wallet-Session"])
+        .max_age(3600);
+    for origin in origins {
+        cors = cors.allowed_origin(origin);
+    }
+    cors
+}
+
 pub async fn run_server(
     service: Arc<GamesService>,
     bind: std::net::SocketAddr,
+    cors_origins: Vec<String>,
     mut shutdown: watch::Receiver<bool>,
 ) -> std::io::Result<()> {
     let data = web::Data::from(service);
     let server = HttpServer::new(move || {
         App::new()
+            .wrap(cors_for(&cors_origins))
             .app_data(data.clone())
             .configure(configure_routes)
     })
@@ -378,6 +418,130 @@ async fn catalog_status(
             .catalog_set_status(&id, &body.status, proof(body.nonce, body.timestamp, body.public_key, body.signature))
             .await,
     )
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PlayBody {
+    address: String,
+    result_id: String,
+    payload: String,
+}
+
+/// Play a catalog game: the session must belong to `address`; the game's approved adapter judges the input.
+async fn play(service: web::Data<GamesService>, request: HttpRequest, id: web::Path<String>, body: web::Json<PlayBody>) -> HttpResponse {
+    let id = match game_id_or_404(id.into_inner()) {
+        Ok(id) => id,
+        Err(error) => return error_response(&error),
+    };
+    if let Err(error) = service.require_player(session_token(&request).as_deref(), &body.address) {
+        return error_response(&error);
+    }
+    respond(service.play(&id, &body.address, &body.result_id, &body.payload).await)
+}
+
+#[derive(Deserialize)]
+struct StoreQuery {
+    q: Option<String>,
+    chain_id: Option<u32>,
+}
+
+async fn store_listing(service: web::Data<GamesService>, query: web::Query<StoreQuery>) -> HttpResponse {
+    respond(service.store_listing(query.q.as_deref(), query.chain_id).await.map(|games| json!({ "games": games })))
+}
+
+async fn player_results(service: web::Data<GamesService>, address: web::Path<String>) -> HttpResponse {
+    respond(service.player_result_list(&address).map(|results| json!({ "results": results })))
+}
+
+async fn pool_deposits(service: web::Data<GamesService>, id: web::Path<String>) -> HttpResponse {
+    respond(game_id_or_404(id.into_inner()).and_then(|id| service.pool_deposit_list(&id)).map(|deposits| json!({ "deposits": deposits })))
+}
+
+async fn result_view(service: web::Data<GamesService>, path: web::Path<(String, String)>) -> HttpResponse {
+    let (game, result) = path.into_inner();
+    respond(game_id_or_404(game).and_then(|game| service.result_view(&game, &result, None)))
+}
+
+async fn pool_view(service: web::Data<GamesService>, id: web::Path<String>) -> HttpResponse {
+    respond(game_id_or_404(id.into_inner()).and_then(|id| service.pool(&id)))
+}
+
+async fn pool_policies(service: web::Data<GamesService>, id: web::Path<String>) -> HttpResponse {
+    respond(game_id_or_404(id.into_inner()).and_then(|id| service.pool_policies(&id)).map(|policies| json!({ "policies": policies })))
+}
+
+async fn pool_payouts(service: web::Data<GamesService>, id: web::Path<String>) -> HttpResponse {
+    respond(game_id_or_404(id.into_inner()).and_then(|id| service.pool_payout_list(&id)).map(|payouts| json!({ "payouts": payouts })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FundBody {
+    tx_hash: String,
+    nonce: String,
+    timestamp: u64,
+    public_key: String,
+    signature: String,
+}
+
+async fn pool_fund(service: web::Data<GamesService>, id: web::Path<String>, body: web::Json<FundBody>) -> HttpResponse {
+    let body = body.into_inner();
+    let id = match game_id_or_404(id.into_inner()) {
+        Ok(id) => id,
+        Err(error) => return error_response(&error),
+    };
+    respond(service.pool_fund(&id, &body.tx_hash, proof(body.nonce, body.timestamp, body.public_key, body.signature)).await)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PolicyBody {
+    reward_units: u64,
+    eligible_outcomes: String,
+    per_player_per_day: u32,
+    per_game_per_day: u64,
+    #[serde(default)]
+    effective_from: u64,
+    nonce: String,
+    timestamp: u64,
+    public_key: String,
+    signature: String,
+}
+
+async fn pool_policy_propose(service: web::Data<GamesService>, id: web::Path<String>, body: web::Json<PolicyBody>) -> HttpResponse {
+    let body = body.into_inner();
+    let id = match game_id_or_404(id.into_inner()) {
+        Ok(id) => id,
+        Err(error) => return error_response(&error),
+    };
+    let terms = super::pools::PolicyTerms {
+        reward_units: body.reward_units,
+        eligible_outcomes: body.eligible_outcomes,
+        per_player_per_day: body.per_player_per_day,
+        per_game_per_day: body.per_game_per_day,
+        effective_from: body.effective_from,
+    };
+    respond(service.policy_propose(&id, terms, proof(body.nonce, body.timestamp, body.public_key, body.signature)).await)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PoolWithdrawBody {
+    amount_units: u64,
+    nonce: String,
+    timestamp: u64,
+    public_key: String,
+    signature: String,
+}
+
+async fn pool_withdraw(service: web::Data<GamesService>, id: web::Path<String>, body: web::Json<PoolWithdrawBody>) -> HttpResponse {
+    let body = body.into_inner();
+    let id = match game_id_or_404(id.into_inner()) {
+        Ok(id) => id,
+        Err(error) => return error_response(&error),
+    };
+    respond(service.pool_withdraw(&id, body.amount_units, proof(body.nonce, body.timestamp, body.public_key, body.signature)).await)
 }
 
 /// The wallet session a request carries, if any. It travels in its own header because the reverse proxy

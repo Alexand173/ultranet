@@ -1,14 +1,12 @@
 package cc.ultranet.ultraverse.ui.navigation
 
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AccountBalanceWallet
-import androidx.compose.material.icons.outlined.Apps
-import androidx.compose.material.icons.outlined.PersonOutline
-import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.EmojiEvents
+import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material.icons.outlined.SportsEsports
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -17,24 +15,24 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import cc.ultranet.ultraverse.ui.theme.UltraVerseColors
 
-internal enum class UltraVerseTab(val label: String) {
-    Portfolio("Portfolio"),
-    Swap("Swap"),
-    Apps("Apps"),
-    Profile("Profile"),
+/** The four sections of the app. Every one is a working destination; there is no placeholder tab. */
+internal enum class UltraVerseTab(val label: String, val description: String) {
+    Wallet("Wallet", "Wallet. Balance, send, receive and your tools."),
+    Games("Games", "Games. Browse and play verified games."),
+    AppChains("AppChains", "AppChains. Register and manage your chains and their games."),
+    Awards("Awards", "Awards. Your rewards and your game reward pools."),
 }
 
 @Composable
 internal fun BottomNavigation(
     selectedTab: UltraVerseTab,
-    onPortfolio: () -> Unit,
-    onApps: () -> Unit,
-    onProfile: () -> Unit,
+    onSelect: (UltraVerseTab) -> Unit,
 ) {
     // A solid surface plus a hairline divider replaces Material's tonal elevation tint, which used to
     // paint a grey band above the bar in light mode.
@@ -49,41 +47,19 @@ internal fun BottomNavigation(
             tonalElevation = 0.dp,
         ) {
             UltraVerseTab.entries.forEach { tab ->
-                // Swap is the only tab without a native destination; it keeps the unavailable badge.
-                val enabled = tab != UltraVerseTab.Swap
                 NavigationBarItem(
                     selected = selectedTab == tab,
-                    onClick = when (tab) {
-                        UltraVerseTab.Portfolio -> onPortfolio
-                        UltraVerseTab.Apps -> onApps
-                        UltraVerseTab.Profile -> onProfile
-                        UltraVerseTab.Swap -> ({})
-                    },
-                    enabled = enabled,
+                    onClick = { onSelect(tab) },
                     icon = {
-                        val image = when (tab) {
-                            UltraVerseTab.Portfolio -> Icons.Outlined.AccountBalanceWallet
-                            UltraVerseTab.Swap -> Icons.Outlined.SwapHoriz
-                            UltraVerseTab.Apps -> Icons.Outlined.Apps
-                            UltraVerseTab.Profile -> Icons.Outlined.PersonOutline
-                        }
-                        if (enabled) {
-                            Icon(imageVector = image, contentDescription = null)
-                        } else {
-                            BadgedBox(
-                                badge = {
-                                    // An explicit content colour: Badge defaults to an unresolvable
-                                    // contentColorFor(unavailable), which left the glyph at 3.06:1
-                                    // against the dark-mode badge fill.
-                                    Badge(
-                                        containerColor = UltraVerseColors.unavailable,
-                                        contentColor = UltraVerseColors.background,
-                                    ) { Text("×") }
-                                },
-                            ) {
-                                Icon(imageVector = image, contentDescription = null)
-                            }
-                        }
+                        Icon(
+                            imageVector = when (tab) {
+                                UltraVerseTab.Wallet -> Icons.Outlined.AccountBalanceWallet
+                                UltraVerseTab.Games -> Icons.Outlined.SportsEsports
+                                UltraVerseTab.AppChains -> Icons.Outlined.Layers
+                                UltraVerseTab.Awards -> Icons.Outlined.EmojiEvents
+                            },
+                            contentDescription = null,
+                        )
                     },
                     label = { Text(tab.label) },
                     alwaysShowLabel = true,
@@ -93,17 +69,10 @@ internal fun BottomNavigation(
                         indicatorColor = UltraVerseColors.cyan.copy(alpha = 0.12f),
                         unselectedIconColor = UltraVerseColors.muted,
                         unselectedTextColor = UltraVerseColors.dim,
-                        disabledIconColor = UltraVerseColors.unavailable.copy(alpha = 0.72f),
-                        disabledTextColor = UltraVerseColors.dim.copy(alpha = 0.72f),
                     ),
-                    modifier = Modifier.semantics {
-                        contentDescription = when (tab) {
-                            UltraVerseTab.Portfolio -> "Portfolio. Opens the native local wallet."
-                            UltraVerseTab.Apps -> "Apps. Scrolls to the grouped services."
-                            UltraVerseTab.Profile -> "Profile. Your address and receive code."
-                            UltraVerseTab.Swap -> "${tab.label}. Not available yet."
-                        }
-                    },
+                    modifier = Modifier
+                        .testTag("tab-${tab.name}")
+                        .semantics { contentDescription = tab.description },
                 )
             }
         }

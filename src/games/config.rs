@@ -139,6 +139,23 @@ pub struct GamesConfig {
     pub abuse_key_credential: String,
     /// None means days are closed by an operator command but never anchored automatically.
     pub anchor: Option<PeerAnchorConfig>,
+    /// The browser origins allowed to call this API (the public website). Empty means no cross-origin browser may.
+    pub cors_origins: Vec<String>,
+}
+
+/// Explicit http(s) origins only: a wildcard would let any site read a signed-in player's data.
+pub fn parse_cors_origins(raw: &str) -> Result<Vec<String>, String> {
+    let origins: Vec<String> = raw.split(',').map(str::trim).filter(|o| !o.is_empty()).map(str::to_owned).collect();
+    for origin in &origins {
+        if origin.contains('*') {
+            return Err("GAMES_CORS_ORIGINS does not allow wildcard origins".into());
+        }
+        let rest = origin.strip_prefix("https://").or_else(|| origin.strip_prefix("http://"));
+        if rest.map_or(true, |r| r.is_empty() || r.contains('/') || r.contains(' ')) {
+            return Err(format!("invalid CORS origin '{origin}'; use an origin such as https://example.com"));
+        }
+    }
+    Ok(origins)
 }
 
 pub const DEFAULT_NODE_API_BASE_URL: &str = "http://127.0.0.1:8081";
@@ -257,6 +274,9 @@ impl GamesConfig {
         // Fail closed: a player's address in a request is not proof that they control the wallet, so the
         // routes that act for a player need a wallet session unless an operator explicitly turns that off.
         service.require_player_auth = boolean("GAMES_REQUIRE_PLAYER_AUTH", true)?;
+        // Fail closed: pool rewards and withdrawals move real ULTRA, so they stay off until an operator says so.
+        service.pool_payouts_enabled = boolean("GAMES_POOL_PAYOUTS_ENABLED", false)?;
+        service.play_per_minute = number("GAMES_PLAY_PER_MINUTE", service.play_per_minute)?;
         service.anchor_empty_days = boolean("GAMES_ANCHOR_EMPTY_DAYS", service.anchor_empty_days)?;
         service.anchor_retry_seconds =
             number("GAMES_ANCHOR_RETRY_SECONDS", service.anchor_retry_seconds)?;
@@ -309,6 +329,7 @@ impl GamesConfig {
             ),
             abuse_key_credential: text("GAMES_ABUSE_KEY_CREDENTIAL", "games-abuse.key"),
             anchor,
+            cors_origins: parse_cors_origins(&text("GAMES_CORS_ORIGINS", ""))?,
         })
     }
 
@@ -507,6 +528,14 @@ mod tests {
     fn player_sign_in_is_required_unless_an_operator_turns_it_off_explicitly() {
         assert!(config(&[]).unwrap().service.require_player_auth, "fail closed by default");
         assert!(!config(&[("GAMES_REQUIRE_PLAYER_AUTH", "false")]).unwrap().service.require_player_auth);
+        assert!(config(&[]).unwrap().cors_origins.is_empty(), "no cross-origin browser by default");
+        assert_eq!(config(&[("GAMES_CORS_ORIGINS", "https://a.example, http://localhost:3000")]).unwrap().cors_origins.len(), 2);
+        for bad in ["*", "https://*.example.com", "ftp://x", "example.com", "https://a.example/path", "https://"] {
+            assert!(config(&[("GAMES_CORS_ORIGINS", bad)]).is_err(), "{bad}");
+        }
+        assert!(!config(&[]).unwrap().service.pool_payouts_enabled, "pool payouts are off by default");
+        assert!(config(&[("GAMES_POOL_PAYOUTS_ENABLED", "true")]).unwrap().service.pool_payouts_enabled);
+        assert!(config(&[("GAMES_POOL_PAYOUTS_ENABLED", "maybe")]).is_err());
         assert!(config(&[("GAMES_REQUIRE_PLAYER_AUTH", "true")]).unwrap().service.require_player_auth);
         // A misspelt value is refused, never read as "off".
         assert!(config(&[("GAMES_REQUIRE_PLAYER_AUTH", "maybe")]).unwrap_err().contains("GAMES_REQUIRE_PLAYER_AUTH"));

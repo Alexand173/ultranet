@@ -41,7 +41,7 @@ import java.util.Locale
 @Composable
 internal fun ToolTopBar(
     title: String,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
     subtitle: String? = null,
     action: (@Composable () -> Unit)? = null,
 ) {
@@ -52,12 +52,17 @@ internal fun ToolTopBar(
             .padding(start = 4.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
-                contentDescription = "Back",
-                tint = UltraVerseColors.ink,
-            )
+        if (onBack != null) {
+            IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                    contentDescription = "Back",
+                    tint = UltraVerseColors.ink,
+                )
+            }
+        } else {
+            // A section root has nowhere to go back to; keep the title aligned with the other screens.
+            Spacer(Modifier.width(12.dp))
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(

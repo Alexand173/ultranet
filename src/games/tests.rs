@@ -423,6 +423,8 @@ struct Options {
     clock: Option<Arc<AtomicU64>>,
     /// Require a wallet session on the routes that act for a player.
     require_player_auth: bool,
+    pool_payouts_enabled: bool,
+    play_per_minute: u64,
 }
 
 impl Default for Options {
@@ -442,6 +444,8 @@ impl Default for Options {
             peer_secret: None,
             clock: None,
             require_player_auth: false,
+            pool_payouts_enabled: true,
+            play_per_minute: 20,
         }
     }
 }
@@ -460,6 +464,8 @@ fn harness(options: Options) -> Harness {
     let mut config = ServiceConfig::new(payout_address.clone());
     config.anchor_games = options.anchor_games;
     config.require_player_auth = options.require_player_auth;
+    config.pool_payouts_enabled = options.pool_payouts_enabled;
+    config.play_per_minute = options.play_per_minute;
     let tick = clock.clone();
     let records_anchorer = Arc::new(FakeAnchorer::default());
     let mut records_config = RecordsConfig::new();
@@ -5940,6 +5946,28 @@ mod wallet_auth {
     use crate::games::auth::{self, AuthConfig, AuthError, PURPOSE_PLAY};
     use crate::games::service::SessionView;
 
+    /// The owner's admin digest, signed by the Android wallet for registering a game, claiming a deposit, proposing a
+    /// policy and withdrawing. The same vectors are pinned in `GameAdminSignerTest.kt`.
+    #[test]
+    fn the_admin_digest_matches_the_vectors_the_android_wallet_pins() {
+        let nonce = "ab".repeat(16);
+        let game = "00112233445566778899aabbccddeeff";
+        let withdraw = crate::games::catalog::admin_digest("pool-withdraw", 7, game, "400", "", "", &nonce, 1_800_000_000);
+        let register = crate::games::catalog::admin_digest("register", 7, "", "Echo Game", "a short description", "", &nonce, 1_800_000_000);
+        assert_eq!(hex::encode(withdraw), "8006596d5a34eaf610a746f8ef3bf172dddd2c374294ef27562a68ea85d62930");
+        assert_eq!(hex::encode(register), "f78faa7dee8619104d2ed305802a17a7ba5aaffdb87df06c257ed1ed9abd29cd");
+    }
+
+    /// The Android wallet recomputes this digest from the challenge fields and signs its own result, so the two
+    /// implementations must agree byte for byte. The same vector is pinned in `GamesAuthSignerTest.kt`.
+    #[test]
+    fn the_challenge_digest_matches_the_vector_the_android_wallet_pins() {
+        let address = "7d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e";
+        let id = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+        let digest = auth::challenge_digest(PURPOSE_PLAY, address, id, 1_800_000_000, 1_800_000_300).unwrap();
+        assert_eq!(hex::encode(digest), "2d1074fd8db57d0497d6bf5f07a8963db1806425b147fe5a350233271e60e020");
+    }
+
     fn wallet() -> (QuantumKeyPair, String) {
         let keys = QuantumKeyPair::generate();
         let address = QuantumKeyPair::address_from_public_key(&keys.public_key);
@@ -7713,5 +7741,676 @@ mod reward_pools {
         h.node.balance.store(899, Ordering::SeqCst);
         assert!(h.service.process_pool_payout_once().await.unwrap());
         assert_eq!((store.pool_in_flight_total().unwrap(), store.pool_unspent_total().unwrap(), h.service.pool(&game.game_id).unwrap().paid), (0, 899, 100));
+    }
+
+    #[tokio::test]
+    async fn with_the_production_gate_off_nothing_is_reserved_signed_or_paid() {
+        assert!(!ServiceConfig::new("x".into()).pool_payouts_enabled, "the library default is off");
+        let h = harness(Options { pool_payouts_enabled: false, ..Options::default() });
+        let (_, _, game) = ready(&h, 7, 1_000, 100).await;
+        let refused = h.service.reserve_reward_for_payout(&game.game_id, "m1", &player(1), &verdict(Outcome::Win, ADAPTER));
+        assert!(matches!(refused, Err(GamesError::Forbidden(_))), "{refused:?}");
+        assert_eq!((h.service.pool(&game.game_id).unwrap().reserved, h.service.store().pool_payouts_for(&game.game_id).unwrap().len()), (0, 0));
+        // Even a payout that is already queued (made before the gate was closed) is left alone.
+        h.service.store().pool_reserve_queued(&game.game_id, "m2", &player(2), &"ab".repeat(16), &verdict(Outcome::Win, ADAPTER), h.service.now()).unwrap();
+        assert!(!h.service.process_pool_payout_once().await.unwrap());
+        assert!(h.node.submissions.lock().unwrap().is_empty(), "nothing was signed or sent");
+        assert_eq!(h.service.store().pool_payouts_for(&game.game_id).unwrap()[0].state, "queued");
+    }
+
+    // --- playing a catalog game: verified, reserved and paid are different facts ----------------------
+
+    /// The first payload byte picks the outcome (1 win, 2 loss, 3 tie), as in the adapter's own tests.
+    const PLAY_WAT: &str = r#"
+    (module
+      (memory (export "memory") 1 2)
+      (func (export "adapter_abi_version") (result i32) i32.const 1)
+      (func (export "input_buffer") (result i32) i32.const 1024)
+      (func (export "input_capacity") (result i32) i32.const 4200)
+      (func (export "output_buffer") (result i32) i32.const 8192)
+      (func (export "adapter_run") (param $len i32) (result i32)
+        (i32.store8 (i32.const 8192) (i32.const 1))
+        (i32.store8 (i32.const 8193) (i32.load8_u (i32.const 1061)))
+        (i32.store (i32.const 8194) (i32.const 7))
+        (i32.const 38)))
+    "#;
+
+    /// A funded game with a real module registered by the operator and an approved policy.
+    async fn playable(h: &Harness, chain: u32, funds: u64) -> CatalogGame {
+        let (keys, owner, game) = game_on(h, chain).await;
+        let bytes = ::wat::parse_str(PLAY_WAT).unwrap();
+        h.service.platform_register_adapter(&game.game_id, &bytes, 1, "ops").unwrap();
+        if funds > 0 {
+            fund(h, &keys, &owner, &game, funds, chain as u8).await.unwrap();
+        }
+        let row = propose(h, &keys, &game, terms(100)).await.unwrap();
+        h.service.platform_decide_policy(&game.game_id, row.version, true, "ops", "ok").unwrap_or_else(|_| row.clone());
+        h.service.catalog_game(&game.game_id).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_verified_win_reserves_the_reward_and_only_the_node_makes_it_final() {
+        let h = harness(Options::default());
+        let game = playable(&h, 7, 1_000).await;
+        let first = h.service.play(&game.game_id, &player(1), "m1", "01").await.unwrap();
+        assert_eq!((first.outcome, first.stage, first.reward_units, first.payout_state.as_deref()), ("win", "reward_reserved", Some(100), Some("queued")));
+        // Asking again is the same fact, not a second reward.
+        let again = h.service.play(&game.game_id, &player(1), "m1", "01").await.unwrap();
+        assert_eq!((again.credit_id.clone(), again.stage), (first.credit_id.clone(), "reward_reserved"));
+        assert_eq!(h.service.pool(&game.game_id).unwrap().reserved, 100);
+        // Nothing is paid until the worker signs it and the node confirms it.
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        assert_eq!(h.service.result_view(&game.game_id, "m1", None).unwrap().stage, "reward_reserved");
+        let sent = h.service.store().pool_payouts_for(&game.game_id).unwrap().remove(0);
+        confirm_on_node(&h, &sent);
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let paid = h.service.result_view(&game.game_id, "m1", None).unwrap();
+        assert_eq!((paid.stage, paid.payout_state.as_deref()), ("reward_paid", Some("confirmed")));
+        assert_eq!(h.service.play(&game.game_id, &player(1), "m1", "01").await.unwrap().stage, "reward_paid");
+        assert_eq!(h.service.pool(&game.game_id).unwrap().paid, 100);
+    }
+
+    #[tokio::test]
+    async fn a_verified_result_that_the_policy_does_not_pay_for_earns_nothing() {
+        let h = harness(Options::default());
+        let game = playable(&h, 7, 1_000).await;
+        let loss = h.service.play(&game.game_id, &player(1), "m1", "02").await.unwrap();
+        assert_eq!((loss.outcome, loss.stage, loss.not_rewarded), ("loss", "verified", Some("policy_does_not_pay_this_outcome")));
+        assert_eq!(h.service.pool(&game.game_id).unwrap().reserved, 0);
+        assert!(h.service.store().pool_payouts_for(&game.game_id).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_empty_pool_or_a_closed_gate_leaves_a_verified_result_unpaid_and_says_why() {
+        let h = harness(Options::default());
+        let game = playable(&h, 7, 0).await; // never funded
+        let view = h.service.play(&game.game_id, &player(1), "m1", "01").await.unwrap();
+        assert_eq!((view.stage, view.not_rewarded), ("verified", Some("no_approved_reward_policy")), "an unfunded pool cannot even have an approved policy");
+        let off = harness(Options { pool_payouts_enabled: false, ..Options::default() });
+        let game = playable(&off, 8, 1_000).await;
+        let view = off.service.play(&game.game_id, &player(1), "m1", "01").await.unwrap();
+        assert_eq!((view.stage, view.not_rewarded, view.credit_id), ("verified", Some("rewards_not_enabled"), None));
+        assert!(off.service.store().pool_payouts_for(&game.game_id).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_second_player_cannot_claim_a_result_id_that_is_already_taken() {
+        let h = harness(Options::default());
+        let game = playable(&h, 7, 1_000).await;
+        h.service.play(&game.game_id, &player(1), "m1", "01").await.unwrap();
+        let theirs = h.service.play(&game.game_id, &player(2), "m1", "01").await;
+        assert!(matches!(theirs, Err(GamesError::ResultConflict)), "{theirs:?}");
+        assert_eq!(h.service.pool(&game.game_id).unwrap().reserved, 100, "one reward, to the first player");
+    }
+
+    #[tokio::test]
+    async fn a_game_without_an_approved_module_is_never_judged_and_a_bad_module_is_never_stored() {
+        let h = harness(Options::default());
+        let (_, _, game) = game_on(&h, 7).await; // approved hash ADAPTER, but no bytes were ever registered
+        let missing = h.service.play(&game.game_id, &player(1), "m1", "01").await;
+        assert!(matches!(missing, Err(GamesError::Internal(_))), "bytes for the approved hash do not exist: {missing:?}");
+        // A module the host rejects (imports a host function) is refused and does not replace the approval.
+        let bad = ::wat::parse_str(r#"(module (import "env" "now" (func (result i32))))"#).unwrap();
+        let before = h.service.catalog_game(&game.game_id).unwrap().adapter_ref;
+        assert!(matches!(h.service.platform_register_adapter(&game.game_id, &bad, 1, "ops"), Err(GamesError::Invalid(_))));
+        assert_eq!(h.service.catalog_game(&game.game_id).unwrap().adapter_ref, before);
+        assert!(h.service.platform_register_adapter("no-such-game", &bad, 1, "ops").is_err());
+        // A game that was never given an adapter stays record-only.
+        let (_, owner2) = wallet();
+        h.chain.owners.lock().unwrap().insert(9, owner2);
+        let nothing = h.service.play("0".repeat(32).as_str(), &player(1), "m1", "01").await;
+        assert!(matches!(nothing, Err(GamesError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn a_stored_module_that_no_longer_matches_its_hash_is_never_run() {
+        let h = harness(Options::default());
+        let game = playable(&h, 7, 1_000).await;
+        let hash = game.adapter_ref.clone().unwrap();
+        let other = ::wat::parse_str(&PLAY_WAT.replace("(i32.const 7)", "(i32.const 8)")).unwrap();
+        h.service.store().lock().unwrap().execute("UPDATE game_adapter_modules SET module_bytes = ?2 WHERE module_hash = ?1", rusqlite::params![hash, other]).unwrap();
+        let swapped = h.service.play(&game.game_id, &player(1), "m1", "01").await;
+        assert!(matches!(swapped, Err(GamesError::Invalid(_))), "{swapped:?}");
+        assert_eq!(h.service.pool(&game.game_id).unwrap().reserved, 0);
+    }
+
+    #[tokio::test]
+    async fn an_input_the_module_cannot_judge_is_refused_before_any_reward() {
+        let h = harness(Options::default());
+        let game = playable(&h, 7, 1_000).await;
+        let oversized = "00".repeat(5_000);
+        assert!(matches!(h.service.play(&game.game_id, &player(1), "m1", &oversized).await, Err(GamesError::Invalid(_))));
+        assert!(matches!(h.service.play(&game.game_id, &player(1), "m1", "zz").await, Err(GamesError::Invalid(_))));
+        assert!(matches!(h.service.play(&game.game_id, &player(1), "", "01").await, Err(GamesError::Invalid(_))));
+        assert_eq!(h.service.pool(&game.game_id).unwrap().reserved, 0);
+    }
+
+    #[actix_web::test]
+    async fn the_http_routes_play_read_and_fund_with_the_same_rules() {
+        use actix_web::{
+            http::StatusCode,
+            test::{call_service, init_service, read_body_json, TestRequest},
+            web, App,
+        };
+        use serde_json::{json, Value};
+
+        let h = harness(Options { require_player_auth: true, ..Options::default() });
+        let game = playable(&h, 7, 1_000).await;
+        let app = init_service(App::new().app_data(web::Data::from(h.service.clone())).configure(crate::games::api::configure_routes)).await;
+        let uri = format!("/api/games/play/{}", game.game_id);
+        let body = json!({ "address": player(1), "result_id": "m1", "payload": "01" });
+        // No wallet session: refused before anything is judged.
+        let response = call_service(&app, TestRequest::post().uri(&uri).set_json(&body).to_request()).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(h.service.pool(&game.game_id).unwrap().reserved, 0);
+        // A malformed game id is a 404, and an unknown field is a 400.
+        assert_eq!(call_service(&app, TestRequest::post().uri("/api/games/play/nope").set_json(&body).to_request()).await.status(), StatusCode::NOT_FOUND);
+        let extra = json!({ "address": player(1), "result_id": "m1", "payload": "01", "reward": 999999 });
+        assert_eq!(call_service(&app, TestRequest::post().uri(&uri).set_json(&extra).to_request()).await.status(), StatusCode::BAD_REQUEST);
+        // The public reads work without a session and say what the pool holds.
+        let pool: Value = read_body_json(call_service(&app, TestRequest::get().uri(&format!("/api/games/pools/{}", game.game_id)).to_request()).await).await;
+        assert_eq!((pool["funded"].as_u64(), pool["reserved"].as_u64(), pool["success"].as_bool()), (Some(1_000), Some(0), Some(true)));
+        let missing = call_service(&app, TestRequest::get().uri(&format!("/api/games/results/{}/m1", game.game_id)).to_request()).await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND, "no reward was reserved for that result");
+        // A forged funding claim is refused, so a stranger cannot attach a transfer to someone's game.
+        let forged = json!({ "tx_hash": "ab".repeat(32), "nonce": "cd".repeat(16), "timestamp": h.service.now(), "public_key": "00", "signature": "00" });
+        let response = call_service(&app, TestRequest::post().uri(&format!("/api/games/pools/{}/fund", game.game_id)).set_json(&forged).to_request()).await;
+        assert!(matches!(response.status(), StatusCode::UNAUTHORIZED | StatusCode::BAD_REQUEST | StatusCode::FORBIDDEN), "{}", response.status());
+        assert_eq!(h.service.pool(&game.game_id).unwrap().funded, 1_000);
+    }
+
+    // --- the operator's actions: store-only, audited, never over HTTP --------------------------------
+
+    #[tokio::test]
+    async fn the_operator_settles_a_payout_in_doubt_only_with_a_reason_and_only_once() {
+        let h = harness(Options::default());
+        let (_, _, payout) = queued_reward(&h, 7, 1_000).await;
+        let store = h.service.store();
+        let now = h.service.now();
+        // Never signed: there is nothing on the chain to have looked at.
+        assert!(crate::games::operator::confirm_pool_payout(store, &payout.payout_id, "ops", "looked", now).is_err());
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        // No reason, no operator, no such payout: all refused, and nothing moves.
+        assert!(crate::games::operator::confirm_pool_payout(store, &payout.payout_id, "ops", " ", now).is_err());
+        assert!(crate::games::operator::confirm_pool_payout(store, &payout.payout_id, "", "looked", now).is_err());
+        assert!(crate::games::operator::confirm_pool_payout(store, &"00".repeat(16), "ops", "looked", now).is_err());
+        assert_eq!(store.pool_payout(&payout.payout_id).unwrap().unwrap().state, "submitted");
+        let history_before = h.service.catalog_history(&payout.game_id).unwrap().len();
+        let settled = crate::games::operator::confirm_pool_payout(store, &payout.payout_id, "ops", "tx included in block 12", now).unwrap();
+        assert_eq!((settled.pool.paid, settled.pool.reserved), (100, 0));
+        assert_eq!(store.pool_payout(&payout.payout_id).unwrap().unwrap().state, "confirmed");
+        let history = h.service.catalog_history(&payout.game_id).unwrap();
+        assert_eq!(history.len(), history_before + 1, "the settlement is in the audit history");
+        assert!(history.last().unwrap().detail.contains("tx included in block 12"));
+        // A finished payout cannot be settled a second time, so nothing can be paid twice.
+        assert!(crate::games::operator::confirm_pool_payout(store, &payout.payout_id, "ops", "again", now).is_err());
+        assert_eq!(h.service.pool(&payout.game_id).unwrap().paid, 100);
+    }
+
+    #[tokio::test]
+    async fn approving_a_policy_needs_an_operator_and_funds_nothing() {
+        let h = harness(Options::default());
+        let (keys, _, game) = game_on(&h, 7).await;
+        let row = propose(&h, &keys, &game, terms(100)).await.unwrap();
+        let store = h.service.store();
+        let now = h.service.now();
+        assert!(crate::games::operator::decide_policy(store, &game.game_id, row.version, true, "", "ok", now).is_err());
+        let unfunded = crate::games::operator::decide_policy(store, &game.game_id, row.version, true, "ops", "ok", now);
+        assert!(matches!(unfunded, Err(GamesError::Forbidden(_))), "an unfunded pool cannot back an approved policy: {unfunded:?}");
+        assert_eq!(h.service.pool(&game.game_id).unwrap().funded, 0, "approval funded nothing");
+        let rejected = crate::games::operator::decide_policy(store, &game.game_id, row.version, false, "ops", "not now", now).unwrap();
+        assert_eq!(rejected.status, "rejected");
+    }
+
+    #[tokio::test]
+    async fn the_operator_registers_a_module_by_hash_and_the_owner_has_no_route_to_do_it() {
+        let h = harness(Options::default());
+        let (_, _, game) = game_on(&h, 7).await;
+        let bytes = ::wat::parse_str(PLAY_WAT).unwrap();
+        let hash = crate::games::operator::register_adapter(h.service.store(), &game.game_id, &bytes, 2, "ops", h.service.now()).unwrap();
+        let bound = h.service.catalog_game(&game.game_id).unwrap();
+        assert_eq!((bound.adapter_ref.as_deref(), bound.adapter_version), (Some(hash.as_str()), 2));
+        assert_eq!(h.service.store().module_bytes(&hash).unwrap().unwrap(), bytes, "the exact bytes are kept");
+        // No HTTP route reaches an operator action.
+        use actix_web::{http::StatusCode, test::{call_service, init_service, TestRequest}, web, App};
+        let app = init_service(App::new().app_data(web::Data::from(h.service.clone())).configure(crate::games::api::configure_routes)).await;
+        for uri in ["adapter", "adapter-register", "policy-decide", "approve", "payout-confirm"] {
+            let response = call_service(&app, TestRequest::post().uri(&format!("/api/games/pools/{}/{uri}", game.game_id)).set_json(serde_json::json!({})).to_request()).await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+        }
+    }
+
+    // --- what the phone shows: the store, rewards history, funding history, play rate ------------------
+
+    fn ready_game_hash(h: &Harness, game: &CatalogGame) -> Option<String> {
+        h.service.catalog_game(&game.game_id).unwrap().adapter_ref
+    }
+
+    #[tokio::test]
+    async fn the_store_lists_each_game_with_its_live_owner_and_the_exact_reason_it_cannot_play_or_pay() {
+        let h = harness(Options::default());
+        let ready_game = playable(&h, 7, 1_000).await; // verified module, funded, approved policy
+        let (_, _, record_only) = game_on(&h, 8).await; // adapter hash named, bytes never installed
+        let unfunded = {
+            let (keys, _, game) = game_on(&h, 9).await;
+            h.service.platform_register_adapter(&game.game_id, &::wat::parse_str(PLAY_WAT).unwrap(), 1, "ops").unwrap();
+            let _ = keys;
+            game
+        };
+        let listing = h.service.store_listing(None, None).await.unwrap();
+        let by = |id: &str| listing.iter().find(|e| e.game_id == id).unwrap().clone();
+        let ok = by(&ready_game.game_id);
+        assert_eq!((ok.playable, ok.rewards, ok.reward_units, ok.rewards_reason), (true, "available", Some(100), None));
+        assert_eq!(ok.validation_scheme, "verified_adapter");
+        assert_eq!(ok.adapter_hash.as_deref(), ready_game_hash(&h, &ready_game).as_deref(), "the verifier identity is the bound module hash");
+        assert_eq!(ok.owner.as_deref(), h.chain.owners.lock().unwrap().get(&7).map(String::as_str), "the owner is the ledger's, read now");
+        let missing = by(&record_only.game_id);
+        assert_eq!((missing.playable, missing.playable_reason, missing.rewards), (false, Some("adapter_module_not_installed"), "none"));
+        let nopolicy = by(&unfunded.game_id);
+        assert_eq!((nopolicy.playable, nopolicy.rewards_reason), (true, Some("no_approved_reward_policy")));
+        // Search is by name or id; the chain filter narrows; identity is the id, never the name.
+        assert_eq!(h.service.store_listing(Some(&ready_game.game_id[..8]), None).await.unwrap().len(), 1);
+        assert_eq!(h.service.store_listing(Some("pool game"), None).await.unwrap().len(), 3, "the same display name on three chains");
+        assert_eq!(h.service.store_listing(None, Some(8)).await.unwrap().len(), 1);
+        assert!(h.service.store_listing(Some("no such thing"), None).await.unwrap().is_empty());
+        // A chain handover moves the owner shown, and nothing else.
+        let (_, new_owner) = wallet();
+        h.chain.owners.lock().unwrap().insert(7, new_owner.clone());
+        assert_eq!(h.service.store_listing(None, Some(7)).await.unwrap()[0].owner.as_deref(), Some(new_owner.as_str()));
+        // Closing the gate removes the reward offer, and a drained pool says so.
+        let off = harness(Options { pool_payouts_enabled: false, ..Options::default() });
+        let game = playable(&off, 7, 1_000).await;
+        let entry = off.service.store_listing(None, None).await.unwrap().into_iter().find(|e| e.game_id == game.game_id).unwrap();
+        assert_eq!((entry.playable, entry.rewards, entry.rewards_reason), (true, "none", Some("rewards_not_enabled")));
+        let small = harness(Options::default());
+        let g = playable(&small, 7, 150).await;
+        small.service.play(&g.game_id, &player(1), "m1", "01").await.unwrap(); // reserves 100 + its fee of 1: 49 is left
+        let entry = small.service.store_listing(None, None).await.unwrap().into_iter().find(|e| e.game_id == g.game_id).unwrap();
+        assert_eq!((entry.rewards, entry.rewards_reason), ("none", Some("pool_cannot_cover_the_reward")));
+    }
+
+    #[tokio::test]
+    async fn a_players_history_shows_reserved_then_paid_with_the_transaction_reference() {
+        let h = harness(Options::default());
+        let game = playable(&h, 7, 1_000).await;
+        h.service.play(&game.game_id, &player(1), "m1", "01").await.unwrap();
+        h.service.play(&game.game_id, &player(2), "m2", "01").await.unwrap();
+        let before = h.service.player_result_list(&player(1)).unwrap();
+        assert_eq!((before.len(), before[0].stage, before[0].payout_state.as_deref(), before[0].transaction_hash.is_none()), (1, "reward_reserved", Some("queued"), true));
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let sent = h.service.store().pool_payouts_for(&game.game_id).unwrap().into_iter().find(|p| p.to_address == player(1)).unwrap();
+        let signed = h.service.player_result_list(&player(1)).unwrap().remove(0);
+        assert_eq!((signed.stage, signed.transaction_hash.clone()), ("reward_reserved", sent.tx_hash.clone()), "a hash is shown, but it is not paid yet");
+        confirm_on_node(&h, &sent);
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        let paid = h.service.player_result_list(&player(1)).unwrap().remove(0);
+        assert_eq!((paid.stage, paid.payout_state.as_deref(), paid.reward_units), ("reward_paid", Some("confirmed"), 100));
+        // Another wallet's history is its own.
+        assert_eq!(h.service.player_result_list(&player(2)).unwrap().len(), 1);
+        assert!(h.service.player_result_list(&player(3)).unwrap().is_empty());
+        assert!(h.service.player_result_list("nonsense").is_err());
+    }
+
+    #[tokio::test]
+    async fn the_funding_history_lists_each_confirmed_deposit_once() {
+        let h = harness(Options::default());
+        let (keys, owner, game) = game_on(&h, 7).await;
+        fund(&h, &keys, &owner, &game, 400, 1).await.unwrap();
+        fund(&h, &keys, &owner, &game, 600, 2).await.unwrap();
+        assert!(fund(&h, &keys, &owner, &game, 600, 2).await.is_err(), "the same transfer funds once");
+        let deposits = h.service.pool_deposit_list(&game.game_id).unwrap();
+        assert_eq!(deposits.iter().map(|d| d.amount_units).sum::<u64>(), 1_000);
+        assert_eq!(deposits.len(), 2);
+        assert!(deposits.iter().all(|d| d.funder == owner));
+    }
+
+    #[tokio::test]
+    async fn one_wallet_cannot_start_more_plays_per_minute_than_the_limit_and_others_are_unaffected() {
+        let h = harness(Options { play_per_minute: 3, ..Options::default() });
+        let game = playable(&h, 7, 1_000).await;
+        for n in 0..3 {
+            h.service.play(&game.game_id, &player(1), &format!("m{n}"), "02").await.unwrap();
+        }
+        let blocked = h.service.play(&game.game_id, &player(1), "m3", "02").await;
+        assert!(matches!(blocked, Err(GamesError::PlayRateLimited)), "{blocked:?}");
+        assert!(h.service.play(&game.game_id, &player(2), "m0", "02").await.is_ok(), "another wallet is not slowed");
+        h.advance(61);
+        assert!(h.service.play(&game.game_id, &player(1), "m3", "02").await.is_ok(), "the minute passed");
+        assert_eq!(GamesError::PlayRateLimited.status(), 429);
+    }
+
+    #[actix_web::test]
+    async fn only_the_listed_website_origin_may_read_the_api_from_a_browser() {
+        use actix_web::{
+            http::{header, StatusCode},
+            test::{call_service, init_service, TestRequest},
+            web, App,
+        };
+        let h = harness(Options::default());
+        let origins = vec!["https://site.example".to_string()];
+        let app = init_service(
+            App::new().wrap(crate::games::api::cors_for(&origins)).app_data(web::Data::from(h.service.clone())).configure(crate::games::api::configure_routes),
+        )
+        .await;
+        // An allowed origin reads the store and is told so.
+        let ok = call_service(&app, TestRequest::get().uri("/api/games/store").insert_header((header::ORIGIN, "https://site.example")).to_request()).await;
+        assert_eq!(ok.status(), StatusCode::OK);
+        assert_eq!(ok.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(), "https://site.example");
+        assert!(ok.headers().get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none(), "no cookies or credentials are ever allowed");
+        // Its preflight for a signed play request, with the session header, is accepted.
+        let preflight = call_service(
+            &app,
+            TestRequest::default()
+                .method(actix_web::http::Method::OPTIONS)
+                .uri("/api/games/play/00112233445566778899aabbccddeeff")
+                .insert_header((header::ORIGIN, "https://site.example"))
+                .insert_header((header::ACCESS_CONTROL_REQUEST_METHOD, "POST"))
+                .insert_header((header::ACCESS_CONTROL_REQUEST_HEADERS, "content-type,x-wallet-session"))
+                .to_request(),
+        )
+        .await;
+        assert!(preflight.status().is_success(), "{}", preflight.status());
+        assert_eq!(preflight.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(), "https://site.example");
+        // Another origin is refused, and so is a preflight asking for a header this API does not use.
+        let other = call_service(&app, TestRequest::get().uri("/api/games/store").insert_header((header::ORIGIN, "https://evil.example")).to_request()).await;
+        assert!(other.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none() || !other.status().is_success());
+        let refused = call_service(
+            &app,
+            TestRequest::default()
+                .method(actix_web::http::Method::OPTIONS)
+                .uri("/api/games/store")
+                .insert_header((header::ORIGIN, "https://evil.example"))
+                .insert_header((header::ACCESS_CONTROL_REQUEST_METHOD, "GET"))
+                .to_request(),
+        )
+        .await;
+        assert!(!refused.status().is_success(), "{}", refused.status());
+        assert!(refused.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+        // With no origins configured nothing cross-origin is allowed at all.
+        let closed = init_service(App::new().wrap(crate::games::api::cors_for(&[])).app_data(web::Data::from(h.service.clone())).configure(crate::games::api::configure_routes)).await;
+        let none = call_service(&closed, TestRequest::get().uri("/api/games/store").insert_header((header::ORIGIN, "https://site.example")).to_request()).await;
+        assert!(none.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none() || !none.status().is_success());
+    }
+
+    // --- the contract the website and the Android app both read ------------------------------------------
+
+    /// The structure of a JSON value: object keys, array element shape, and leaf types. `null` matches anything,
+    /// because an optional field is `null` in one answer and a value in another.
+    fn shape_matches(real: &serde_json::Value, example: &serde_json::Value, path: &str, problems: &mut Vec<String>) {
+        use serde_json::Value as J;
+        match (real, example) {
+            (J::Null, _) | (_, J::Null) => {}
+            (J::Object(a), J::Object(b)) => {
+                let keys = |m: &serde_json::Map<String, serde_json::Value>| m.keys().cloned().collect::<std::collections::BTreeSet<_>>();
+                if keys(a) != keys(b) {
+                    problems.push(format!("{path}: keys differ: real {:?} vs fixture {:?}", keys(a), keys(b)));
+                }
+                for (key, value) in a {
+                    if let Some(other) = b.get(key) {
+                        shape_matches(value, other, &format!("{path}.{key}"), problems);
+                    }
+                }
+            }
+            (J::Array(a), J::Array(b)) => match (a.first(), b.first()) {
+                (Some(x), Some(y)) => shape_matches(x, y, &format!("{path}[]"), problems),
+                (None, _) => {}
+                (_, None) => problems.push(format!("{path}: the fixture has no example element")),
+            },
+            (J::Bool(_), J::Bool(_)) | (J::Number(_), J::Number(_)) | (J::String(_), J::String(_)) => {}
+            (a, b) => problems.push(format!("{path}: type differs: real {a} vs fixture {b}")),
+        }
+    }
+
+    const CONTRACT_WEB: &str = "website/src/lib/games-api-contract.json";
+    const CONTRACT_ANDROID: &str = "android-app/app/src/androidTest/assets/games-api-contract.json";
+
+    #[actix_web::test]
+    async fn every_answer_the_clients_read_has_the_shape_the_checked_in_contract_says() {
+        use actix_web::{
+            test::{call_service, init_service, read_body_json, TestRequest},
+            web, App,
+        };
+        use serde_json::{json, Value};
+        let h = harness(Options { require_player_auth: true, ..Options::default() });
+        let (keys, owner, game) = game_on(&h, 7).await;
+        h.service.platform_register_adapter(&game.game_id, &::wat::parse_str(PLAY_WAT).unwrap(), 1, "ops").unwrap();
+        let app = init_service(App::new().app_data(web::Data::from(h.service.clone())).configure(crate::games::api::configure_routes)).await;
+        let mut real = serde_json::Map::new();
+        macro_rules! capture {
+            ($name:expr, $request:expr) => {{
+                let response = call_service(&app, $request.to_request()).await;
+                let status = response.status().as_u16();
+                let body: Value = read_body_json(response).await;
+                assert_eq!(status, 200, "{}: {body}", $name);
+                real.insert($name.to_string(), body.clone());
+                body
+            }};
+        }
+        let admin = |action: &str, name: &str, description: &str| {
+            let mut fresh = [0u8; 16];
+            rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut fresh);
+            let nonce = hex::encode(fresh);
+            let timestamp = h.service.now();
+            let digest = catalog::admin_digest(action, 7, "", name, description, "", &nonce, timestamp);
+            json!({ "nonce": nonce, "timestamp": timestamp, "public_key": hex::encode(&keys.public_key), "signature": hex::encode(keys.sign(&digest)) })
+        };
+        let proof_for = |action: &str, game_id: &str, name: &str| {
+            let p = proof(&h, &keys, action, 7, game_id, name);
+            json!({ "nonce": p.nonce, "timestamp": p.timestamp, "public_key": p.public_key, "signature": p.signature })
+        };
+        let merge = |mut a: Value, b: Value| {
+            a.as_object_mut().unwrap().extend(b.as_object().unwrap().clone());
+            a
+        };
+        // Funding, claim, policy, in the order an owner does them.
+        let deposit = hex::encode([9u8; 32]);
+        h.chain.transfers.lock().unwrap().insert(deposit.clone(), crate::games::chain::TransferView { sender: owner.clone(), recipient: h.payout_address.clone(), amount: 1_000, pending: false });
+        capture!("fund", TestRequest::post().uri(&format!("/api/games/pools/{}/fund", game.game_id)).set_json(merge(json!({ "tx_hash": deposit }), proof_for("pool-fund", &game.game_id, &deposit))));
+        let t = terms(100);
+        let summary = format!("{}|{}|{}|{}|{}", t.reward_units, t.eligible_outcomes, t.per_player_per_day, t.per_game_per_day, t.effective_from);
+        let proposed = capture!("policy_propose", TestRequest::post().uri(&format!("/api/games/pools/{}/policy", game.game_id)).set_json(merge(
+            json!({ "reward_units": 100, "eligible_outcomes": "win", "per_player_per_day": 3, "per_game_per_day": 100 }),
+            proof_for("policy-propose", &game.game_id, &summary),
+        )));
+        h.service.platform_decide_policy(&game.game_id, proposed["version"].as_u64().unwrap() as u32, true, "ops", "ok").unwrap();
+        // Registering another game is an owner act on the same chain.
+        capture!("catalog_register", TestRequest::post().uri("/api/games/catalog").set_json(merge(json!({ "chain_id": 7, "name": "Second", "description": "d" }), admin("register", "Second", "d"))));
+        // A real wallet signs in; the session plays.
+        let (wallet_keys, wallet_address) = wallet();
+        let challenge = capture!("challenge", TestRequest::post().uri("/api/games/auth/challenge").set_json(json!({ "address": wallet_address, "purpose": "play" })));
+        let digest = crate::games::auth::challenge_digest("play", &wallet_address, challenge["challenge_id"].as_str().unwrap(), challenge["issued_at"].as_u64().unwrap(), challenge["expires_at"].as_u64().unwrap()).unwrap();
+        let session = capture!("session", TestRequest::post().uri("/api/games/auth/verify").set_json(json!({
+            "challenge_id": challenge["challenge_id"], "public_key": hex::encode(&wallet_keys.public_key), "signature": hex::encode(wallet_keys.sign(&digest)),
+        })));
+        let token = session["token"].as_str().unwrap().to_string();
+        capture!("play", TestRequest::post().uri(&format!("/api/games/play/{}", game.game_id)).insert_header(("X-Wallet-Session", token)).set_json(json!({ "address": wallet_address, "result_id": "m1", "payload": "01" })));
+        capture!("result", TestRequest::get().uri(&format!("/api/games/results/{}/m1", game.game_id)));
+        capture!("store", TestRequest::get().uri("/api/games/store"));
+        capture!("player_results", TestRequest::get().uri(&format!("/api/games/players/{wallet_address}/results")));
+        capture!("pool", TestRequest::get().uri(&format!("/api/games/pools/{}", game.game_id)));
+        capture!("deposits", TestRequest::get().uri(&format!("/api/games/pools/{}/deposits", game.game_id)));
+        capture!("policies", TestRequest::get().uri(&format!("/api/games/pools/{}/policies", game.game_id)));
+        assert!(h.service.process_pool_payout_once().await.unwrap());
+        capture!("payouts", TestRequest::get().uri(&format!("/api/games/pools/{}/payouts", game.game_id)));
+        capture!("withdraw", TestRequest::post().uri(&format!("/api/games/pools/{}/withdraw", game.game_id)).set_json(merge(json!({ "amount_units": 400 }), proof_for("pool-withdraw", &game.game_id, "400"))));
+
+        let real = Value::Object(real);
+        if std::env::var("UPDATE_GAMES_CONTRACT").is_ok() {
+            let text = serde_json::to_string_pretty(&real).unwrap() + "\n";
+            for path in [CONTRACT_WEB, CONTRACT_ANDROID] {
+                let full = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
+                std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+                std::fs::write(full, &text).unwrap();
+            }
+        }
+        let read = |path: &str| -> Value {
+            let full = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
+            serde_json::from_str(&std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{path}: {e}; run with UPDATE_GAMES_CONTRACT=1"))).unwrap()
+        };
+        let (web, android) = (read(CONTRACT_WEB), read(CONTRACT_ANDROID));
+        assert_eq!(web, android, "the website and Android contract copies must be identical");
+        let mut problems = Vec::new();
+        for (name, answer) in real.as_object().unwrap() {
+            match web.get(name) {
+                Some(example) => shape_matches(answer, example, name, &mut problems),
+                None => problems.push(format!("{name}: missing from the checked-in contract")),
+            }
+        }
+        for name in web.as_object().unwrap().keys() {
+            if real.get(name).is_none() {
+                problems.push(format!("{name}: in the contract but not produced by the service"));
+            }
+        }
+        assert!(problems.is_empty(), "the service and the checked-in contract disagree:\n{}", problems.join("\n"));
+    }
+
+    // --- the shipped UltraGrid verifier, judged by the real runtime --------------------------------
+
+    /// The day the harness's clock is in, and the anchor root that day's puzzles derive from.
+    fn grid_day_of(h: &Harness) -> (u32, String) {
+        let day = crate::games::play_context::day_of(h.service.now());
+        (day, crate::games::play_context::date_of(day))
+    }
+
+    fn grid_seed(chain: u32, date: &str, root: &[u8; 32]) -> [u8; 32] {
+        crate::ultragrid::daily_seed(chain, date, root).unwrap()
+    }
+
+    async fn grid_game(h: &Harness) -> CatalogGame {
+        let (_, _, game) = game_on(h, GRID_CHAIN).await;
+        let hash = h
+            .service
+            .platform_register_adapter(&game.game_id, crate::games::adapters::GRID_VERIFIER, 1, "ops")
+            .unwrap();
+        // The hash an operator approves is the hash of the bytes in the repository, not a value typed in.
+        assert_eq!(hash, hex::encode(<sha3::Sha3_256 as sha3::Digest>::digest(crate::games::adapters::GRID_VERIFIER)));
+        h.service.catalog_game(&game.game_id).unwrap()
+    }
+
+    #[test]
+    fn the_shipped_grid_verifier_is_a_module_the_runtime_accepts() {
+        let module = AdapterModule::compile(crate::games::adapters::GRID_VERIFIER, RuntimeLimits::default()).expect("the shipped module compiles");
+        // Pinned: a changed module must change this hash deliberately, in a commit that says so. The full
+        // digest, not a prefix, so two modules cannot share a pin by accident.
+        assert_eq!(
+            hex::encode(module.hash()),
+            "376470459f3ac1d0fde46ac4e81f4661fdb219b8039ca8d552f785a898556321",
+            "the shipped UltraGrid verifier's bytes changed: rebuild with scripts/build-adapters.sh and update this pin, the runbook's identity table and any registered copy"
+        );
+        assert_eq!(
+            module.hash(),
+            <[u8; 32]>::from(<sha3::Sha3_256 as sha3::Digest>::digest(crate::games::adapters::GRID_VERIFIER)),
+            "the pin is the SHA3-256 of the bytes in the repository, recomputed, not copied from a note"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_grid_verifier_regenerates_the_puzzle_and_accepts_only_a_real_solution() {
+        let h = harness(Options::default());
+        let game = grid_game(&h).await;
+        let (day, date) = grid_day_of(&h);
+        let root = [0u8; 32];
+        let seed = grid_seed(GRID_CHAIN, &date, &root);
+        let level = 3u8;
+        let generated = crate::ultragrid::generate(&seed, level);
+        let reference: Vec<(u16, u8)> = generated.reference.iter().map(|turn| (turn.cell, turn.turns)).collect();
+        let payload = crate::games::play_context::grid_payload(GRID_CHAIN, day, &root, level, &reference);
+
+        let played = h.service.play(&game.game_id, &player(1), "grid-1", &hex::encode(&payload)).await.expect("the reference solution plays");
+        assert_eq!(played.outcome, "win", "the reference route must win: {played:?}");
+        assert_eq!(played.score, generated.reference.iter().map(|t| u32::from(t.turns)).sum::<u32>());
+
+        // A well-formed answer that does not solve the puzzle is judged, not refused: an empty route.
+        let none: Vec<(u16, u8)> = Vec::new();
+        let surrendered = crate::games::play_context::grid_payload(GRID_CHAIN, day, &root, level, &none);
+        let lost = h.service.play(&game.game_id, &player(1), "grid-2", &hex::encode(&surrendered)).await.unwrap();
+        assert_eq!(lost.outcome, "loss");
+        assert_eq!(lost.score, 0, "nothing was turned, so nothing was earned");
+        assert_ne!(lost.score, played.score);
+
+        // An illegal rotation is a different verdict: a turn count the puzzle does not allow is not a
+        // move at all, so the module refuses the answer instead of recording it as a loss. That line is
+        // the module's to draw, and it is drawn in the shared engine, not here.
+        let mut illegal = reference.clone();
+        illegal[0].1 = 0;
+        let refused_play = crate::games::play_context::grid_payload(GRID_CHAIN, day, &root, level, &illegal);
+        assert_eq!(h.service.play(&game.game_id, &player(1), "grid-2b", &hex::encode(&refused_play)).await.unwrap().outcome, "invalid");
+
+        // An answer for one level cannot be replayed against another. The payload names the level, the
+        // module regenerates that level's puzzle, and the other level's cells do not exist in it — so the
+        // answer is refused, not scored: a win here would mean a route had been judged against a puzzle
+        // the player never saw.
+        let other = crate::games::play_context::grid_payload(GRID_CHAIN, day, &root, level + 1, &reference);
+        assert_eq!(h.service.play(&game.game_id, &player(1), "grid-3", &hex::encode(&other)).await.unwrap().outcome, "invalid");
+    }
+
+    #[tokio::test]
+    async fn a_grid_play_must_be_for_this_chain_and_this_day() {
+        let h = harness(Options::default());
+        let game = grid_game(&h).await;
+        let (day, date) = grid_day_of(&h);
+        let root = [0u8; 32];
+        let seed = grid_seed(GRID_CHAIN, &date, &root);
+        let generated = crate::ultragrid::generate(&seed, 1);
+        let reference: Vec<(u16, u8)> = generated.reference.iter().map(|turn| (turn.cell, turn.turns)).collect();
+
+        // Yesterday's play is refused: the host is the clock.
+        let yesterday = crate::games::play_context::grid_payload(GRID_CHAIN, day - 1, &root, 1, &reference);
+        let refused = h.service.play(&game.game_id, &player(1), "grid-d1", &hex::encode(&yesterday)).await;
+        assert!(matches!(refused, Err(GamesError::Invalid(_))), "yesterday must be refused: {refused:?}");
+
+        // Another chain's seed is refused before the module sees it.
+        let other_chain = crate::games::play_context::grid_payload(GRID_CHAIN + 1, day, &root, 1, &reference);
+        let refused = h.service.play(&game.game_id, &player(1), "grid-d2", &hex::encode(&other_chain)).await;
+        assert!(matches!(refused, Err(GamesError::Forbidden(_))), "another chain must be refused: {refused:?}");
+
+        // An anchor root of the player's choosing is refused: that is how an easier puzzle would be chosen.
+        let chosen_root = crate::games::play_context::grid_payload(GRID_CHAIN, day, &[7u8; 32], 1, &reference);
+        let refused = h.service.play(&game.game_id, &player(1), "grid-d3", &hex::encode(&chosen_root)).await;
+        assert!(matches!(refused, Err(GamesError::Forbidden(_))), "a chosen anchor root must be refused: {refused:?}");
+
+        // With the chain's real root the same play is judged, which is the point: the context is the gate.
+        h.chain.add_anchor(GRID_CHAIN, 1, [4u8; 32], 1);
+        let today_root = [4u8; 32];
+        let seed = grid_seed(GRID_CHAIN, &date, &today_root);
+        let generated = crate::ultragrid::generate(&seed, 1);
+        let route: Vec<(u16, u8)> = generated.reference.iter().map(|turn| (turn.cell, turn.turns)).collect();
+        let payload = crate::games::play_context::grid_payload(GRID_CHAIN, day, &today_root, 1, &route);
+        assert_eq!(h.service.play(&game.game_id, &player(1), "grid-d4", &hex::encode(&payload)).await.unwrap().outcome, "win");
+    }
+
+    #[tokio::test]
+    async fn the_grid_verifier_is_deterministic_and_refuses_a_malformed_payload() {
+        let h = harness(Options::default());
+        let game = grid_game(&h).await;
+        let (day, date) = grid_day_of(&h);
+        let root = [0u8; 32];
+        let seed = grid_seed(GRID_CHAIN, &date, &root);
+        let generated = crate::ultragrid::generate(&seed, 0);
+        let route: Vec<(u16, u8)> = generated.reference.iter().map(|turn| (turn.cell, turn.turns)).collect();
+        let payload = crate::games::play_context::grid_payload(GRID_CHAIN, day, &root, 0, &route);
+
+        // Two runs of the module agree byte for byte, which the runtime also enforces on every judge.
+        let module = AdapterModule::compile(crate::games::adapters::GRID_VERIFIER, RuntimeLimits::default()).unwrap();
+        let first = module.run_once(&[9u8; 32], &payload).unwrap();
+        let second = module.run_once(&[9u8; 32], &payload).unwrap();
+        assert_eq!(first.raw_output, second.raw_output, "two runs must agree on every output byte");
+        assert_eq!(first.fuel_used, second.fuel_used, "and on the fuel they burned");
+        assert_eq!(first.output.outcome, Outcome::Win);
+
+        // A payload that is not this layout is judged invalid, never silently accepted.
+        let garbage = hex::encode([0u8; 60]);
+        assert_eq!(h.service.play(&game.game_id, &player(1), "grid-g1", &garbage).await.unwrap().outcome, "invalid");
+        let truncated = hex::encode(&payload[..payload.len() - 2]);
+        assert_eq!(h.service.play(&game.game_id, &player(1), "grid-g2", &truncated).await.unwrap().outcome, "invalid");
+        // Exactly the payload limit is still judged, and an inconsistent answer inside it is invalid
+        // rather than an error: the limit is about size, not about content.
+        let mut at_the_limit = crate::games::play_context::grid_payload(GRID_CHAIN, day, &root, 0, &vec![(0u16, 1u8); 2_000]);
+        at_the_limit.truncate(4_096);
+        assert_eq!(h.service.play(&game.game_id, &player(1), "grid-g3", &hex::encode(&at_the_limit)).await.unwrap().outcome, "invalid");
+        // One byte past it is refused by the host before any module runs.
+        let mut over = crate::games::play_context::grid_payload(GRID_CHAIN, day, &root, 0, &vec![(0u16, 1u8); 2_000]);
+        over.truncate(4_097);
+        assert!(h.service.play(&game.game_id, &player(1), "grid-g4", &hex::encode(&over)).await.is_err(), "a 4,097-byte payload must be refused");
     }
 }

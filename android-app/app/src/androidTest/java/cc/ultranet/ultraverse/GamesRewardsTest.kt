@@ -13,7 +13,7 @@ import cc.ultranet.ultraverse.data.UltraNetGamesApi
 import cc.ultranet.ultraverse.data.WinReport
 import cc.ultranet.ultraverse.ui.chess.ChessMode
 import cc.ultranet.ultraverse.ui.chess.ChessWin
-import cc.ultranet.ultraverse.ui.games.GamesScreen
+import cc.ultranet.ultraverse.ui.games.AwardsScreen
 import cc.ultranet.ultraverse.ui.games.formatUnits
 import cc.ultranet.ultraverse.ui.games.rewardNote
 import cc.ultranet.ultraverse.ui.games.submitChessReward
@@ -135,12 +135,12 @@ class GamesRewardsTest {
         assertEquals(1, server.posts("/chess/results").size)
     }
 
-    // --- the Rewards card in the Games directory ---------------------------------------------
+    // --- the Rewards card in the Awards section ---------------------------------------------
 
     private fun showGames(walletAddress: String?) {
         compose.setContent {
             UltraVerseTheme(darkTheme = true) {
-                GamesScreen(onBack = {}, onOpen = {}, walletAddress = walletAddress, gamesApi = api)
+                AwardsScreen(walletAddress = walletAddress, walletUnlocked = false, gamesApi = api, onSign = { _, _, _, _, _ -> null }, onOpenWallet = {})
             }
         }
     }
@@ -159,7 +159,7 @@ class GamesRewardsTest {
         compose.onNodeWithTag("rewards-withdraw").assertIsEnabled()
         // The disclaimer is always on screen: these are small test rewards, and chess is reported by the phone.
         compose.onNodeWithText("chess results are reported by your phone", substring = true).assertExists()
-        assertEquals("/api/games/wallet/$address", server.requests.first().path)
+        assertTrue(server.requests.any { it.path == "/api/games/wallet/$address" })
     }
 
     @Test

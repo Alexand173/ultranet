@@ -1,0 +1,212 @@
+{
+  "catalog_register": {
+    "adapter_ref": null,
+    "adapter_version": 0,
+    "chain_id": 7,
+    "created_at": 1794790800,
+    "created_by": "8be864a7c347e1512639b383bdff4465c66cadf16adf1106099a5a06eb33e977",
+    "description": "d",
+    "game_id": "4bb675ffc795bad3b3092c126ef1f25f",
+    "name": "Second",
+    "reward_policy_ref": null,
+    "status": "active",
+    "success": true,
+    "updated_at": 1794790800,
+    "validation_scheme": "record_only"
+  },
+  "challenge": {
+    "address": "13e170d8eeae50187ef8b92ee57bd162f5ffabfc7541a883fbed7581e60958be",
+    "challenge_id": "12efa4d0c20cedc216bc1a806324b8358261dedcbca35d859c11bf7259c30709",
+    "digest": "c1682aa65a3c2d38a6ffe3c6e1e08aae419bec8c6824a3ad164e7ff4e5700b83",
+    "expires_at": 1794790920,
+    "issued_at": 1794790800,
+    "purpose": "play",
+    "success": true
+  },
+  "deposits": {
+    "deposits": [
+      {
+        "amount_units": 1000,
+        "claimed_at": 1794790800,
+        "funder": "8be864a7c347e1512639b383bdff4465c66cadf16adf1106099a5a06eb33e977",
+        "tx_hash": "0909090909090909090909090909090909090909090909090909090909090909"
+      }
+    ],
+    "success": true
+  },
+  "fund": {
+    "available": 1000,
+    "fees_paid": 0,
+    "fees_reserved": 0,
+    "funded": 1000,
+    "game_id": "4e6da490d0560e8cbe2334ccbb8d5bde",
+    "paid": 0,
+    "reserved": 0,
+    "success": true,
+    "withdrawn": 0
+  },
+  "payouts": {
+    "payouts": [
+      {
+        "amount_units": 100,
+        "attempts": 0,
+        "created_at": 1794790800,
+        "fee_paid": null,
+        "fee_reserved": 1,
+        "fee_units": 1,
+        "game_id": "4e6da490d0560e8cbe2334ccbb8d5bde",
+        "kind": "reward",
+        "last_error": null,
+        "nonce": 7,
+        "payout_id": "8a75203c6144440c528a5934cb77173e",
+        "ref_id": "ed73b51ced8348cdcde1d4d22b606a02",
+        "sent_units": 100,
+        "signed_at": 1794790800,
+        "state": "submitted",
+        "to_address": "13e170d8eeae50187ef8b92ee57bd162f5ffabfc7541a883fbed7581e60958be",
+        "tx_hash": "d046513a7c19853ea64957d6f2f1a391580ee510b4482719fca76fb3c923a84b"
+      }
+    ],
+    "success": true
+  },
+  "play": {
+    "credit_id": "ed73b51ced8348cdcde1d4d22b606a02",
+    "game_id": "4e6da490d0560e8cbe2334ccbb8d5bde",
+    "not_rewarded": null,
+    "outcome": "win",
+    "payout_state": "queued",
+    "result_id": "m1",
+    "reward_units": 100,
+    "score": 0,
+    "stage": "reward_reserved",
+    "success": true
+  },
+  "player_results": {
+    "results": [
+      {
+        "at": 1794790800,
+        "credit_id": "ed73b51ced8348cdcde1d4d22b606a02",
+        "game_id": "4e6da490d0560e8cbe2334ccbb8d5bde",
+        "payout_state": "queued",
+        "result_id": "m1",
+        "reward_units": 100,
+        "stage": "reward_reserved",
+        "transaction_hash": null
+      }
+    ],
+    "success": true
+  },
+  "policies": {
+    "policies": [
+      {
+        "decided_at": 1794790800,
+        "decided_by": "ccea1a3986fb8a94fec95d709866c8b4b9c7683e7e15eebedf7197a9126caf25",
+        "decision_note": "ok",
+        "effective_from": 0,
+        "eligible_outcomes": "win",
+        "game_id": "4e6da490d0560e8cbe2334ccbb8d5bde",
+        "per_game_per_day": 100,
+        "per_player_per_day": 3,
+        "policy_hash": "59fc87650156c76111466281773a2a13d2a14b9f5b88a8ff9f716dee1c65a72d",
+        "proposed_at": 1794790800,
+        "proposed_by": "8be864a7c347e1512639b383bdff4465c66cadf16adf1106099a5a06eb33e977",
+        "reward_units": 100,
+        "status": "approved",
+        "version": 1
+      }
+    ],
+    "success": true
+  },
+  "policy_propose": {
+    "decided_at": null,
+    "decided_by": null,
+    "decision_note": null,
+    "effective_from": 0,
+    "eligible_outcomes": "win",
+    "game_id": "4e6da490d0560e8cbe2334ccbb8d5bde",
+    "per_game_per_day": 100,
+    "per_player_per_day": 3,
+    "policy_hash": "59fc87650156c76111466281773a2a13d2a14b9f5b88a8ff9f716dee1c65a72d",
+    "proposed_at": 1794790800,
+    "proposed_by": "8be864a7c347e1512639b383bdff4465c66cadf16adf1106099a5a06eb33e977",
+    "reward_units": 100,
+    "status": "proposed",
+    "success": true,
+    "version": 1
+  },
+  "pool": {
+    "available": 899,
+    "fees_paid": 0,
+    "fees_reserved": 1,
+    "funded": 1000,
+    "game_id": "4e6da490d0560e8cbe2334ccbb8d5bde",
+    "paid": 0,
+    "reserved": 100,
+    "success": true,
+    "withdrawn": 0
+  },
+  "result": {
+    "credit_id": "ed73b51ced8348cdcde1d4d22b606a02",
+    "game_id": "4e6da490d0560e8cbe2334ccbb8d5bde",
+    "not_rewarded": null,
+    "outcome": "win",
+    "payout_state": "queued",
+    "result_id": "m1",
+    "reward_units": 100,
+    "score": 0,
+    "stage": "reward_reserved",
+    "success": true
+  },
+  "session": {
+    "address": "13e170d8eeae50187ef8b92ee57bd162f5ffabfc7541a883fbed7581e60958be",
+    "expires_at": 1794794400,
+    "success": true,
+    "token": "188918bd374c14892d62e749486091cf8689f82c46a8e7f12fc6d644334f4139"
+  },
+  "store": {
+    "games": [
+      {
+        "adapter_hash": null,
+        "chain_id": 7,
+        "description": "d",
+        "game_id": "4bb675ffc795bad3b3092c126ef1f25f",
+        "name": "Second",
+        "owner": "8be864a7c347e1512639b383bdff4465c66cadf16adf1106099a5a06eb33e977",
+        "playable": false,
+        "playable_reason": "record_only_no_approved_adapter",
+        "reward_units": null,
+        "rewards": "none",
+        "rewards_reason": "not_playable",
+        "status": "active",
+        "validation_scheme": "record_only"
+      },
+      {
+        "adapter_hash": "5ba7c408c6a8bc1e8645a5569e313a9fa6db7f245f35b9b2c650dddc6004e2d3",
+        "chain_id": 7,
+        "description": "",
+        "game_id": "4e6da490d0560e8cbe2334ccbb8d5bde",
+        "name": "Pool Game",
+        "owner": "8be864a7c347e1512639b383bdff4465c66cadf16adf1106099a5a06eb33e977",
+        "playable": true,
+        "playable_reason": null,
+        "reward_units": 100,
+        "rewards": "available",
+        "rewards_reason": null,
+        "status": "active",
+        "validation_scheme": "verified_adapter"
+      }
+    ],
+    "success": true
+  },
+  "withdraw": {
+    "available": 499,
+    "fees_paid": 0,
+    "fees_reserved": 1,
+    "funded": 1000,
+    "game_id": "4e6da490d0560e8cbe2334ccbb8d5bde",
+    "paid": 0,
+    "reserved": 100,
+    "success": true,
+    "withdrawn": 400
+  }
+}

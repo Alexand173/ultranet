@@ -64,7 +64,8 @@ class GamesDirectoryTest {
         compose.onNodeWithTag("grid-day").assertExists()
         compose.onNodeWithContentDescription("Back").performClick()
         compose.waitUntil(15_000) { tagExists("games-entry-ultra-chess") }
-        compose.onNodeWithContentDescription("Back").performClick()
+        // Games is a section root now, so the way home is the Wallet tab, not a Back arrow.
+        compose.onNodeWithTag("tab-Wallet").performClick()
         compose.waitUntil(15_000) { tagExists("ultraverse-home") }
     }
 }

@@ -3,7 +3,11 @@ package cc.ultranet.ultraverse
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import cc.ultranet.ultraverse.data.AnswerTurn
 import cc.ultranet.ultraverse.data.GamesResult
+import cc.ultranet.ultraverse.data.GamesSigner
 import cc.ultranet.ultraverse.data.UltraNetGamesApi
+import cc.ultranet.ultraverse.wallet.GamesAuthSigner
+import cc.ultranet.ultraverse.wallet.SignedChallenge
+import cc.ultranet.ultraverse.wallet.WalletCrypto
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.After
@@ -130,5 +134,141 @@ class GamesApiTest {
         val body = JSONObject(server.posts("/withdraw").single().body)
         assertEquals(setOf("address"), body.keys().asSequence().toSet())
         assertEquals(address, body.getString("address"))
+    }
+
+    // --- wallet sign-in: the service wants proof of the wallet behind an address -----------------
+
+    private val challengeId = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+
+    private class SignIn {
+        var tokens = 0
+        @Volatile var valid: String? = null
+        var challenges = 0
+        var verifies = 0
+        var corruptDigest = false
+        var alwaysReject = false
+        val signed = mutableListOf<String>()
+    }
+
+    /** A service that issues challenges, accepts any signature and then requires its token on the answer. */
+    private fun serveSignIn(state: SignIn, forAddress: String = address) {
+        server.handler = { request ->
+            when {
+                request.path.endsWith("/auth/challenge") -> {
+                    state.challenges++
+                    val digest = WalletCrypto.toHex(GamesAuthSigner.digest("play", forAddress, challengeId, 1_800_000_000, 1_800_000_300)).let {
+                        if (state.corruptDigest) "00" + it.substring(2) else it
+                    }
+                    200 to """{"success":true,"challenge_id":"$challengeId","address":"$forAddress","purpose":"play","issued_at":1800000000,"expires_at":1800000300,"digest":"$digest"}"""
+                }
+                request.path.endsWith("/auth/verify") -> {
+                    state.verifies++
+                    state.tokens++
+                    state.valid = "tok-${state.tokens}"
+                    200 to """{"success":true,"token":"tok-${state.tokens}","address":"$forAddress","expires_at":${System.currentTimeMillis() / 1000 + 3_600}}"""
+                }
+                state.alwaysReject || request.headers["x-wallet-session"] != state.valid ->
+                    401 to FakeGamesServer.refusal("auth_required", "Sign in with your wallet first.")
+                request.path.endsWith("/withdraw") -> 200 to FakeGamesServer.payout()
+                else -> 200 to FakeGamesServer.win()
+            }
+        }
+    }
+
+    private fun signingApi(state: SignIn, wallet: (String, ByteArray) -> SignedChallenge? = { _, _ -> SignedChallenge("aa", "bb") }): UltraNetGamesApi {
+        val signedApi = UltraNetGamesApi(server.baseUrl, connectTimeoutMillis = 3_000, readTimeoutMillis = 5_000)
+        signedApi.signer = GamesSigner { forAddress, digest ->
+            state.signed += WalletCrypto.toHex(digest)
+            wallet(forAddress, digest)
+        }
+        return signedApi
+    }
+
+    @Test
+    fun aWalletSignsInOnceAndTheSessionIsReused() = runBlocking {
+        val state = SignIn()
+        serveSignIn(state)
+        val signedApi = signingApi(state)
+        assertTrue(signedApi.submitGridAnswer(address, "2026-11-16", 3, listOf(AnswerTurn(9, 2))) is GamesResult.Ok)
+        assertTrue(signedApi.submitChessResult(address, "g", "ai", 40) is GamesResult.Ok)
+        assertTrue(signedApi.withdraw(address) is GamesResult.Ok)
+        assertEquals("one challenge, one verification", 1 to 1, state.challenges to state.verifies)
+        val expected = WalletCrypto.toHex(GamesAuthSigner.digest("play", address, challengeId, 1_800_000_000, 1_800_000_300))
+        assertEquals("the wallet signed the digest it computed itself", listOf(expected), state.signed)
+        val verify = JSONObject(server.posts("/auth/verify").single().body)
+        assertEquals(setOf("challenge_id", "public_key", "signature"), verify.keys().asSequence().toSet())
+        val answers = server.posts("/grid/answers") + server.posts("/chess/results") + server.posts("/withdraw")
+        assertTrue(answers.all { it.headers["x-wallet-session"] == "tok-1" })
+    }
+
+    @Test
+    fun aChallengeThatDoesNotMatchItsOwnFieldsIsNeverSigned() = runBlocking {
+        val state = SignIn().also { it.corruptDigest = true }
+        serveSignIn(state)
+        val result = signingApi(state).submitGridAnswer(address, "2026-11-16", 3, listOf(AnswerTurn(9, 2)))
+        assertEquals("challenge_mismatch", (result as GamesResult.Refused).code)
+        assertTrue("nothing was signed", state.signed.isEmpty())
+        assertEquals(0, state.verifies)
+        assertTrue("and no answer was sent", server.posts("/grid/answers").isEmpty())
+    }
+
+    @Test
+    fun aChallengeForAnotherAddressIsNeverSigned() = runBlocking {
+        val state = SignIn()
+        serveSignIn(state, forAddress = "8d2cd1cc30c1088e0382b040c8b3832acf9e45feae88624d06c42cd3f9d9388e")
+        val result = signingApi(state).submitGridAnswer(address, "2026-11-16", 3, listOf(AnswerTurn(9, 2)))
+        assertEquals("challenge_mismatch", (result as GamesResult.Refused).code)
+        assertTrue(state.signed.isEmpty())
+    }
+
+    @Test
+    fun aLockedWalletSendsNothingAndSaysToUnlock() = runBlocking {
+        val state = SignIn()
+        serveSignIn(state)
+        val result = signingApi(state, wallet = { _, _ -> null }).submitGridAnswer(address, "2026-11-16", 3, listOf(AnswerTurn(9, 2)))
+        assertEquals("wallet_locked", (result as GamesResult.Refused).code)
+        assertEquals(0, state.verifies)
+        assertTrue(server.posts("/grid/answers").isEmpty())
+    }
+
+    @Test
+    fun anExpiredSessionIsReplacedOnceAndTheCallIsRetriedOnce() = runBlocking {
+        val state = SignIn()
+        serveSignIn(state)
+        val signedApi = signingApi(state)
+        assertTrue(signedApi.submitGridAnswer(address, "2026-11-16", 3, listOf(AnswerTurn(9, 2))) is GamesResult.Ok)
+        state.valid = null // the service forgot the session
+        assertTrue(signedApi.submitGridAnswer(address, "2026-11-16", 4, listOf(AnswerTurn(9, 2))) is GamesResult.Ok)
+        assertEquals(2, state.verifies)
+        assertEquals(listOf("tok-1", "tok-1", "tok-2"), server.posts("/grid/answers").map { it.headers["x-wallet-session"] })
+    }
+
+    @Test
+    fun aServiceThatKeepsRefusingTheSessionIsReportedNotLoopedOn() = runBlocking {
+        val state = SignIn().also { it.alwaysReject = true }
+        serveSignIn(state)
+        val result = signingApi(state).submitGridAnswer(address, "2026-11-16", 3, listOf(AnswerTurn(9, 2)))
+        assertEquals("auth_required", (result as GamesResult.Refused).code)
+        assertEquals("one retry and no more", 2, server.posts("/grid/answers").size)
+        assertEquals(2, state.challenges)
+    }
+
+    @Test
+    fun aSessionBelongsToOneAddress() = runBlocking {
+        val state = SignIn()
+        serveSignIn(state)
+        val signedApi = signingApi(state)
+        signedApi.submitGridAnswer(address, "2026-11-16", 3, listOf(AnswerTurn(9, 2)))
+        signedApi.clearSession()
+        signedApi.submitGridAnswer(address, "2026-11-16", 4, listOf(AnswerTurn(9, 2)))
+        assertEquals("a cleared session signs in again", 2, state.verifies)
+    }
+
+    @Test
+    fun withoutASignerNoSessionHeaderIsSent() = runBlocking {
+        server.handler = { 200 to FakeGamesServer.win() }
+        api.submitGridAnswer(address, "2026-11-16", 3, listOf(AnswerTurn(9, 2)))
+        assertNull(server.posts("/grid/answers").single().headers["x-wallet-session"])
+        assertTrue(server.posts("/auth/challenge").isEmpty())
     }
 }

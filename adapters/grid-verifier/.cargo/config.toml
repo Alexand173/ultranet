@@ -1,0 +1,46 @@
+# The Games service validates every verifier module before it runs it, with a deliberately narrow
+# instruction set (src/games/adapter.rs, `engine_for`): floats, SIMD, threads, bulk memory,
+# multi-value, reference types, tail calls, 64-bit memory and extended const are all switched off,
+# and a module that uses one is refused as invalid — not sandboxed, refused.
+#
+# Rust's wasm32 target enables bulk memory, multi-value and reference types by default, so a plain
+# `cargo build --target wasm32-unknown-unknown` produces a module this service will not load
+# (`bulk memory support is not enabled`). The features the validator does allow — mutable globals and
+# sign extension — stay on, because they make the generated code smaller and cheaper in fuel.
+#
+# This file is the single place that answers "how is this module built"; scripts/build-adapters.sh
+# uses it implicitly, and the module's SHA3-256 is pinned by a test in src/games/tests.rs, so a
+# change here that alters the bytes cannot pass unnoticed.
+# Path remapping is deliberately **not** here. The prefixes that need it are the builder's own —
+# `$CARGO_HOME` and the workspace root — and this file cannot interpolate them: a literal path would
+# hardcode one machine, which is the defect being fixed. `scripts/build-adapters.sh` discovers them
+# and passes `--remap-path-prefix` through `scripts/rustc-remap-paths.sh` (a `RUSTC_WRAPPER`), because
+# `RUSTFLAGS` would replace the flags below rather than add to them. The flags below therefore stay
+# exactly as they are: this file owns the instruction set, the linker layout and the memory bounds;
+# the wrapper owns only the path names.
+[target.wasm32-unknown-unknown]
+rustflags = [
+    "-C",
+    "target-feature=-bulk-memory,-multivalue,-reference-types,-nontrapping-fptoint,-extended-const,-simd128,+mutable-globals,+sign-ext",
+    # Object files encode immediate operands as fixed-width five-byte LEBs so a relocation can fit,
+    # and wasm-ld only shrinks them back on request. With reference types off, a `call_indirect`'s
+    # table index must be the literal byte 0x00, so an uncompressed five-byte zero makes the module
+    # spec-invalid: "zero byte expected". Compressing is not cosmetic — it is what makes the module
+    # loadable at all (32,358 bytes before, 29,755 after).
+    "-C",
+    "link-arg=--compress-relocations",
+    # The host refuses a module whose memory has no declared maximum, and refuses a maximum above its
+    # own 16-page limit. Both are stated here so the module's memory is a property of its build, not of
+    # whichever allocator happened to run: start at 10 pages, grow no further than the host's 1 MiB.
+    #
+    # The stack has to be named too. rustc's wasm default is a 1 MiB stack, which on its own is the
+    # whole of the host's 16-page (1 MiB) allowance — the module would then need 17 pages, exceed the
+    # cap, and wasm-ld would quietly drop the maximum it was given. 512 KiB leaves room for the data
+    # segment and the puzzle solver's heap inside the same megabyte.
+    "-C",
+    "link-arg=-zstack-size=524288",
+    "-C",
+    "link-arg=--initial-memory=655360",
+    "-C",
+    "link-arg=--max-memory=1048576",
+]

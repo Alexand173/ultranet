@@ -5,6 +5,7 @@
 //! `docs/GAMES_RULES_AND_PAYOUTS.md` for the rules and why each exists.
 
 pub mod adapter;
+pub mod adapters;
 pub mod anchor;
 pub mod api;
 pub mod auth;
@@ -15,6 +16,9 @@ pub mod config;
 pub mod ownership;
 pub mod peer;
 pub mod peer_usage;
+pub mod operator;
+pub mod play;
+pub mod play_context;
 pub mod pool_payouts;
 pub mod pools;
 pub mod records;

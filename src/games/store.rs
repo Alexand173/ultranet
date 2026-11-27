@@ -17,7 +17,7 @@ use thiserror::Error;
 /// The schema this build writes. 1 was the games and payouts tables; 2 adds the game registry; 3 adds the
 /// durable accounting of peer anchors (`peer_usage.rs`); 4 adds the registry's anchor attempts
 /// (`registry_anchor.rs`), so the registry day is anchored under the same fail-closed rules.
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 pub const UTC_DAY_SECONDS: u64 = 86_400;
 
 #[derive(Debug, Error)]
@@ -1144,7 +1144,7 @@ fn migrate(connection: &Connection) -> Result<(), StoreError> {
         .and_then(|value| value.parse().ok());
     // Every schema step, in order. An older database runs the steps it lacks; a new one runs them all. Each step
     // is its own transaction and adds tables only, so a database is plainly at one version or the next.
-    let steps: [(i64, fn(&Connection) -> Result<(), StoreError>); 7] = [
+    let steps: [(i64, fn(&Connection) -> Result<(), StoreError>); 8] = [
         (2, upgrade_to_registry),
         (3, upgrade_to_peer_usage),
         (4, upgrade_to_registry_anchors),
@@ -1152,6 +1152,7 @@ fn migrate(connection: &Connection) -> Result<(), StoreError> {
         (6, upgrade_to_catalog),
         (7, upgrade_to_pools),
         (8, upgrade_to_pool_payouts),
+        (9, upgrade_to_modules),
     ];
     match version {
         Some(SCHEMA_VERSION) => return Ok(()),
@@ -1286,6 +1287,10 @@ fn upgrade_to_pools(connection: &Connection) -> Result<(), StoreError> {
 /// Schema 7 to 8, likewise: plainly 7 or plainly 8, never in between. Adds only the pool payout table.
 fn upgrade_to_pool_payouts(connection: &Connection) -> Result<(), StoreError> {
     upgrade_step(connection, super::pool_payouts::POOL_PAYOUTS_SCHEMA, 8)
+}
+
+fn upgrade_to_modules(connection: &Connection) -> Result<(), StoreError> {
+    upgrade_step(connection, super::play::MODULES_SCHEMA, 9)
 }
 
 fn upgrade_step(connection: &Connection, schema: &str, to_version: i64) -> Result<(), StoreError> {

@@ -55,11 +55,11 @@ import cc.ultranet.ultraverse.data.ServiceCatalog
 import cc.ultranet.ultraverse.data.ServiceEntry
 import cc.ultranet.ultraverse.ui.appchains.AppChainsScreen
 import cc.ultranet.ultraverse.ui.chess.ChessScreen
+import cc.ultranet.ultraverse.data.GamesSigner
 import cc.ultranet.ultraverse.data.UltraNetGamesApi
 import cc.ultranet.ultraverse.wallet.ScreenOffLock
 import cc.ultranet.ultraverse.ui.games.GameCatalog
 import cc.ultranet.ultraverse.ui.games.submitChessReward
-import cc.ultranet.ultraverse.ui.games.GamesScreen
 import cc.ultranet.ultraverse.ui.grid.GridScreen
 import cc.ultranet.ultraverse.ui.contacts.ContactsScreen
 import cc.ultranet.ultraverse.ui.contacts.LocalContactBook
@@ -71,6 +71,8 @@ import cc.ultranet.ultraverse.ui.home.ServiceGroupSection
 import cc.ultranet.ultraverse.ui.home.WalletHero
 import cc.ultranet.ultraverse.ui.navigation.BottomNavigation
 import cc.ultranet.ultraverse.ui.navigation.UltraVerseTab
+import cc.ultranet.ultraverse.ui.games.AwardsScreen
+import cc.ultranet.ultraverse.ui.games.GamesStoreScreen
 import cc.ultranet.ultraverse.ui.operator.MiningScreen
 import cc.ultranet.ultraverse.ui.theme.AppearanceMode
 import cc.ultranet.ultraverse.ui.theme.UltraVerseColors
@@ -93,7 +95,7 @@ import cc.ultranet.ultraverse.wallet.faucetAmountLabel
 import kotlinx.coroutines.launch
 
 /** Top-level native destinations. Every supported catalog entry maps to one of these. */
-private enum class HomeSection { Apps, Wallet, Pay, Contacts, Profile, AppChains, Registry, Validator, Mining, Games, Chess, Grid }
+private enum class HomeSection { Apps, Wallet, Pay, Contacts, Profile, AppChains, Registry, Validator, Mining, Games, Awards, Chess, Grid }
 
 /** How often the unlocked-session timer is checked. Cheap next to the socket work around it. */
 private const val IDLE_LOCK_POLL_MILLIS = 30_000L
@@ -110,7 +112,14 @@ internal fun UltraVerseApp(
     val scope = rememberCoroutineScope()
     val controller = remember { WalletController(context.applicationContext) }
     val contactBook = remember { ContactBook(ContactStore(context.applicationContext)) }
-    val gamesApi = remember { UltraNetGamesApi() }
+    // The games service wants proof of the wallet behind an address: the API signs a one-time challenge with
+    // the unlocked wallet, and forgets the session when the wallet locks.
+    val gamesApi = remember {
+        UltraNetGamesApi().also { api -> api.signer = GamesSigner { address, digest -> controller.signGamesChallenge(address, digest) } }
+    }
+    LaunchedEffect(controller.state.unlocked) {
+        if (!controller.state.unlocked) gamesApi.clearSession()
+    }
     // What became of the last chess win, shown under the result. Cleared whenever the screen is left.
     var chessRewardNote by remember { mutableStateOf<String?>(null) }
     // An address handed to Pay from a contact; Pay consumes it after resetting its draft.
@@ -194,15 +203,20 @@ internal fun UltraVerseApp(
             ServiceCatalog.VALIDATOR_ID -> { validatorReturn = HomeSection.Apps; section = HomeSection.Validator }
             ServiceCatalog.MINING_ID -> section = HomeSection.Mining
             ServiceCatalog.GAMES_ID -> section = HomeSection.Games
+            ServiceCatalog.PROFILE_ID -> section = HomeSection.Profile
             else -> Unit
         }
     }
 
-    val showsBottomBar = section == HomeSection.Apps || section == HomeSection.Wallet || section == HomeSection.Profile
+    // The four sections own the bottom bar. The wallet home, the tools list and the profile all belong to Wallet.
+    val showsBottomBar = section in setOf(
+        HomeSection.Apps, HomeSection.Wallet, HomeSection.Profile, HomeSection.Games, HomeSection.AppChains, HomeSection.Awards,
+    )
     val selectedTab = when (section) {
-        HomeSection.Wallet -> UltraVerseTab.Portfolio
-        HomeSection.Profile -> UltraVerseTab.Profile
-        else -> UltraVerseTab.Apps
+        HomeSection.Games -> UltraVerseTab.Games
+        HomeSection.AppChains -> UltraVerseTab.AppChains
+        HomeSection.Awards -> UltraVerseTab.Awards
+        else -> UltraVerseTab.Wallet
     }
 
     Scaffold(
@@ -212,18 +226,19 @@ internal fun UltraVerseApp(
             if (showsBottomBar) {
                 BottomNavigation(
                     selectedTab = selectedTab,
-                    onPortfolio = { section = HomeSection.Wallet; route = WalletRoute.Portfolio },
-                    onApps = {
-                        // Switching to another service must not end the wallet session; the session
-                        // ends on an explicit Lock, or when the activity stops (see the observer above).
-                        section = HomeSection.Apps
-                        route = WalletRoute.Apps
-                        scope.launch { listState.animateScrollToItem(index = HomeHeader.entries.size) }
-                    },
-                    onProfile = {
-                        // Same rule as Apps: browsing your own address is not a lock event.
-                        section = HomeSection.Profile
-                        route = WalletRoute.Apps
+                    onSelect = { tab ->
+                        // Switching section must not end the wallet session; the session ends on an explicit
+                        // Lock, or when the activity stops (see the observer above).
+                        when (tab) {
+                            UltraVerseTab.Wallet -> {
+                                section = HomeSection.Apps
+                                route = WalletRoute.Apps
+                                scope.launch { listState.animateScrollToItem(index = HomeHeader.entries.size) }
+                            }
+                            UltraVerseTab.Games -> section = HomeSection.Games
+                            UltraVerseTab.AppChains -> section = HomeSection.AppChains
+                            UltraVerseTab.Awards -> section = HomeSection.Awards
+                        }
                     },
                 )
             }
@@ -369,6 +384,8 @@ internal fun UltraVerseApp(
                 unresolvedAppChain = controller.state.unresolvedAppChain,
                 onReconcileAppChain = { controller.reconcileAppChain() },
                 onDiscardAppChain = { controller.discardUnresolvedAppChain() },
+                gamesApi = gamesApi,
+                onSignGameAdmin = { action, chainId, gameId, name, description -> controller.signGameAdmin(action, chainId, gameId, name, description) },
             )
 
             // Read-only and wallet-free on purpose: the ledger and the anchor history are public, and
@@ -387,17 +404,27 @@ internal fun UltraVerseApp(
                 onOpenWallet = { openWallet() },
             )
 
-            HomeSection.Games -> GamesScreen(
+            HomeSection.Games -> GamesStoreScreen(
+                modifier = Modifier.padding(scaffoldPadding),
                 walletAddress = controller.state.storedWallet?.address,
+                walletUnlocked = controller.state.unlocked,
                 gamesApi = gamesApi,
-                onBack = { section = HomeSection.Apps },
-                onOpen = { gameId ->
+                onOpenWallet = { openWallet() },
+                onOpenBuiltIn = { gameId ->
                     when (gameId) {
                         GameCatalog.CHESS_ID -> section = HomeSection.Chess
                         GameCatalog.GRID_ID -> section = HomeSection.Grid
                     }
                 },
+            )
+
+            HomeSection.Awards -> AwardsScreen(
                 modifier = Modifier.padding(scaffoldPadding),
+                walletAddress = controller.state.storedWallet?.address,
+                walletUnlocked = controller.state.unlocked,
+                gamesApi = gamesApi,
+                onSign = { action, chainId, gameId, name, description -> controller.signGameAdmin(action, chainId, gameId, name, description) },
+                onOpenWallet = { openWallet() },
             )
 
             // Back from a game returns to the directory it was opened from, not to the catalogue.

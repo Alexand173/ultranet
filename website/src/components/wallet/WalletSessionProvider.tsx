@@ -3,12 +3,18 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createLocalTransactionProvider } from "@/lib/transaction-signing";
 import { createLocalValidatorProvider } from "@/lib/validator-signing";
+import { createLocalGamesProvider } from "@/lib/games-signing";
 import {
   clearLocalWalletKeyMaterial,
   type LocalWalletKeyMaterial,
   type StoredWallet,
 } from "@/lib/wallet-crypto";
-import { getUltraWalletProvider, type UltraWalletProvider } from "@/lib/ultra-wallet";
+import {
+  getUltraWalletProvider,
+  ULTRA_WALLET_SIGN_GAME_ADMIN,
+  ULTRA_WALLET_SIGN_GAMES_CHALLENGE,
+  type UltraWalletProvider,
+} from "@/lib/ultra-wallet";
 import { loadStoredWallet } from "@/lib/wallet-storage";
 import type {
   ExternalWalletStatus,
@@ -143,6 +149,9 @@ export default function WalletSessionProvider({ children }: { children: React.Re
 
         beginSigning();
         try {
+          if (request.method === ULTRA_WALLET_SIGN_GAMES_CHALLENGE || request.method === ULTRA_WALLET_SIGN_GAME_ADMIN) {
+            return await createLocalGamesProvider(() => material).request(request);
+          }
           if (request.method === "ultranet_signValidatorProposal") {
             return await createLocalValidatorProvider(() => material).request(request);
           }

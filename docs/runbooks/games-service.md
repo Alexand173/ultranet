@@ -232,8 +232,9 @@ binary refuses a newer database rather than misreading it).
 
 **Reward pools and reward policies (catalog games).** Each catalog game has its own pool, funded only by the owner
 of its AppChain; UltraNet funds no game. Accounting is in `src/games/pools.rs` and payouts in
-`src/games/pool_payouts.rs`. **There are still no HTTP routes and no operator CLI for it, and no game has a verified
-adapter, so nothing here moves money today.**
+`src/games/pool_payouts.rs`. Routes are in `api.rs`, operator actions in `operator.rs` and the CLI. **Nothing here
+moves money unless `GAMES_POOL_PAYOUTS_ENABLED=true` (the default is false) and an operator has registered an adapter,
+approved a policy and the game's owner has funded the pool.**
 
 - **Deposit model.** The owner makes an ordinary L1 transfer to the payout address and sends an owner-signed
   claim naming the transaction and the game. The ledger must show a confirmed transfer from that owner to the
@@ -248,8 +249,8 @@ adapter, so nothing here moves money today.**
   pool worker checks this at the start of every cycle and freezes all pool payouts if held < owed; (2) the older
   path (`pool_units` and `sign_and_submit`) only spends the balance above what the pools are owed; (3) a pool
   payout is signed only if the wallet covers its amount, fee and the reserve. Pool *reservation* itself does not
-  read the wallet; it is caught at (1) and (3) before any money moves. Pool payouts stay disabled in production:
-  there are no HTTP routes or operator CLI for them, and no game is yet approved to earn.
+  read the wallet; it is caught at (1) and (3) before any money moves. Pool payouts stay disabled in production
+  by `GAMES_POOL_PAYOUTS_ENABLED=false`: with it off no pool reward is reserved and the worker signs nothing.
   guarantee is the ledger, not a separate key per game.
 - **What may earn.** Only a result verified by the game's approved adapter (a platform decision; every game starts
   `record_only`) with an outcome the active policy pays for, within its limits and the pool's unreserved balance.
@@ -271,8 +272,26 @@ adapter, so nothing here moves money today.**
   than a payout needs, a reward no longer matching its policy) **freezes the pool path only**: the older Grid and
   Chess payouts are not paused, and the worker and new reservations stop until an operator clears it
   (`pools_set_frozen(false)`). The two paths share the payout key and take turns under one lock.
-- **Not built:** operator resolution of a payout that stays in doubt (it stays frozen), routes and an operator CLI,
-  and Grid and Chess still use their own older path.
+- **Operator commands** (database only, no keys, each audited with the operator's name): `pools`, `pool-payouts`,
+  `pool-freeze --reason`, `pool-unfreeze --note`, `policy-decide --game --version (--approve|--reject) --operator
+  --note`, `adapter-register --game --module file.wasm --adapter-version N --operator` (the host loader checks the
+  module before its bytes are stored; an owner cannot do this) and `pool-payout-confirm --id --operator --note` (only
+  for a signed or submitted payout, after looking the hash up on the chain).
+- **Player path.** `POST /api/games/play/{game}` (wallet session) runs the game's approved module twice and requires
+  agreement; `GET /api/games/results/{game}/{result}` reads back `reward_reserved` or `reward_paid`. A result is
+  *verified* when the runs agree, *reserved* when the pool set the reward aside, and *paid* only when the node
+  confirmed the transfer.
+- **Reads for the app.** `GET /api/games/store` (every game with its live chain owner, whether it can be played and
+  why not, and whether a reward is on offer and why not), `GET /api/games/players/{address}/results` (a wallet's
+  rewards with payout state and transaction hash) and `GET /api/games/pools/{game}/deposits` (funding history).
+  `GAMES_PLAY_PER_MINUTE` (default 20) limits plays per wallet; the module's fuel budget limits each run.
+- **The app.** Four sections: Wallet, Games, AppChains, Awards. Games lists the catalog (`/store`) and plays through
+  the wallet-authenticated route; Awards shows a wallet's rewards (`reward_paid` only after the network confirmed the
+  payout) and, for a chain's owner, the pool, funding history and owner-signed claim, policy and withdraw; an
+  AppChain's page lets its owner register games. Owner signatures use `UltraNet/game-admin/v1`, sign-in uses
+  `UltraNet/wallet-challenge/v1`, and both digests are pinned against vectors in the Rust and Android tests.
+- **Not built:** Grid and Chess still use their own older path (Chess stays record-only), and the Android screens
+  for catalog games.
 - **Reward money is not AppChain fees.** Registration, anchor and transfer fees are not read or changed here.
 
 **Wallet sign-in.** `GAMES_REQUIRE_PLAYER_AUTH` (default `true`) makes the routes that act for a player
@@ -318,6 +337,45 @@ in `last error` and nothing is lost: run it again when it is back.
 Not here. The registry, self-service registration, `game-register` and its siblings, and the generic records
 API belong to the Records Service: [`records-service.md`](./records-service.md). This binary has no registry
 commands.
+
+### 5.2 The verifier modules the platform ships
+
+A game is judged by a WebAssembly module whose identity is the SHA3-256 of its exact bytes. The bytes are
+committed in `src/games/adapters/` and are what `adapter-register --module` installs; nothing about a module is
+taken from its filename, its version or what it says about itself.
+
+| Module | UltraGrid universal verifier |
+|---|---|
+| File | `src/games/adapters/grid-verifier.wasm` |
+| Source | `adapters/grid-verifier` — it includes `src/ultragrid/mod.rs`, the same generator the node and the phone use |
+| ABI / adapter version | 1 |
+| Size | 29,360 bytes |
+| SHA3-256 | `376470459f3ac1d0fde46ac4e81f4661fdb219b8039ca8d552f785a898556321` |
+| Rebuilt by | `./scripts/build-adapters.sh` (add `--verify` to prove the runtime accepts it) |
+| Pinned by | `src/games/tests.rs::the_shipped_grid_verifier_is_a_module_the_runtime_accepts` |
+
+**A registered copy must match that hash.** `adapter-register` prints what it bound
+(`game <id> is now bound to adapter <hash> …`), and the catalog reports the same value as `adapter_hash` from
+`GET /api/games/store`. If a host's `adapter_hash` is not the digest above, it is running different bytes: stop
+and find out which module it holds before letting a game pay anything.
+
+**Why the module is built the way it is.** The host validates a module before running it and refuses anything
+outside a narrow instruction set. `memory.copy` and `memory.fill` are allowed — every Rust-built module needs
+them, because `memcpy` and `memset` ship precompiled in the wasm standard library with bulk memory enabled, so
+no build flag removes them; `adapters/grid-verifier/.cargo/config.toml` turns off everything else the validator
+would refuse. They are safe to admit because they reach only the module's own linear memory — capped at
+**16 pages (1 MiB)**, unchanged — and because the runtime charges fuel **per byte** copied or filled (one fuel
+per 64 bytes, measured), so a bulk operation cannot buy work the equivalent loop would have paid for. The
+module also declares its own memory: 10 pages at start and 16 at most, with a 512 KiB stack, because the
+linker's 1 MiB default stack alone is the whole host allowance and would make the module ask for 17 pages and
+be refused for it. Fuel
+metering is unchanged; a starved budget traps before the operation completes, and every out-of-bounds bulk
+operation traps. The tests that hold this down are in `src/games/adapter.rs`:
+`bulk_operations_are_metered_per_byte_and_not_per_instruction`,
+`a_bulk_operation_without_the_fuel_to_pay_for_it_traps_before_it_finishes`,
+`out_of_bounds_bulk_operations_trap_instead_of_reaching_outside_memory`,
+`bulk_operations_are_deterministic_across_fresh_instances` and
+`bulk_memory_did_not_bring_any_other_extension_with_it`.
 
 ---
 

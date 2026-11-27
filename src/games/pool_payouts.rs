@@ -92,6 +92,8 @@ pub struct PoolPayout {
     pub state: String,
     pub attempts: u32,
     pub last_error: Option<String>,
+    /// The exact signed bytes, kept for identical resends. Never sent over HTTP.
+    #[serde(skip_serializing)]
     pub envelope: Option<String>,
     pub tx_hash: Option<String>,
     pub nonce: Option<u64>,
@@ -413,6 +415,9 @@ impl GamesService {
     /// Reserve a reward for a verified result and queue its payout, atomically. Nothing is sent here; the worker
     /// does that, and only for payouts that exist.
     pub fn reserve_reward_for_payout(&self, game_id: &str, result_id: &str, player: &str, validated: &ValidatedResult) -> Result<Credit, GamesError> {
+        if !self.service_config().pool_payouts_enabled {
+            return Err(GamesError::Forbidden("reward pool payouts are not enabled on this service".into()));
+        }
         if result_id.is_empty() || result_id.len() > 128 {
             return Err(GamesError::Invalid("result_id must be 1 to 128 characters".into()));
         }
@@ -428,6 +433,9 @@ impl GamesService {
     /// One step of the pool payout worker: finish what is in flight, or start the oldest queued payout. Returns
     /// whether there was anything to do. The older Grid and Chess path and this one take turns under one lock.
     pub async fn process_pool_payout_once(&self) -> Result<bool, GamesError> {
+        if !self.service_config().pool_payouts_enabled {
+            return Ok(false);
+        }
         let _guard = self.payout_lock().lock().await;
         if self.store().pools_frozen()?.is_some() {
             return Ok(false);

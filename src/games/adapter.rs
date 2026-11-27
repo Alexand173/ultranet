@@ -12,9 +12,17 @@
 //! * **No host access of any kind.** A module may import nothing, so it has no clock, no network, no file, no
 //!   randomness and no way to call back into the host. A module with an import is refused at load.
 //! * **No floating point.** NaN bit patterns are the one thing the WebAssembly specification leaves open, so
-//!   floats are switched off and a module that uses them is refused by validation. SIMD, threads, bulk memory,
-//!   reference types, tail calls, multiple memories and 64-bit memory are off too: the instruction set is the
-//!   integer core plus mutable globals and sign extension.
+//!   floats are switched off and a module that uses them is refused by validation. SIMD, threads, reference
+//!   types, tail calls, multiple memories, multiple values, saturating float-to-int, extended const and 64-bit
+//!   memory are off too: the instruction set is the integer core plus mutable globals, sign extension and bulk
+//!   memory.
+//! * **Bulk memory is allowed, and metered per byte.** `memory.copy` and `memory.fill` were refused once, until a
+//!   real module was measured: every Rust-built adapter needs them, because `memcpy` and `memset` ship
+//!   precompiled in the wasm standard library and are compiled with bulk memory on, so nothing we do at build
+//!   time removes them. They are safe to admit here because they touch only the module's own linear memory (which
+//!   is capped at [`RuntimeLimits::max_memory_pages`]) and because the runtime charges fuel per byte copied or
+//!   filled, not one unit per instruction — the tests measure that ratio against the length, so a bulk operation
+//!   cannot buy work the equivalent loop would have paid for.
 //! * **Fuel.** Every call gets a fixed amount of fuel; an infinite loop is a trap, never a hang, and the fuel a
 //!   run used is part of the result, so two runs that differ in work are caught.
 //! * **Memory.** The module must declare a maximum and it must not exceed the host's page limit; growth past
@@ -200,7 +208,10 @@ fn engine_for(limits: &RuntimeLimits) -> Engine {
         .wasm_saturating_float_to_int(false)
         .wasm_multi_value(false)
         .wasm_multi_memory(false)
-        .wasm_bulk_memory(false)
+        // The one extension that is on: `memory.copy` and `memory.fill` only, never tables (`table.copy`
+        // needs reference types, which stay off). See the module docs — this is allowed because wasmi
+        // meters it per byte and it reaches nothing but the module's own capped linear memory.
+        .wasm_bulk_memory(true)
         .wasm_reference_types(false)
         .wasm_tail_call(false)
         .wasm_extended_const(false)
@@ -569,12 +580,158 @@ mod tests {
         assert!(matches!(compile(&float), Err(AdapterError::Invalid(_))), "f32");
         let double = adapter("(global $g f64 (f64.const 0))", &format!("{WRITE_VALID_OUTPUT} i32.const 38"));
         assert!(matches!(compile(&double), Err(AdapterError::Invalid(_))), "an f64 global");
-        let bulk = adapter("", &format!("{WRITE_VALID_OUTPUT} (memory.fill (i32.const 0) (i32.const 0) (i32.const 8)) i32.const 38"));
-        assert!(matches!(compile(&bulk), Err(AdapterError::Invalid(_))), "bulk memory");
         let simd = adapter("", &format!("{WRITE_VALID_OUTPUT} (drop (v128.const i32x4 0 0 0 0)) i32.const 38"));
         assert!(matches!(compile(&simd), Err(AdapterError::Invalid(_))), "simd");
         let memory64 = r#"(module (memory (export "memory") i64 1 2))"#;
         assert!(matches!(compile(memory64), Err(AdapterError::Invalid(_))), "64-bit memory");
+        // Saturating float-to-int needs an f32 operand, so with floats off it is refused twice over; it is
+        // listed rather than dropped because an adapter author does try it.
+        let saturating = adapter("", "(drop (i32.trunc_sat_f32_s (f32.const 1))) i32.const 38");
+        assert!(matches!(compile(&saturating), Err(AdapterError::Invalid(_))), "i32.trunc_sat_f32_s");
+    }
+
+    /// Admitting bulk memory must not have admitted anything else. Each of these was refused before the
+    /// change and is refused now, so the instruction set grew by exactly one family.
+    #[test]
+    fn bulk_memory_did_not_bring_any_other_extension_with_it() {
+        let multi_value = adapter(
+            "(func $two (result i32 i32) (i32.const 1) (i32.const 2))",
+            &format!("{WRITE_VALID_OUTPUT} (call $two) (drop) (drop) i32.const 38"),
+        );
+        assert!(matches!(compile(&multi_value), Err(AdapterError::Invalid(_))), "multi-value");
+
+        let reference_types = adapter(
+            "(func $nullable (result i32) (ref.is_null (ref.null func)))",
+            &format!("{WRITE_VALID_OUTPUT} (drop (call $nullable)) i32.const 38"),
+        );
+        assert!(matches!(compile(&reference_types), Err(AdapterError::Invalid(_))), "reference types");
+
+        let tail_call = adapter(
+            "(func $tail (result i32) (i32.const 7))",
+            &format!("{WRITE_VALID_OUTPUT} (return_call $tail)"),
+        );
+        assert!(matches!(compile(&tail_call), Err(AdapterError::Invalid(_))), "tail calls");
+
+        let extended_const = adapter(
+            "(global $computed i32 (i32.add (i32.const 1) (i32.const 2)))",
+            &format!("{WRITE_VALID_OUTPUT} i32.const 38"),
+        );
+        assert!(matches!(compile(&extended_const), Err(AdapterError::Invalid(_))), "extended const");
+
+        let multiple_memories = adapter(
+            "(memory $second 1 2)",
+            &format!("{WRITE_VALID_OUTPUT} (drop (memory.size $second)) i32.const 38"),
+        );
+        assert!(matches!(compile(&multiple_memories), Err(AdapterError::Invalid(_))), "multiple memories");
+
+        // Atomics need a shared memory, and shared memory is not what a deterministic adapter may have:
+        // whether it is refused for the atomics or for the sharing, it is refused.
+        let shared = r#"(module (memory (export "memory") 1 2 shared)
+            (func (export "adapter_abi_version") (result i32) i32.const 1)
+            (func (export "input_buffer") (result i32) i32.const 1024)
+            (func (export "input_capacity") (result i32) i32.const 4200)
+            (func (export "output_buffer") (result i32) i32.const 8192)
+            (func (export "adapter_run") (param i32) (result i32)
+              (drop (i32.atomic.load (i32.const 0))) i32.const 38))"#;
+        assert!(matches!(compile(shared), Err(AdapterError::Invalid(_))), "threads/atomics");
+
+        // And the one that *is* allowed still is, so this test cannot pass by refusing everything.
+        let bulk = adapter("", &format!("{WRITE_VALID_OUTPUT} (memory.fill (i32.const 0) (i32.const 0) (i32.const 8)) i32.const 38"));
+        assert!(compile(&bulk).is_ok(), "bulk memory is the single admitted extension");
+    }
+
+    // --- bulk memory: what it costs, and what it cannot reach -----------------------------------
+
+    /// A module with a full 16 pages of memory, so a bulk operation has a megabyte to work in, and with
+    /// its output buffer far below the region it touches.
+    fn bulk_module(body: &str) -> String {
+        adapter("", &format!("{WRITE_VALID_OUTPUT} {body} i32.const 38"))
+            .replace(r#"(memory (export "memory") 1 2)"#, r#"(memory (export "memory") 16 16)"#)
+    }
+
+    /// The length comes from the payload, not from a literal: two runs of the same module then differ in
+    /// exactly one thing — how many bytes were moved — so a difference in fuel can only be that.
+    const LENGTH_FROM_PAYLOAD: &str = "(i32.load (i32.const 1061))";
+
+    fn fuel_for_bulk(module: &AdapterModule, length: u32) -> u64 {
+        module.run_once(&PLAYER, &length.to_le_bytes()).unwrap().fuel_used
+    }
+
+    #[test]
+    fn bulk_operations_are_metered_per_byte_and_not_per_instruction() {
+        let fill = compile(&bulk_module(&format!("(memory.fill (i32.const 100000) (i32.const 7) {LENGTH_FROM_PAYLOAD})"))).unwrap();
+        let copy = compile(&bulk_module(&format!("(memory.copy (i32.const 100000) (i32.const 0) {LENGTH_FROM_PAYLOAD})"))).unwrap();
+
+        for (name, module) in [("memory.fill", &fill), ("memory.copy", &copy)] {
+            let base = fuel_for_bulk(module, 0);
+            // The same two instructions cost sixteen times more for sixteen times the bytes. If a bulk
+            // operation were charged like an ordinary instruction, these three numbers would be equal.
+            let small = fuel_for_bulk(module, 4_096) - base;
+            let large = fuel_for_bulk(module, 65_536) - base;
+            assert_eq!(large, 16 * small, "{name}: sixteen times the bytes must cost sixteen times the fuel");
+            assert_eq!(fuel_for_bulk(module, 32_768) - base, 8 * small, "{name}: eight times the bytes, eight times the fuel");
+            // Measured: wasmi charges one fuel per 64 bytes, rounded down. Pinned as a floor rather than
+            // as the constant, so a wasmi update that re-prices this does not silently under-charge.
+            assert!(large >= 1_024, "{name}: 64 KiB must cost at least one fuel per 64 bytes, got {large}");
+            assert!(fuel_for_bulk(module, 64) - base <= 1, "{name}: a single 64-byte block is at most one fuel");
+            // Fuel cannot be negative or free: an empty operation still pays for the instructions.
+            assert!(base > 0, "{name}: the instructions themselves cost something");
+        }
+        // Fill and copy are priced the same because the charge is about bytes moved, not which op moved them.
+        assert_eq!(fuel_for_bulk(&fill, 65_536), fuel_for_bulk(&copy, 65_536));
+    }
+
+    #[test]
+    fn a_bulk_operation_without_the_fuel_to_pay_for_it_traps_before_it_finishes() {
+        let wat = bulk_module(&format!("(memory.fill (i32.const 100000) (i32.const 7) {LENGTH_FROM_PAYLOAD})"));
+        // Filling 64 KiB needs about 1,024 fuel for the bytes alone. Given 200, the module must trap: a
+        // bulk operation is not a way to move a megabyte for the price of one instruction.
+        let starved = RuntimeLimits { fuel_per_run: 200, ..RuntimeLimits::default() };
+        let module = compile_with(&wat, starved).unwrap();
+        assert_eq!(module.run_once(&PLAYER, &65_536u32.to_le_bytes()).unwrap_err(), AdapterError::OutOfFuel);
+        assert_eq!(
+            module.validate_result(&PLAYER, &65_536u32.to_le_bytes()).unwrap_err(),
+            AdapterError::OutOfFuel,
+            "the refusal must not be reachable only through run_once"
+        );
+        // And the same module under a budget that covers the work completes, so the trap above is the
+        // metering rather than the size of the operation.
+        let funded = RuntimeLimits { fuel_per_run: 2_000, ..RuntimeLimits::default() };
+        let module = compile_with(&wat, funded).unwrap();
+        assert_eq!(module.validate_result(&PLAYER, &65_536u32.to_le_bytes()).unwrap().output.outcome, Outcome::Win);
+    }
+
+    #[test]
+    fn out_of_bounds_bulk_operations_trap_instead_of_reaching_outside_memory() {
+        // `bulk_module` declares 16 pages but starts with 16, i.e. exactly 1,048,576 bytes.
+        for (name, body) in [
+            ("fill past the end", "(memory.fill (i32.const 1048570) (i32.const 7) (i32.const 100))"),
+            ("fill the whole 32-bit range", "(memory.fill (i32.const 0) (i32.const 7) (i32.const -1))"),
+            ("copy with the source past the end", "(memory.copy (i32.const 0) (i32.const 1048570) (i32.const 100))"),
+            ("copy with the destination past the end", "(memory.copy (i32.const 1048570) (i32.const 0) (i32.const 100))"),
+            ("copy the whole 32-bit range", "(memory.copy (i32.const 0) (i32.const 0) (i32.const -1))"),
+            ("fill starting exactly at the end", "(memory.fill (i32.const 1048576) (i32.const 7) (i32.const 1))"),
+        ] {
+            let module = compile(&bulk_module(body)).unwrap();
+            assert!(matches!(module.run_once(&PLAYER, &[]), Err(AdapterError::Trap(_))), "{name}");
+            assert!(matches!(module.validate_result(&PLAYER, &[]), Err(AdapterError::Trap(_))), "{name}, through validate_result");
+        }
+        // Exactly filling the last byte is in bounds and must not trap, so the test above is not simply
+        // proving that every bulk operation fails.
+        let module = compile(&bulk_module("(memory.fill (i32.const 1048575) (i32.const 7) (i32.const 1))")).unwrap();
+        assert_eq!(module.validate_result(&PLAYER, &[]).unwrap().output.outcome, Outcome::Win);
+    }
+
+    #[test]
+    fn bulk_operations_are_deterministic_across_fresh_instances() {
+        let module = compile(&bulk_module(&format!("(memory.copy (i32.const 100000) (i32.const 0) {LENGTH_FROM_PAYLOAD})"))).unwrap();
+        let first = module.run_once(&PLAYER, &65_536u32.to_le_bytes()).unwrap();
+        // Same output bytes and the same fuel, run after run: the sorted-byte heap a bulk copy relies on
+        // must not make two runs differ, because fuel is part of what validate_result compares.
+        for _ in 0..4 {
+            assert_eq!(module.run_once(&PLAYER, &65_536u32.to_le_bytes()).unwrap(), first);
+        }
+        assert!(module.validate_result(&PLAYER, &65_536u32.to_le_bytes()).is_ok());
     }
 
     #[test]

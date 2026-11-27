@@ -5,6 +5,8 @@ export const ULTRA_WALLET_SIGN_VALIDATOR_PROPOSAL =
 export const ULTRA_WALLET_SIGN_AUTHENTICATION_CHALLENGE =
   "ultranet_signAuthenticationChallenge" as const;
 export const ULTRA_WALLET_SIGN_TRANSACTION = "ultranet_signTransaction" as const;
+export const ULTRA_WALLET_SIGN_GAMES_CHALLENGE = "ultranet_signGamesChallenge" as const;
+export const ULTRA_WALLET_SIGN_GAME_ADMIN = "ultranet_signGameAdmin" as const;
 export const ULTRA_WALLET_SIGNING_ENVELOPE_VERSION = 2 as const;
 export const ULTRA_WALLET_TRANSACTION_VERSION = 1 as const;
 export const ULTRA_WALLET_AUTH_VERSION = 1 as const;
@@ -104,12 +106,52 @@ export interface SignedTransaction {
   version: typeof ULTRA_WALLET_TRANSACTION_VERSION;
 }
 
+/** The Games service's one-time sign-in challenge. The wallet recomputes the digest and never signs the server's. */
+export interface SignGamesChallengeParams {
+  challengeId: string;
+  address: string;
+  purpose: string;
+  issuedAt: number;
+  expiresAt: number;
+  /** The digest the service offered, hex. It is compared with the wallet's own, never signed. */
+  offeredDigest: string;
+}
+
+export interface UltraWalletSignGamesChallengeRequest {
+  method: typeof ULTRA_WALLET_SIGN_GAMES_CHALLENGE;
+  params: SignGamesChallengeParams;
+}
+
+/** One owner action on a game: register, claim a deposit, propose a policy, or withdraw. */
+export interface SignGameAdminParams {
+  action: string;
+  chainId: number;
+  gameId: string;
+  name: string;
+  description: string;
+}
+
+export interface UltraWalletSignGameAdminRequest {
+  method: typeof ULTRA_WALLET_SIGN_GAME_ADMIN;
+  params: SignGameAdminParams;
+}
+
+export interface SignedGamesDigest {
+  publicKeyHex: string;
+  signatureHex: string;
+  /** Present for owner actions: the nonce and time that were signed. */
+  nonce?: string;
+  timestamp?: number;
+}
+
 export interface UltraWalletProvider {
   request(
     request:
       | UltraWalletSignValidatorProposalRequest
       | UltraWalletSignAuthenticationChallengeRequest
-      | UltraWalletSignTransactionRequest,
+      | UltraWalletSignTransactionRequest
+      | UltraWalletSignGamesChallengeRequest
+      | UltraWalletSignGameAdminRequest,
   ): Promise<unknown>;
 }
 
